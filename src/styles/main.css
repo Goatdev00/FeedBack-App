@@ -1251,11 +1251,14 @@ span > svg {
 }
 
 .splash-icon {
-  width: 96px;
-  height: 96px;
-  border-radius: var(--radius-2xl);
-  margin-bottom: var(--space-md);
-  box-shadow: 0 8px 32px rgba(255, 106, 0, 0.25);
+  /* Transparent PNG splash mark — fills the available container width
+     (the .splash-screen has var(--space-xl) padding on each side and the
+     #app caps at 480px), so this hits ~336-416 px depending on device,
+     roughly double the previous 220-320 range. */
+  width: 100%;
+  max-width: 540px;
+  height: auto;
+  margin-bottom: var(--space-lg);
   position: relative;
   z-index: 2;
   animation: fadeInUp 0.6s var(--ease-out);

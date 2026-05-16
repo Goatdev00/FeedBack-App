@@ -13,8 +13,7 @@ export function renderLogin(container) {
       <div class="splash-bg"></div>
 
       <div style="position:relative;z-index:2;width:100%;display:flex;flex-direction:column;align-items:center;">
-        <div style="margin-bottom:8px;opacity:0.5;font-size:2.5rem;">🎵</div>
-        <h1 class="splash-logo">FEEDBACK</h1>
+        <img src="/logo-transparent.png" alt="FEEDBACK" class="splash-icon" />
         <p class="splash-tagline">Live the Scene</p>
 
         <p style="font-size:0.8125rem;color:var(--text-tertiary);max-width:280px;text-align:center;margin-bottom:48px;line-height:1.6;">
@@ -38,15 +37,18 @@ export function renderLogin(container) {
     </div>
   `;
 
-  // Entrance animation
-  const logo = container.querySelector('.splash-logo');
-  logo.style.opacity = '0';
-  logo.style.transform = 'translateY(20px)';
-  logo.style.transition = 'all 0.8s cubic-bezier(0.16, 1, 0.3, 1)';
-  requestAnimationFrame(() => {
-    logo.style.opacity = '1';
-    logo.style.transform = 'translateY(0)';
-  });
+  // Entrance animation — animate the logo image itself now that the
+  // FEEDBACK heading has been removed from the splash.
+  const logo = container.querySelector('.splash-icon');
+  if (logo) {
+    logo.style.opacity = '0';
+    logo.style.transform = 'translateY(20px)';
+    logo.style.transition = 'opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1), transform 0.8s cubic-bezier(0.16, 1, 0.3, 1)';
+    requestAnimationFrame(() => {
+      logo.style.opacity = '1';
+      logo.style.transform = 'translateY(0)';
+    });
+  }
 
   const btn = container.querySelector('#btn-google-login');
   btn.addEventListener('click', async () => {

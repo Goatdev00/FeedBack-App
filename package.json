@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host",
+    "build:icons": "node scripts/build-icons.mjs",
+    "prebuild": "node scripts/build-icons.mjs",
     "build": "vite build",
     "preview": "vite preview --host --port ${PORT:-3000}",
     "start": "vite preview --host --port ${PORT:-3000}",
@@ -19,6 +21,7 @@
     "@supabase/supabase-js": "^2.45.4"
   },
   "devDependencies": {
+    "sharp": "^0.34.5",
     "vite": "^5.4.21"
   }
 }
