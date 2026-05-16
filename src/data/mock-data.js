@@ -80,7 +80,7 @@ const MOCK_USERS = [
     followers: 128,
     following: 95,
     badges: ['explorer', 'active', 'voice'],
-    partiesAttended: ['p1', 'p2', 'p3'],
+    partiesAttended: ['a1111111-1111-4111-8111-111111111111', 'a2222222-2222-4222-8222-222222222222', 'a3333333-3333-4333-8333-333333333333'],
     postsToday: 2,
     premium: false,
     social: { instagram: 'carlosrave_co', tiktok: 'carlosrave', twitter: 'carlosrave' },
@@ -98,7 +98,7 @@ const MOCK_USERS = [
     followers: 2340,
     following: 180,
     badges: ['topdj', 'voice', 'insider'],
-    partiesAttended: ['p1', 'p4'],
+    partiesAttended: ['a1111111-1111-4111-8111-111111111111', 'a4444444-4444-4444-8444-444444444444'],
     postsToday: 1,
     premium: true,
     social: { instagram: 'djnocturn', tiktok: 'djnocturn_official', twitter: 'djnocturn' },
@@ -116,7 +116,7 @@ const MOCK_USERS = [
     followers: 5600,
     following: 320,
     badges: ['promotor', 'explorer', 'insider'],
-    partiesAttended: ['p1', 'p2'],
+    partiesAttended: ['a1111111-1111-4111-8111-111111111111', 'a2222222-2222-4222-8222-222222222222'],
     postsToday: 0,
     premium: true,
     social: { instagram: 'lunapromotions', tiktok: 'lunapromo', twitter: 'luna_promo' },
@@ -134,7 +134,7 @@ const MOCK_USERS = [
     followers: 67,
     following: 132,
     badges: ['explorer', 'active'],
-    partiesAttended: ['p2', 'p3', 'p5'],
+    partiesAttended: ['a2222222-2222-4222-8222-222222222222', 'a3333333-3333-4333-8333-333333333333', 'a5555555-5555-4555-8555-555555555555'],
     postsToday: 3,
     premium: false,
     social: { instagram: 'valbass_', tiktok: '', twitter: '' },
@@ -152,7 +152,7 @@ const MOCK_USERS = [
     followers: 1800,
     following: 210,
     badges: ['topdj', 'active'],
-    partiesAttended: ['p3'],
+    partiesAttended: ['a3333333-3333-4333-8333-333333333333'],
     postsToday: 0,
     premium: false,
     social: { instagram: 'djvoltage', tiktok: 'djvoltage_dnb', twitter: 'djvoltage' },
@@ -170,7 +170,7 @@ const MOCK_USERS = [
     followers: 42,
     following: 88,
     badges: ['explorer'],
-    partiesAttended: ['p1'],
+    partiesAttended: ['a1111111-1111-4111-8111-111111111111'],
     postsToday: 1,
     premium: false,
     social: { instagram: 'marcotorres', tiktok: '', twitter: 'marco_t' },
@@ -181,7 +181,7 @@ const MOCK_USERS = [
 // --- Mock Parties ---
 const MOCK_PARTIES = [
   {
-    id: 'p1',
+    id: 'a1111111-1111-4111-8111-111111111111',
     name: 'NEXUS — Underground Session',
     venue: 'Warehouse Club',
     city: 'Bogotá',
@@ -199,7 +199,7 @@ const MOCK_PARTIES = [
     description: 'Una noche de techno puro en lo más profundo del underground bogotano.'
   },
   {
-    id: 'p2',
+    id: 'a2222222-2222-4222-8222-222222222222',
     name: 'PULSE — House & Disco',
     venue: 'Terraza Nocturna',
     city: 'Bogotá',
@@ -217,7 +217,7 @@ const MOCK_PARTIES = [
     description: 'La mejor selección de house y disco en la terraza más icónica de la ciudad.'
   },
   {
-    id: 'p3',
+    id: 'a3333333-3333-4333-8333-333333333333',
     name: 'BASS CATHEDRAL',
     venue: 'Bodega 42',
     city: 'Bogotá',
@@ -235,7 +235,7 @@ const MOCK_PARTIES = [
     description: 'La catedral del bass te espera con los mejores DJs nacionales.'
   },
   {
-    id: 'p4',
+    id: 'a4444444-4444-4444-8444-444444444444',
     name: 'ECLIPSE — Melodic Techno',
     venue: 'Club Astral',
     city: 'Medellín',
@@ -253,7 +253,7 @@ const MOCK_PARTIES = [
     description: 'Viaje sonoro a través del melodic techno en el venue más premium de Medellín.'
   },
   {
-    id: 'p5',
+    id: 'a5555555-5555-4555-8555-555555555555',
     name: 'FREKVENCIA',
     venue: 'La Factoría',
     city: 'Cali',
@@ -273,112 +273,10 @@ const MOCK_PARTIES = [
 ];
 
 // --- Mock Posts ---
-const MOCK_POSTS = [
-  {
-    id: 'post1',
-    userId: 'u1',
-    partyId: 'p1',
-    type: 'text',
-    content: '¡El DJ Nocturn está rompiendo la pista ahora mismo! 🔥 El sonido de este warehouse es otro nivel, la energía del público es increíble.',
-    image: null,
-    likes: 24,
-    replies: 3,
-    likedBy: ['u2', 'u3', 'u4'],
-    comments: [
-      { id: 'c1', userId: 'u2', text: '¡Gracias bro! La energía estuvo brutal 🖤', createdAt: daysAgo(0) },
-      { id: 'c2', userId: 'u6', text: 'Confirmo! Tremendo set 🔥', createdAt: daysAgo(0) },
-      { id: 'c3', userId: 'u3', text: 'La mejor noche del año sin duda', createdAt: daysAgo(0) },
-    ],
-    createdAt: daysAgo(0),
-    expiresAt: daysAgo(-7)
-  },
-  {
-    id: 'post2',
-    userId: 'u4',
-    partyId: 'p2',
-    type: 'text',
-    content: 'PULSE siempre cumple. La terraza con la brisa nocturna y ese house suave... perfección. El bartender de la esquina hace unos cócteles espectaculares 🍸',
-    image: null,
-    likes: 18,
-    replies: 5,
-    likedBy: ['u1', 'u3'],
-    comments: [
-      { id: 'c4', userId: 'u1', text: 'Los cócteles estaban increíbles 🍸', createdAt: daysAgo(0) },
-      { id: 'c5', userId: 'u3', text: '¡Gracias por venir! Nos alegra que lo hayas disfrutado ✨', createdAt: daysAgo(0) },
-      { id: 'c6', userId: 'u6', text: 'Me arrepiento de no haber ido 😩', createdAt: daysAgo(0) },
-    ],
-    createdAt: daysAgo(0),
-    expiresAt: daysAgo(-7)
-  },
-  {
-    id: 'post3',
-    userId: 'u2',
-    partyId: 'p1',
-    type: 'text',
-    content: 'Gracias Bogotá por esa energía brutal 🖤 3 horas de set y la pista no paró. Nos vemos en la próxima.',
-    image: null,
-    likes: 56,
-    replies: 12,
-    likedBy: ['u1', 'u3', 'u4', 'u6'],
-    comments: [
-      { id: 'c7', userId: 'u1', text: '¡Tremendo cierre! El drop de las 3am fue epico', createdAt: daysAgo(0) },
-      { id: 'c8', userId: 'u4', text: 'Necesitamos fecha pronto para la próxima 🔥🔥', createdAt: daysAgo(0) },
-    ],
-    createdAt: daysAgo(0),
-    expiresAt: daysAgo(-7)
-  },
-  {
-    id: 'post4',
-    userId: 'u6',
-    partyId: 'p1',
-    type: 'text',
-    content: 'Primera vez en Warehouse Club y NO me arrepiento. El sistema de sonido es BESTIAL. Las visuales complementan perfectamente el set. 10/10 🎵',
-    image: null,
-    likes: 9,
-    replies: 2,
-    likedBy: ['u1'],
-    comments: [
-      { id: 'c9', userId: 'u1', text: 'Bienvenido al Warehouse! Ya no hay vuelta atrás 😂', createdAt: daysAgo(1) },
-    ],
-    createdAt: daysAgo(1),
-    expiresAt: daysAgo(-6)
-  },
-  {
-    id: 'post5',
-    userId: 'u4',
-    partyId: 'p3',
-    type: 'text',
-    content: 'BASS CATHEDRAL es simplemente OTRA COSA. DJ Voltage cerró con un jungle set que dejó a todo el mundo boquiabierto. La Bodega 42 vibró literal 🔊',
-    image: null,
-    likes: 32,
-    replies: 8,
-    likedBy: ['u5', 'u1'],
-    comments: [
-      { id: 'c10', userId: 'u5', text: '¡Gracias Cali! El público estuvo encendido 🔥', createdAt: daysAgo(1) },
-      { id: 'c11', userId: 'u1', text: 'Necesito ese set en mi vida otra vez', createdAt: daysAgo(1) },
-    ],
-    createdAt: daysAgo(1),
-    expiresAt: daysAgo(-6)
-  },
-  {
-    id: 'post6',
-    userId: 'u3',
-    partyId: 'p2',
-    type: 'text',
-    content: 'Orgullosa del equipo PULSE ✨ Más de 400 personas disfrutando de buena música, buen ambiente y la mejor terraza. ¡Gracias a todos por venir!',
-    image: null,
-    likes: 45,
-    replies: 15,
-    likedBy: ['u1', 'u4', 'u6'],
-    comments: [
-      { id: 'c12', userId: 'u4', text: 'La terraza es un sueño, siempre cumplen ✨', createdAt: daysAgo(2) },
-      { id: 'c13', userId: 'u1', text: 'De las mejores noches! Gracias Luna team', createdAt: daysAgo(2) },
-      { id: 'c14', userId: 'u6', text: 'Repitan pronto porfa 🙏', createdAt: daysAgo(2) },
-    ],
-    createdAt: daysAgo(2),
-    expiresAt: daysAgo(-5)
-  }
-];
+// Phase 3: posts live in Supabase (public.posts). Boot-time hydration in
+// main.js fetches the real list. We keep an empty mock so the legacy
+// default state stays valid until hydration completes.
+const MOCK_POSTS = [];
 
 // --- Mock Questions (Ask.fm style) ---
 const MOCK_QUESTIONS = [
@@ -541,6 +439,12 @@ class Store {
     } catch (e) {
       console.warn('Failed to save state', e);
     }
+    // Mirror to Supabase so actions survive across devices/browsers.
+    // Debouncing + no-op-on-no-config + sign-in check all live inside
+    // queueCloudSave.
+    if (!this._cloudSyncDisabled) {
+      _queueCloudSave?.(this.state);
+    }
   }
 
   getState() {
@@ -551,6 +455,41 @@ class Store {
     this.state = { ...this.state, ...partial };
     this.saveState();
     this.notify();
+  }
+
+  /**
+   * Hydrate the in-memory state from a remote blob (typically the user's
+   * `user_app_state.state` from Supabase). Date strings get re-parsed
+   * the same way `loadState` does for posts/questions.
+   */
+  hydrateFromCloud(cloud) {
+    if (!cloud || typeof cloud !== 'object') return;
+
+    // Revive Date instances on the few fields that need it.
+    if (Array.isArray(cloud.posts)) {
+      cloud.posts.forEach(p => {
+        if (p.createdAt) p.createdAt = new Date(p.createdAt);
+        if (p.expiresAt) p.expiresAt = new Date(p.expiresAt);
+        if (Array.isArray(p.comments)) {
+          p.comments.forEach(c => { if (c.createdAt) c.createdAt = new Date(c.createdAt); });
+        }
+      });
+    }
+    if (Array.isArray(cloud.questions)) {
+      cloud.questions.forEach(q => { if (q.createdAt) q.createdAt = new Date(q.createdAt); });
+    }
+
+    // Cloud is authoritative — overlay it on top of the in-memory state.
+    // currentUser is intentionally preserved (it comes from auth/profile).
+    const { currentUser } = this.state;
+    this._cloudSyncDisabled = true;
+    try {
+      this.state = { ...this.state, ...cloud, currentUser };
+      this.saveState();      // mirror to localStorage too
+      this.notify();
+    } finally {
+      this._cloudSyncDisabled = false;
+    }
   }
 
   subscribe(fn) {
@@ -589,22 +528,27 @@ class Store {
     return this.getUserPostsToday(userId) < 5;
   }
 
+  // Phase 3: posts are persisted to Supabase via _api. We still keep an
+  // optimistic local row so the UI updates instantly; the api call runs
+  // in the background, and on success we replace the temp row with the
+  // real one (server-generated id, timestamps, etc).
   addPost(post) {
     const now = new Date();
     const expires = new Date(now);
     expires.setDate(expires.getDate() + 7);
+    const tempId = 'pending_' + Date.now();
     const newPost = {
-      id: 'post_' + Date.now(),
+      id: tempId,
       ...post,
       likes: 0,
       replies: 0,
       likedBy: [],
       comments: [],
       createdAt: now,
-      expiresAt: expires
+      expiresAt: expires,
+      _pending: true,
     };
     this.state.posts = [newPost, ...this.state.posts];
-    // Award points for first post in party
     if (this.state.currentUser) {
       const userPostsInParty = this.state.posts.filter(
         p => p.userId === this.state.currentUser.id && p.partyId === post.partyId
@@ -615,7 +559,29 @@ class Store {
     }
     this.saveState();
     this.notify();
+
+    // Async: persist to Supabase, then swap the optimistic row for the
+    // server-truth row.
+    if (_api?.createPost) {
+      _api.createPost({ partyId: post.partyId, content: post.content, image: post.image })
+        .then((real) => this._replacePost(tempId, real))
+        .catch((err) => {
+          console.warn('[store] createPost failed', err);
+          // Roll back optimistic insert.
+          this.state.posts = this.state.posts.filter(p => p.id !== tempId);
+          this.saveState();
+          this.notify();
+        });
+    }
     return newPost;
+  }
+
+  _replacePost(tempId, real) {
+    const idx = this.state.posts.findIndex(p => p.id === tempId);
+    if (idx === -1) return;
+    this.state.posts[idx] = real;
+    this.saveState();
+    this.notify();
   }
 
   toggleLike(postId) {
@@ -623,7 +589,10 @@ class Store {
     const post = this.state.posts.find(p => p.id === postId);
     if (!post) return;
     const uid = this.state.currentUser.id;
-    if (post.likedBy.includes(uid)) {
+    const wasLiked = post.likedBy.includes(uid);
+
+    // Optimistic local update first.
+    if (wasLiked) {
       post.likedBy = post.likedBy.filter(id => id !== uid);
       post.likes--;
     } else {
@@ -632,6 +601,19 @@ class Store {
     }
     this.saveState();
     this.notify();
+
+    // Then persist. Server is the source of truth; rollback on failure.
+    if (_api?.toggleLike && !post._pending) {
+      _api.toggleLike(postId).catch((err) => {
+        console.warn('[store] toggleLike failed', err);
+        const p = this.state.posts.find(x => x.id === postId);
+        if (!p) return;
+        if (wasLiked) { p.likedBy.push(uid); p.likes++; }
+        else { p.likedBy = p.likedBy.filter(id => id !== uid); p.likes--; }
+        this.saveState();
+        this.notify();
+      });
+    }
   }
 
   // --- Comments ---
@@ -640,16 +622,39 @@ class Store {
     const post = this.state.posts.find(p => p.id === postId);
     if (!post) return;
     if (!post.comments) post.comments = [];
+    const tempId = 'pending_' + Date.now();
     const comment = {
-      id: 'c_' + Date.now(),
+      id: tempId,
       userId: this.state.currentUser.id,
       text,
-      createdAt: new Date()
+      createdAt: new Date(),
+      _pending: true,
     };
     post.comments.push(comment);
     post.replies = post.comments.length;
     this.saveState();
     this.notify();
+
+    if (_api?.addComment && !post._pending) {
+      _api.addComment(postId, text)
+        .then((real) => {
+          const p = this.state.posts.find(x => x.id === postId);
+          if (!p) return;
+          const idx = (p.comments || []).findIndex(c => c.id === tempId);
+          if (idx !== -1) p.comments[idx] = real;
+          this.saveState();
+          this.notify();
+        })
+        .catch((err) => {
+          console.warn('[store] addComment failed', err);
+          const p = this.state.posts.find(x => x.id === postId);
+          if (!p) return;
+          p.comments = (p.comments || []).filter(c => c.id !== tempId);
+          p.replies = p.comments.length;
+          this.saveState();
+          this.notify();
+        });
+    }
     return comment;
   }
 
@@ -731,6 +736,16 @@ class Store {
 
     this.saveState();
     this.notify();
+
+    // Persist the follow toggle to Supabase. Mutual-award/points are still
+    // computed locally — the cloud sync (user_app_state) carries awardedFollows
+    // and points across devices for now. Phase 4 will move points to a ledger.
+    if (_api?.toggleFollow && nowFollowing !== this.isFollowing(uid, targetId) === false) {
+      // (intentional dual-check to ignore no-op calls)
+    }
+    if (_api?.toggleFollow) {
+      _api.toggleFollow(targetId).catch((err) => console.warn('[store] toggleFollow failed', err));
+    }
     return { changed: true, nowFollowing, awarded, mutual };
   }
 
@@ -758,17 +773,35 @@ class Store {
   }
 
   addParty(party) {
+    const tempId = 'pending_' + Date.now();
     const newParty = {
-      id: 'p_' + Date.now(),
+      id: tempId,
       ...party,
       attendees: [],
       rating: {},
       reports: {},
       sponsored: false,
+      _pending: true,
     };
     this.state.parties = [newParty, ...this.state.parties];
     this.saveState();
     this.notify();
+
+    if (_api?.createParty) {
+      _api.createParty(party)
+        .then((real) => {
+          const idx = this.state.parties.findIndex(p => p.id === tempId);
+          if (idx !== -1) this.state.parties[idx] = { ...real, attendees: [] };
+          this.saveState();
+          this.notify();
+        })
+        .catch((err) => {
+          console.warn('[store] createParty failed', err);
+          this.state.parties = this.state.parties.filter(p => p.id !== tempId);
+          this.saveState();
+          this.notify();
+        });
+    }
     return newParty;
   }
 
@@ -777,7 +810,9 @@ class Store {
     const party = this.state.parties.find(p => p.id === partyId);
     if (!party) return;
     const uid = this.state.currentUser.id;
-    if (party.attendees.includes(uid)) {
+    const wasAttending = party.attendees.includes(uid);
+
+    if (wasAttending) {
       party.attendees = party.attendees.filter(id => id !== uid);
     } else {
       party.attendees.push(uid);
@@ -785,6 +820,19 @@ class Store {
     }
     this.saveState();
     this.notify();
+
+    if (_api?.toggleAttendance && !party._pending) {
+      _api.toggleAttendance(partyId).catch((err) => {
+        console.warn('[store] toggleAttendance failed', err);
+        // Rollback optimistic change.
+        const p = this.state.parties.find(x => x.id === partyId);
+        if (!p) return;
+        if (wasAttending) p.attendees.push(uid);
+        else p.attendees = p.attendees.filter(id => id !== uid);
+        this.saveState();
+        this.notify();
+      });
+    }
   }
 
   // --- Questions ---
@@ -1038,6 +1086,19 @@ class Store {
     });
   }
 }
+
+// Injection point for the cloud-sync hook. Avoids a static `import` of
+// cloud-state.js (which would create a tree-shake-unfriendly cycle):
+// cloud-state.js calls registerCloudSave(queueCloudSave) at import time,
+// and saveState() invokes whatever's registered.
+let _queueCloudSave = null;
+export function registerCloudSave(fn) { _queueCloudSave = fn; }
+
+// Same pattern for the Supabase data API. api.js calls registerApi at
+// import time so the store can write through to Supabase without creating
+// an import cycle (api.js → supabase.js, not via mock-data.js).
+let _api = null;
+export function registerApi(api) { _api = api; }
 
 export const store = new Store();
 export { formatRelative, isSunday };

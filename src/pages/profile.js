@@ -11,6 +11,7 @@ import { renderBottomNav, bindNavEvents } from '../components/nav.js';
 import { isSupabaseConfigured } from '../data/supabase.js';
 import { signOut } from '../data/auth.js';
 import { clearLocalSession } from '../data/profile-sync.js';
+import { flushCloudSave } from '../data/cloud-state.js';
 
 const CITY_OPTIONS = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena', 'Otra'];
 
@@ -594,9 +595,11 @@ function showSettingsModal() {
   overlay.querySelector('#btn-logout').addEventListener('click', async () => {
     overlay.close();
     if (isSupabaseConfigured()) {
+      // Force any debounced cloud save before we lose the session — the
+      // user's last actions should still be in Supabase when they log
+      // back in from another device.
+      try { await flushCloudSave(store.getState()); } catch { /* noop */ }
       await signOut();
-      // onAuthChange in main.js will fire and route to /login, but we
-      // also clear local state immediately so the UI doesn't flicker.
     }
     clearLocalSession();
     router.navigate('login');

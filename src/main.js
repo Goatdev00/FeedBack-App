@@ -15,6 +15,8 @@ import { createModal } from './utils/dom.js';
 import { isSupabaseConfigured } from './data/supabase.js';
 import { onAuthChange } from './data/auth.js';
 import { syncProfileIntoStore, clearLocalSession } from './data/profile-sync.js';
+import { loadCloudState, flushCloudSave, stripCloudExclusions } from './data/cloud-state.js';
+import { hydrateAll, subscribeRealtime } from './data/api.js';
 
 // --- Pages ---
 import { renderLogin } from './pages/login.js';
@@ -69,6 +71,16 @@ router.register('chat-party', renderChatParty);
 // =====================================================================
 
 initLavaLamp('lava-bg');
+
+// Force-flush any debounced cloud save before the tab closes. Without
+// this, an action taken in the last 1.5s before closing would never
+// reach Supabase. `pagehide` is more reliable than `beforeunload` on
+// iOS Safari, but we register both as belt-and-suspenders.
+if (isSupabaseConfigured()) {
+  const flush = () => { flushCloudSave(store.getState()); };
+  window.addEventListener('pagehide', flush);
+  window.addEventListener('beforeunload', flush);
+}
 
 if (isSupabaseConfigured()) {
   // Track which user the SPA is currently routing for. supabase-js fires
@@ -132,6 +144,47 @@ async function routeAfterSession() {
   if (!profile.onboardingComplete) {
     router.navigate('onboarding');
     return;
+  }
+
+  // Hydrate the normalized entities (parties, posts, follows, profiles,
+  // attendance) from Supabase. These are the source of truth in Phase 3.
+  try {
+    const real = await hydrateAll();
+    if (real) {
+      const state = store.getState();
+      // Merge: real parties/posts replace the legacy mock; the legacy
+      // mock users stay alongside real profiles so DJ/promotor avatars
+      // for old seeds keep rendering until Phase 4 deprecates them.
+      const profilesById = new Map(real.profiles.map(u => [u.id, u]));
+      const legacyUsers = state.users.filter(u => !profilesById.has(u.id) && u.id.startsWith('u'));
+      const mergedUsers = [...real.profiles, ...legacyUsers];
+
+      store.setState({
+        parties: real.parties.length ? real.parties : state.parties,
+        posts: real.posts,
+        follows: real.follows,
+        users: mergedUsers,
+      });
+    }
+  } catch (e) {
+    console.warn('[main] supabase hydration failed', e);
+  }
+
+  // Subscribe to realtime changes — new posts / likes / comments from
+  // OTHER users will appear in the wall without a refresh. Safe to call
+  // multiple times: subscribeRealtime is idempotent.
+  try { subscribeRealtime(store); } catch (e) { console.warn('[main] realtime failed', e); }
+
+  // Hydrate the non-normalized leftovers (chat, ratings, questions,
+  // awardedFollows, lastNotificationsViewed, etc.) from user_app_state.
+  // Phase 4 will fold these into proper tables. Strip any keys that
+  // belong to migrated entities (posts/parties/follows/users) before
+  // merging — otherwise a stale blob would overwrite the shared feed.
+  try {
+    const cloud = await loadCloudState();
+    if (cloud) store.hydrateFromCloud(stripCloudExclusions(cloud));
+  } catch (e) {
+    console.warn('[main] cloud hydration failed', e);
   }
 
   if (isSunday) {

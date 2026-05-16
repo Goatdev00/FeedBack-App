@@ -1,0 +1,469 @@
+// =====================================================================
+// FEEDBACK — Supabase data API (Phase 3 — normalized tables)
+// =====================================================================
+// One module per entity is overkill at this stage. We collect all the
+// network-touching helpers here, grouped by concept. Each function:
+//   * Maps DB rows (snake_case) → frontend shape (camelCase + Date).
+//   * Throws on auth/permission errors so callers can show UI feedback.
+//   * Returns the persisted row so the caller can replace optimistic
+//     local state with the real server data.
+//
+// Conventions:
+//   - All ids are UUIDs from now on (parties: hardcoded seeds; posts/
+//     comments/etc: server-generated).
+//   - Timestamps come back as Date instances ready for formatRelative.
+//   - Author info is joined inline via PostgREST nested selects.
+// =====================================================================
+
+import { supabase, isSupabaseConfigured } from './supabase.js';
+import { registerApi } from './mock-data.js';
+
+// ---------------------------------------------------------------------
+// Profile shape adapter (matches profile-sync.js so consumers can pass
+// either shape downstream).
+// ---------------------------------------------------------------------
+function authorFromRow(p) {
+  if (!p) return null;
+  return {
+    id: p.id,
+    name: p.name,
+    username: p.username?.startsWith('@') ? p.username : `@${p.username}`,
+    role: p.role,
+    city: p.city,
+    avatar: p.avatar_url || null,
+    premium: p.membership_tier && p.membership_tier !== 'general',
+    tier: p.membership_tier || 'general',
+    points: p.points ?? 0,
+  };
+}
+
+// =====================================================================
+// PARTIES
+// =====================================================================
+export async function listParties() {
+  if (!isSupabaseConfigured()) return [];
+  const { data, error } = await supabase
+    .from('parties')
+    .select('*')
+    .order('party_date', { ascending: true });
+  if (error) throw error;
+  return (data || []).map(partyFromRow);
+}
+
+function partyFromRow(p) {
+  return {
+    id: p.id,
+    name: p.name,
+    venue: p.venue,
+    city: p.city,
+    date: p.party_date,
+    startTime: typeof p.start_time === 'string' ? p.start_time.slice(0, 5) : p.start_time,
+    endTime:   typeof p.end_time   === 'string' ? p.end_time.slice(0, 5)   : p.end_time,
+    genres: p.genres || [],
+    promotor: p.promoter_id,
+    djs: [],
+    flyer: p.flyer_url,
+    description: p.description || '',
+    sponsored: !!p.sponsored,
+    status: p.status,
+    attendees: [],    // filled by listAttendees()
+    reports: {},      // legacy field, populated by ratings rollup later
+    rating: {},
+  };
+}
+
+export async function createParty(input) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('not_authenticated');
+  const row = {
+    name: input.name,
+    venue: input.venue,
+    city: input.city,
+    party_date: input.date,
+    start_time: input.startTime,
+    end_time: input.endTime,
+    genres: input.genres || [],
+    promoter_id: user.id,
+    flyer_url: input.flyer || null,
+    description: input.description || null,
+  };
+  const { data, error } = await supabase.from('parties').insert(row).select('*').single();
+  if (error) throw error;
+  return partyFromRow(data);
+}
+
+// =====================================================================
+// POSTS
+// =====================================================================
+export async function listPosts() {
+  if (!isSupabaseConfigured()) return [];
+  const { data, error } = await supabase
+    .from('posts')
+    .select(`
+      id, user_id, party_id, content, image_url, type, created_at, expires_at,
+      author:profiles!posts_user_id_fkey(id, name, username, role, city, avatar_url, membership_tier, points),
+      post_likes(user_id),
+      post_comments(id, user_id, content, created_at)
+    `)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map(postFromRow);
+}
+
+function postFromRow(p) {
+  const comments = (p.post_comments || [])
+    .map(c => ({
+      id: c.id,
+      userId: c.user_id,
+      text: c.content,
+      createdAt: new Date(c.created_at),
+    }))
+    .sort((a, b) => a.createdAt - b.createdAt);
+
+  return {
+    id: p.id,
+    userId: p.user_id,
+    partyId: p.party_id,
+    content: p.content,
+    image: p.image_url,
+    type: p.type,
+    likedBy: (p.post_likes || []).map(l => l.user_id),
+    likes: (p.post_likes || []).length,
+    comments,
+    replies: comments.length,
+    createdAt: new Date(p.created_at),
+    expiresAt: new Date(p.expires_at),
+    author: p.author ? authorFromRow(p.author) : null,
+  };
+}
+
+export async function createPost({ partyId, content, image }) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('not_authenticated');
+  const { data, error } = await supabase
+    .from('posts')
+    .insert({
+      user_id: user.id,
+      party_id: partyId,
+      content,
+      image_url: image || null,
+      type: image ? 'photo' : 'text',
+    })
+    .select(`
+      id, user_id, party_id, content, image_url, type, created_at, expires_at,
+      author:profiles!posts_user_id_fkey(id, name, username, role, city, avatar_url, membership_tier, points)
+    `)
+    .single();
+  if (error) throw error;
+  return postFromRow({ ...data, post_likes: [], post_comments: [] });
+}
+
+// =====================================================================
+// LIKES
+// =====================================================================
+export async function toggleLike(postId) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('not_authenticated');
+
+  // Check if already liked. cheap because of the (post_id,user_id) PK.
+  const { data: existing } = await supabase
+    .from('post_likes')
+    .select('post_id')
+    .eq('post_id', postId)
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  if (existing) {
+    const { error } = await supabase
+      .from('post_likes')
+      .delete()
+      .eq('post_id', postId)
+      .eq('user_id', user.id);
+    if (error) throw error;
+    return { liked: false };
+  } else {
+    const { error } = await supabase
+      .from('post_likes')
+      .insert({ post_id: postId, user_id: user.id });
+    if (error) throw error;
+    return { liked: true };
+  }
+}
+
+// =====================================================================
+// COMMENTS
+// =====================================================================
+export async function addComment(postId, text) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('not_authenticated');
+  const { data, error } = await supabase
+    .from('post_comments')
+    .insert({ post_id: postId, user_id: user.id, content: text })
+    .select('id, user_id, content, created_at')
+    .single();
+  if (error) throw error;
+  return {
+    id: data.id,
+    userId: data.user_id,
+    text: data.content,
+    createdAt: new Date(data.created_at),
+  };
+}
+
+// =====================================================================
+// FOLLOWS (mutual connection = +10 each, server-side check is RLS-free)
+// =====================================================================
+export async function listFollows() {
+  if (!isSupabaseConfigured()) return [];
+  const { data, error } = await supabase.from('follows').select('*');
+  if (error) throw error;
+  return (data || []).map(f => ({
+    followerId: f.follower_id,
+    followingId: f.following_id,
+    createdAt: new Date(f.created_at),
+  }));
+}
+
+export async function toggleFollow(targetId) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('not_authenticated');
+  if (user.id === targetId) return { changed: false };
+
+  const { data: existing } = await supabase
+    .from('follows')
+    .select('follower_id')
+    .eq('follower_id', user.id)
+    .eq('following_id', targetId)
+    .maybeSingle();
+
+  if (existing) {
+    const { error } = await supabase
+      .from('follows')
+      .delete()
+      .eq('follower_id', user.id)
+      .eq('following_id', targetId);
+    if (error) throw error;
+    return { changed: true, nowFollowing: false };
+  } else {
+    const { error } = await supabase
+      .from('follows')
+      .insert({ follower_id: user.id, following_id: targetId });
+    if (error) throw error;
+    return { changed: true, nowFollowing: true };
+  }
+}
+
+// =====================================================================
+// ATTENDANCE
+// =====================================================================
+export async function listAttendees() {
+  if (!isSupabaseConfigured()) return [];
+  const { data, error } = await supabase
+    .from('party_attendees')
+    .select('party_id, user_id');
+  if (error) throw error;
+  return data || [];
+}
+
+export async function toggleAttendance(partyId) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('not_authenticated');
+
+  const { data: existing } = await supabase
+    .from('party_attendees')
+    .select('party_id')
+    .eq('party_id', partyId)
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  if (existing) {
+    const { error } = await supabase
+      .from('party_attendees')
+      .delete()
+      .eq('party_id', partyId)
+      .eq('user_id', user.id);
+    if (error) throw error;
+    return { attending: false };
+  } else {
+    const { error } = await supabase
+      .from('party_attendees')
+      .insert({ party_id: partyId, user_id: user.id });
+    if (error) throw error;
+    return { attending: true };
+  }
+}
+
+// Register write-side helpers with the store so it can persist through
+// to Supabase. Reads are still triggered from main.js via hydrateAll().
+registerApi({
+  createPost,
+  toggleLike,
+  addComment,
+  toggleFollow,
+  toggleAttendance,
+  createParty,
+});
+
+// =====================================================================
+// REALTIME — subscribe to live changes so OTHER users' posts / likes /
+// comments appear in the wall without a refresh.
+// =====================================================================
+let _realtimeChannel = null;
+
+export function subscribeRealtime(store) {
+  if (!isSupabaseConfigured()) return () => {};
+  if (_realtimeChannel) {
+    // Already subscribed; cheap idempotency.
+    return () => unsubscribeRealtime();
+  }
+
+  _realtimeChannel = supabase
+    .channel('public-feed')
+    // New post anywhere → re-fetch the single post with its author and
+    // prepend to the store. Cheaper than re-listing everything.
+    .on('postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'posts' },
+      async (payload) => {
+        const id = payload.new?.id;
+        if (!id) return;
+        const { data, error } = await supabase
+          .from('posts')
+          .select(`
+            id, user_id, party_id, content, image_url, type, created_at, expires_at,
+            author:profiles!posts_user_id_fkey(id, name, username, role, city, avatar_url, membership_tier, points)
+          `)
+          .eq('id', id)
+          .single();
+        if (error || !data) return;
+        const fresh = postFromRow({ ...data, post_likes: [], post_comments: [] });
+        // Skip if this is the same row we already inserted optimistically.
+        const state = store.getState();
+        if (state.posts.some(p => p.id === fresh.id)) return;
+        store.setState({ posts: [fresh, ...state.posts] });
+      })
+    // Likes: increment/decrement the corresponding post's like array.
+    .on('postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'post_likes' },
+      (payload) => {
+        const { post_id, user_id } = payload.new || {};
+        const state = store.getState();
+        const post = state.posts.find(p => p.id === post_id);
+        if (!post) return;
+        if (!post.likedBy.includes(user_id)) {
+          post.likedBy.push(user_id);
+          post.likes++;
+          store.setState({ posts: [...state.posts] });
+        }
+      })
+    .on('postgres_changes',
+      { event: 'DELETE', schema: 'public', table: 'post_likes' },
+      (payload) => {
+        const { post_id, user_id } = payload.old || {};
+        const state = store.getState();
+        const post = state.posts.find(p => p.id === post_id);
+        if (!post) return;
+        if (post.likedBy.includes(user_id)) {
+          post.likedBy = post.likedBy.filter(id => id !== user_id);
+          post.likes = Math.max(0, post.likes - 1);
+          store.setState({ posts: [...state.posts] });
+        }
+      })
+    // Comments: append to the matching post.
+    .on('postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'post_comments' },
+      (payload) => {
+        const c = payload.new;
+        if (!c) return;
+        const state = store.getState();
+        const post = state.posts.find(p => p.id === c.post_id);
+        if (!post) return;
+        if (!post.comments) post.comments = [];
+        if (post.comments.some(x => x.id === c.id)) return; // dedupe with optimistic
+        post.comments.push({
+          id: c.id,
+          userId: c.user_id,
+          text: c.content,
+          createdAt: new Date(c.created_at),
+        });
+        post.replies = post.comments.length;
+        store.setState({ posts: [...state.posts] });
+      })
+    // New party (e.g. a promoter just created one) → prepend to list.
+    .on('postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'parties' },
+      (payload) => {
+        const p = payload.new;
+        if (!p) return;
+        const state = store.getState();
+        if (state.parties.some(x => x.id === p.id)) return;
+        store.setState({ parties: [partyFromRow(p), ...state.parties] });
+      })
+    .subscribe();
+
+  return () => unsubscribeRealtime();
+}
+
+export function unsubscribeRealtime() {
+  if (!_realtimeChannel) return;
+  supabase.removeChannel(_realtimeChannel);
+  _realtimeChannel = null;
+}
+
+// =====================================================================
+// HYDRATION — pull everything for the current user's view on boot
+// =====================================================================
+export async function hydrateAll() {
+  if (!isSupabaseConfigured()) return null;
+  const [parties, posts, follows, attendees, profiles] = await Promise.all([
+    listParties(),
+    listPosts(),
+    listFollows(),
+    listAttendees(),
+    listProfiles(),
+  ]);
+
+  // Fold the attendees join into each party's attendees[].
+  const byParty = new Map(parties.map(p => [p.id, p]));
+  for (const a of attendees) {
+    const p = byParty.get(a.party_id);
+    if (p) p.attendees.push(a.user_id);
+  }
+
+  return { parties, posts, follows, profiles };
+}
+
+// =====================================================================
+// PROFILES (for users[] in the legacy store)
+// =====================================================================
+export async function listProfiles() {
+  if (!isSupabaseConfigured()) return [];
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, name, username, role, city, bio, avatar_url, social, membership_tier, points, created_at')
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map(p => ({
+    id: p.id,
+    name: p.name,
+    username: p.username?.startsWith('@') ? p.username : `@${p.username}`,
+    role: p.role,
+    city: p.city,
+    bio: p.bio || '',
+    avatar: p.avatar_url || null,
+    social: p.social || { instagram: '', tiktok: '', twitter: '' },
+    points: p.points ?? 0,
+    badges: [],
+    partiesAttended: [],
+    postsToday: 0,
+    followers: 0,
+    following: 0,
+    premium: p.membership_tier && p.membership_tier !== 'general',
+    tier: p.membership_tier || 'general',
+  }));
+}

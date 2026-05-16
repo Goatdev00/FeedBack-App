@@ -56,12 +56,37 @@
   <div id="app"></div>
 
   <!-- Lava Lamp / Metaballs Background.
-       The metaball merge is now done via pure CSS (filter: blur + contrast)
-       in main.css, because WebKit / iOS Safari has a long-standing bug:
-       `filter: url(#id)` fails to apply on elements that are
-       position:fixed + transform (which #lava-bg is). The CSS approach
-       works identically across Chrome / Firefox / Safari iOS / Edge. -->
-  <div id="lava-bg"></div>
+       Two-element setup: the OUTER wrapper handles position:fixed +
+       transform (WebKit's known showstopper for SVG filters), the
+       INNER element holds the filter + the blobs. Result: SVG filter
+       renders correctly on iOS Safari AND keeps the orange #ff6600
+       intact (the alpha-only color matrix doesn't mangle RGB). -->
+  <div id="lava-bg-fixed">
+    <div id="lava-bg"></div>
+  </div>
+
+  <!-- SVG Gooey Filter (blur + alpha threshold = metaball merge).
+       The color matrix has identity RGB rows and only manipulates the
+       alpha channel, so blob colors are preserved bit-for-bit.
+       feBlend composites the original sharp blobs over the gooey
+       threshold layer: blob centers stay crisp, edges + nearby blobs
+       merge organically into the metaball. (feComposite atop here
+       would clip everything to the unblurred source and KILL the
+       merge — don't change it back.) -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden;" aria-hidden="true">
+    <defs>
+      <filter id="gooey" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="14" result="blur"/>
+        <feColorMatrix in="blur" mode="matrix"
+          values="1 0 0 0 0
+                  0 1 0 0 0
+                  0 0 1 0 0
+                  0 0 0 22 -10"
+          result="gooey"/>
+        <feBlend in="SourceGraphic" in2="gooey"/>
+      </filter>
+    </defs>
+  </svg>
 
   <script type="module" src="/src/main.js"></script>
 </body>
