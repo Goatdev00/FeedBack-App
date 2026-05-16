@@ -26,14 +26,15 @@ mkdirSync(OUT, { recursive: true });
 
 const BG = { r: 10, g: 10, b: 15, alpha: 1 }; // #0A0A0F brand background
 
-// Each variant: target square size + how much the logo should occupy
-// (padding gives the icon breathing room so iOS's rounded corners don't
-// clip the artwork).
+// Each variant: target square size + how much the logo should occupy.
+// Padding is very small (3-4%) so the lettering reaches close to the
+// rounded-corner edge. iOS clips the corners — 3% on a 180px icon = ~5px
+// safety margin, which is enough to keep the letterforms intact.
 const VARIANTS = [
-  { file: 'logo.png',     size: 1024, padding: 0.10 },
-  { file: 'logo-512.png',  size: 512, padding: 0.10 },
-  { file: 'logo-192.png',  size: 192, padding: 0.08 },
-  { file: 'logo-180.png',  size: 180, padding: 0.08 },
+  { file: 'logo.png',     size: 1024, padding: 0.04 },
+  { file: 'logo-512.png',  size: 512, padding: 0.04 },
+  { file: 'logo-192.png',  size: 192, padding: 0.03 },
+  { file: 'logo-180.png',  size: 180, padding: 0.03 },
 ];
 
 async function buildOne({ file, size, padding }) {

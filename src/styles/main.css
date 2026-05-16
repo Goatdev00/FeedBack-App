@@ -149,7 +149,17 @@ body {
   z-index: 1;
 }
 
-/* --- Lava Lamp / Metaballs Background --- */
+/* --- Lava Lamp / Metaballs Background ---
+   Cross-browser metaball technique:
+     1. Solid background color (matches body bg) so the contrast filter
+        has a base to clamp against.
+     2. `filter: blur(...) contrast(...)` blurs each blob into its
+        neighbour, then aggressively boosts contrast so alpha values are
+        clamped to either ~1 (inside the merged blob) or ~0 (outside).
+        Result: organic blobs merge like lava.
+   Works on Chrome / Firefox / Edge AND iOS Safari, unlike SVG filter
+   url() which WebKit silently fails to render on elements with
+   position:fixed + transform. */
 #lava-bg {
   position: fixed;
   top: 0;
@@ -161,8 +171,14 @@ body {
   z-index: 0;
   pointer-events: none;
   overflow: hidden;
+  background-color: #050505;       /* must match body bg in dark theme */
+  -webkit-filter: blur(14px) contrast(20);
+          filter: blur(14px) contrast(20);
 }
 
+[data-theme="light"] #lava-bg {
+  background-color: #F0F0F5;        /* must match body bg in light theme */
+}
 
 .lava-blob {
   position: absolute;
