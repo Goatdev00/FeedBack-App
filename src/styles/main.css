@@ -169,7 +169,6 @@ body {
   top: 0;
   left: 0;
   border-radius: 50%;
-  will-change: transform;
   opacity: 1;
 }
 

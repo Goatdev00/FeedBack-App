@@ -56,12 +56,12 @@
   <div id="app"></div>
 
   <!-- Lava Lamp / Metaballs Background -->
-  <div id="lava-bg" style="filter: url('#gooey');"></div>
+  <div id="lava-bg" style="-webkit-filter: url('#gooey'); filter: url('#gooey');"></div>
 
   <!-- SVG Gooey Filter (blur + contrast threshold = metaball merge) -->
   <svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden;">
     <defs>
-      <filter id="gooey">
+      <filter id="gooey" color-interpolation-filters="sRGB">
         <feGaussianBlur in="SourceGraphic" stdDeviation="12" result="blur"/>
         <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -9" result="gooey"/>
         <feBlend in="SourceGraphic" in2="gooey"/>
