@@ -160,8 +160,10 @@ body {
   z-index: -1;
   pointer-events: none;
   overflow: hidden;
-  /* `filter: url(#gooey)` and `opacity` intentionally removed so the
-     orange stays at full strength (#ff6600, no blending). */
+  /* Gooey filter restored: blur + alpha-threshold matrix in index.html
+     makes overlapping blobs merge organically (metaballs). The RGB
+     channels are identity-matrixed so #ff6600 stays at full saturation. */
+  filter: url(#gooey);
 }
 
 .lava-blob {
@@ -291,6 +293,42 @@ span > svg {
 }
 
 .nav-item:active svg {
+  transform: scale(0.85);
+}
+
+/* Raster PNG icons rendered via mask-image so they inherit the nav-item
+   color (gray default, orange when .active) via background-color. */
+.nav-item-icon {
+  display: inline-block;
+  width: 44px;
+  height: 44px;
+  background-color: currentColor;
+  -webkit-mask-position: center;
+          mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+          mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+          mask-size: contain;
+  flex-shrink: 0;
+  transition: transform var(--duration-normal) var(--ease-spring);
+}
+
+.nav-item-icon-profile {
+  -webkit-mask-image: url('/icons/nav-profile.png');
+          mask-image: url('/icons/nav-profile.png');
+}
+
+.nav-item-icon-wall {
+  -webkit-mask-image: url('/icons/nav-wall.png');
+          mask-image: url('/icons/nav-wall.png');
+}
+
+.nav-item-icon-parties {
+  -webkit-mask-image: url('/icons/nav-parties.png');
+          mask-image: url('/icons/nav-parties.png');
+}
+
+.nav-item:active .nav-item-icon {
   transform: scale(0.85);
 }
 

@@ -71,15 +71,35 @@ router.register('chat-party', renderChatParty);
 initLavaLamp('lava-bg');
 
 if (isSupabaseConfigured()) {
-  // The listener handle is intentionally dropped — it lives for the
-  // whole SPA lifetime.
+  // Track which user the SPA is currently routing for. supabase-js fires
+  // onAuthChange not only on sign-in / sign-out but ALSO on every
+  // TOKEN_REFRESHED event (~every 50 min). Without this guard, every
+  // refresh would force-navigate the user back to /wall, even if they
+  // were mid-chat or mid-checkout. We only route when the user identity
+  // actually transitions.
+  let routedUserId = null;
+
   onAuthChange(async (session) => {
-    if (!session) {
-      clearLocalSession();
-      router.navigate('login');
+    const newUserId = session?.user?.id || null;
+
+    if (!newUserId) {
+      // Signed out (or initial null). Only reset + navigate if we had a
+      // previously-routed user; otherwise we're just booting cold.
+      if (routedUserId !== null || router.getCurrentRoute() === null) {
+        clearLocalSession();
+        router.navigate('login');
+      }
+      routedUserId = null;
       return;
     }
-    await routeAfterSession();
+
+    if (newUserId !== routedUserId) {
+      // Genuine sign-in or initial-session-restored.
+      routedUserId = newUserId;
+      await routeAfterSession();
+    }
+    // Same user, different event (TOKEN_REFRESHED, USER_UPDATED). Stay
+    // on whatever route the user is on.
   });
 } else {
   // Legacy demo mode: no Supabase wired up, send straight to the
@@ -88,12 +108,24 @@ if (isSupabaseConfigured()) {
 }
 
 async function routeAfterSession() {
-  const profile = await syncProfileIntoStore();
+  // Try a few times before giving up — a single network blip during the
+  // first paint after OAuth shouldn't kick an authenticated user back to
+  // the login screen.
+  let profile = null;
+  for (let attempt = 0; attempt < 3 && !profile; attempt++) {
+    profile = await syncProfileIntoStore();
+    if (!profile && attempt < 2) {
+      await new Promise(r => setTimeout(r, 400 * (attempt + 1))); // 400ms, 800ms
+    }
+  }
 
   if (!profile) {
-    // Session exists but profile fetch failed — rare, send to login so
-    // the user can retry. Network blips usually self-heal here.
-    router.navigate('login');
+    // We KNOW the session is valid (onAuthChange already validated it).
+    // The profile row just isn't reachable right now. Park on /wall —
+    // it'll re-fetch when the user interacts, and the legacy localStorage
+    // store keeps the UI functional in the meantime. Forcing /login here
+    // would be a worse experience than a partially-empty wall.
+    router.navigate('wall');
     return;
   }
 

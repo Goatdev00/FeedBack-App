@@ -2,23 +2,20 @@
 // FEEDBACK — Bottom Navigation Component
 // ============================================
 
-import { ICONS, isSunday } from '../data/mock-data.js';
+import { isSunday } from '../data/mock-data.js';
 import { router } from '../router.js';
 
 export function renderBottomNav(activeTab = 'wall') {
   return `
     <nav class="bottom-nav" id="bottom-nav">
-      <button class="nav-item ${activeTab === 'profile' ? 'active' : ''}" data-nav="profile" id="nav-profile">
-        ${ICONS.profile}
-        <span class="nav-label">Perfil</span>
+      <button class="nav-item ${activeTab === 'profile' ? 'active' : ''}" data-nav="profile" id="nav-profile" aria-label="Perfil" title="Perfil">
+        <span class="nav-item-icon nav-item-icon-profile" aria-hidden="true"></span>
       </button>
-      <button class="nav-item ${activeTab === 'wall' ? 'active' : ''}" data-nav="wall" id="nav-wall">
-        ${ICONS.wall}
-        <span class="nav-label">Muro</span>
+      <button class="nav-item ${activeTab === 'wall' ? 'active' : ''}" data-nav="wall" id="nav-wall" aria-label="Muro" title="Muro">
+        <span class="nav-item-icon nav-item-icon-wall" aria-hidden="true"></span>
       </button>
-      <button class="nav-item ${activeTab === 'parties' ? 'active' : ''}" data-nav="parties" id="nav-parties">
-        ${ICONS.parties}
-        <span class="nav-label">Fiestas</span>
+      <button class="nav-item ${activeTab === 'parties' ? 'active' : ''}" data-nav="parties" id="nav-parties" aria-label="Fiestas" title="Fiestas">
+        <span class="nav-item-icon nav-item-icon-parties" aria-hidden="true"></span>
         ${isSunday ? '<span class="notification-dot"></span>' : ''}
       </button>
     </nav>

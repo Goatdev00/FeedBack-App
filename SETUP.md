@@ -79,7 +79,7 @@ select cron.schedule(
 3. Copy Client ID and Client Secret.
 4. In Supabase Dashboard → **Authentication → Providers → Google**: paste both and enable.
 5. **Authentication → URL Configuration**:
-   - Site URL: your Railway URL once deployed (e.g. `https://feedback.up.railway.app`)
+   - Site URL: your production URL (e.g. `https://partyrate.site`)
    - Additional Redirect URLs: also add `http://localhost:3000` for dev.
 
 ---
@@ -120,7 +120,7 @@ supabase secrets set \
   BOLD_API_KEY="..." \
   BOLD_SECRET_KEY="..." \
   BOLD_WEBHOOK_SECRET="..." \
-  BOLD_REDIRECT_BASE_URL="https://feedback.up.railway.app/membership/success"
+  BOLD_REDIRECT_BASE_URL="https://partyrate.site/membership/success"
 ```
 
 ### 3.4 Deploy the Edge Functions

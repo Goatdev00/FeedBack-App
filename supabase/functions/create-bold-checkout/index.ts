@@ -14,7 +14,7 @@
 // Env vars (set via `supabase secrets set`):
 //   BOLD_API_KEY            public identity key (goes to the browser)
 //   BOLD_SECRET_KEY         server-only secret used for HMAC
-//   BOLD_REDIRECT_BASE_URL  e.g. https://feedback.app/membership/success
+//   BOLD_REDIRECT_BASE_URL  e.g. https://partyrate.site/membership/success
 //   SUPABASE_URL            injected by the runtime
 //   SUPABASE_SERVICE_ROLE_KEY injected by the runtime
 // =====================================================================
