@@ -1,0 +1,613 @@
+// ============================================
+// FEEDBACK — Profile Page (Own + Other)
+// ============================================
+
+import { store, ICONS, POINTS_RULES, formatRelative } from '../data/mock-data.js';
+import { router } from '../router.js';
+import { showToast, showPointsToast } from '../utils/toast.js';
+import { avatarHTML, roleLabel, roleBadgeClass, roleTitle, sanitize, debounce } from '../utils/helpers.js';
+import { createModal } from '../utils/dom.js';
+import { renderBottomNav, bindNavEvents } from '../components/nav.js';
+import { isSupabaseConfigured } from '../data/supabase.js';
+import { signOut } from '../data/auth.js';
+import { clearLocalSession } from '../data/profile-sync.js';
+
+const CITY_OPTIONS = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena', 'Otra'];
+
+// Display order + emoji for the "¿Cómo ganar puntos?" guide shown in the
+// points tab. Source of truth for the values themselves is POINTS_RULES.
+const POINTS_EARN_GUIDE = [
+  { key: 'attendParty',     emoji: '🎉' },
+  { key: 'firstPost',       emoji: '✍️' },
+  { key: 'ratePartySunday', emoji: '⭐' },
+  { key: 'answerQuestion',  emoji: '💬' },
+  { key: 'followConnection',emoji: '🤝' },
+  { key: 'featuredPost',    emoji: '🔥' },
+  { key: 'validatedReport', emoji: '🛡️' },
+];
+
+export function renderProfile(container) {
+  const state = store.getState();
+  const user = state.currentUser;
+  if (!user) { router.navigate('login'); return; }
+  // Apply user's theme
+  store.applyTheme(user.theme || 'dark');
+  renderProfileView(container, user, true);
+}
+
+export function renderProfileOther(container, params = {}) {
+  const state = store.getState();
+  const userId = params.userId || state.viewingUserId;
+  const user = store.getUserById(userId);
+  if (!user) { router.navigate('wall'); return; }
+  const isOwn = state.currentUser && state.currentUser.id === userId;
+  if (isOwn) store.applyTheme(user.theme || 'dark');
+  renderProfileView(container, user, isOwn);
+}
+
+function renderSocialLinks(user) {
+  const social = user.social || {};
+  const links = [];
+  
+  if (social.instagram) {
+    links.push(`
+      <a href="https://instagram.com/${social.instagram}" target="_blank" rel="noopener" class="social-link social-instagram" title="Instagram">
+        <span class="social-icon">${ICONS.instagram}</span>
+        <span class="social-handle">@${social.instagram}</span>
+      </a>
+    `);
+  }
+  if (social.tiktok) {
+    links.push(`
+      <a href="https://tiktok.com/@${social.tiktok}" target="_blank" rel="noopener" class="social-link social-tiktok" title="TikTok">
+        <span class="social-icon">${ICONS.tiktok}</span>
+        <span class="social-handle">@${social.tiktok}</span>
+      </a>
+    `);
+  }
+  if (social.twitter) {
+    links.push(`
+      <a href="https://x.com/${social.twitter}" target="_blank" rel="noopener" class="social-link social-twitter" title="X (Twitter)">
+        <span class="social-icon">${ICONS.twitter}</span>
+        <span class="social-handle">@${social.twitter}</span>
+      </a>
+    `);
+  }
+  
+  if (links.length === 0) return '';
+  
+  return `
+    <div class="social-links">
+      ${links.join('')}
+    </div>
+  `;
+}
+
+function renderProfileView(container, user, isOwn) {
+  const state = store.getState();
+  const currentUser = state.currentUser;
+  const followers = store.getFollowerCount(user.id);
+  const following = store.getFollowingCount(user.id);
+  const isFollowing = currentUser && !isOwn ? store.isFollowing(currentUser.id, user.id) : false;
+  const userPosts = state.posts.filter(p => p.userId === user.id);
+  const userParties = user.partiesAttended || [];
+  const currentTheme = (isOwn ? user.theme : currentUser?.theme) || 'dark';
+
+  container.innerHTML = `
+    <div class="page" id="profile-page">
+      ${!isOwn ? `
+        <button class="back-btn" id="back-btn">
+          ${ICONS.back}
+          <span>Volver</span>
+        </button>
+      ` : ''}
+
+      <!-- Theme Toggle (own profile only) -->
+      ${isOwn ? `
+        <div class="theme-toggle-wrapper">
+          <button class="theme-toggle-btn" id="theme-toggle" title="${currentTheme === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}">
+            <span class="theme-icon theme-icon-sun ${currentTheme === 'light' ? 'active' : ''}">${ICONS.sun}</span>
+            <span class="theme-icon theme-icon-moon ${currentTheme === 'dark' ? 'active' : ''}">${ICONS.moon}</span>
+          </button>
+        </div>
+      ` : ''}
+
+      <!-- Profile Header -->
+      <div class="profile-header">
+        <div class="profile-info">
+          ${avatarHTML(user, 'avatar-2xl', 'avatar-orange')}
+          
+          <div style="display:flex;align-items:center;gap:var(--space-sm);margin-top:var(--space-md);">
+            <h1 class="profile-name">${sanitize(user.name)}</h1>
+            ${user.premium ? '<span class="premium-badge">PRO</span>' : ''}
+          </div>
+          
+          <p class="profile-username">${sanitize(user.username)}</p>
+          
+          <span class="badge ${roleBadgeClass(user.role)}">${roleLabel(user.role)}</span>
+          
+          <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
+            <span style="width:14px;height:14px;display:inline-flex;color:var(--text-secondary);">${ICONS.location}</span>
+            <span style="font-size:var(--text-sm);color:var(--text-secondary);">${user.city}</span>
+          </div>
+
+          ${user.bio ? `<p class="profile-bio">${sanitize(user.bio)}</p>` : ''}
+
+          <!-- Social Media Links -->
+          ${renderSocialLinks(user)}
+
+          <!-- Points -->
+          <div class="points-display" style="margin-top:var(--space-md);">
+            ${ICONS.zap}
+            <span>${user.points} pts</span>
+          </div>
+
+          <!-- Stats -->
+          <div class="profile-stats">
+            <div class="profile-stat">
+              <span class="profile-stat-value">${followers}</span>
+              <span class="profile-stat-label">Seguidores</span>
+            </div>
+            <div class="profile-stat">
+              <span class="profile-stat-value">${following}</span>
+              <span class="profile-stat-label">Siguiendo</span>
+            </div>
+            <div class="profile-stat">
+              <span class="profile-stat-value">${userParties.length}</span>
+              <span class="profile-stat-label">Fiestas</span>
+            </div>
+          </div>
+
+          <!-- Actions -->
+          <div style="display:flex;gap:var(--space-sm);margin-top:var(--space-lg);width:100%;">
+            ${isOwn ? `
+              <button class="btn btn-secondary btn-full btn-sm" id="edit-profile" style="gap:6px;">
+                <span style="width:16px;height:16px;display:inline-flex;">${ICONS.edit}</span>
+                Editar perfil
+              </button>
+              <button class="btn btn-ghost btn-icon btn-sm" id="settings-btn" style="width:40px;height:40px;">
+                <span style="width:18px;height:18px;display:inline-flex;">${ICONS.settings}</span>
+              </button>
+            ` : `
+              <button class="btn ${isFollowing ? 'btn-secondary following' : 'btn-primary'} follow-btn" id="follow-btn" style="flex:1;" data-user-id="${user.id}">
+                ${isFollowing ? 'Siguiendo ✓' : 'Seguir'}
+              </button>
+              <button class="btn btn-outline btn-sm" id="ask-btn" data-user-id="${user.id}">
+                ${ICONS.question}
+              </button>
+            `}
+          </div>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tab-bar" id="profile-tabs">
+        <button class="tab-item active" data-tab="posts">Publicaciones</button>
+        <button class="tab-item" data-tab="questions">Preguntas</button>
+        <button class="tab-item" data-tab="puntos">Puntos</button>
+      </div>
+
+      <!-- Tab Content -->
+      <div id="profile-tab-content">
+        ${renderPostsTab(userPosts)}
+      </div>
+
+      ${isOwn ? `
+        <!-- Search Profiles -->
+        <div style="margin-top:var(--space-xl);">
+          <h3 style="font-size:var(--text-sm);font-weight:600;color:var(--text-secondary);margin-bottom:var(--space-md);">🔍 Buscar perfiles</h3>
+          <div class="search-bar">
+            ${ICONS.search}
+            <input type="text" id="profile-search" placeholder="Nombre, @username, ciudad..." autocomplete="off" />
+          </div>
+          <div id="search-results"></div>
+        </div>
+      ` : ''}
+    </div>
+
+    ${renderBottomNav(isOwn ? 'profile' : '')}
+  `;
+
+  bindProfileEvents(container, user, isOwn);
+}
+
+function renderPostsTab(posts) {
+  if (posts.length === 0) {
+    return `
+      <div class="empty-state" style="padding:var(--space-xl);">
+        <div style="font-size:2rem;margin-bottom:var(--space-sm);">📝</div>
+        <h3 class="empty-state-title">Sin publicaciones</h3>
+        <p class="empty-state-text">Las publicaciones aparecerán aquí</p>
+      </div>
+    `;
+  }
+  return posts.map(post => {
+    const party = store.getPartyById(post.partyId);
+    return `
+      <div class="card mb-md" style="animation:fadeInUp 0.3s var(--ease-out);">
+        ${party ? `
+          <div class="post-party-tag" style="margin-bottom:var(--space-sm);">
+            ${ICONS.location} ${sanitize(party.name)}
+          </div>
+        ` : ''}
+        <p style="font-size:var(--text-sm);line-height:1.6;">${sanitize(post.content)}</p>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:var(--space-sm);">
+          <span style="font-size:var(--text-xs);color:var(--text-tertiary);">${formatRelative(new Date(post.createdAt))}</span>
+          <span style="font-size:var(--text-xs);color:var(--text-tertiary);">❤️ ${post.likes}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderQuestionsTab(questions, isOwn, userId) {
+  const answeredQ = questions.filter(q => q.answer);
+  const unansweredQ = questions.filter(q => !q.answer);
+
+  let html = '';
+
+  if (isOwn && unansweredQ.length > 0) {
+    html += `<h4 style="font-size:var(--text-sm);color:var(--orange);margin-bottom:var(--space-md);">📩 Pendientes (${unansweredQ.length})</h4>`;
+    html += unansweredQ.map(q => `
+      <div class="question-card">
+        <div class="question-anonymous">Anónimo · ${formatRelative(new Date(q.createdAt))}</div>
+        <div class="question-text">${sanitize(q.question)}</div>
+        <div style="display:flex;gap:var(--space-sm);">
+          <input type="text" class="input" placeholder="Tu respuesta..." data-question-id="${q.id}" style="flex:1;padding:10px 14px;font-size:var(--text-sm);" />
+          <button class="btn btn-primary btn-sm answer-btn" data-question-id="${q.id}">${ICONS.send}</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  if (answeredQ.length > 0) {
+    if (html) html += `<div style="height:1px;background:var(--border-subtle);margin:var(--space-lg) 0;"></div>`;
+    html += answeredQ.map(q => `
+      <div class="question-card">
+        <div class="question-anonymous">Anónimo · ${formatRelative(new Date(q.createdAt))}</div>
+        <div class="question-text">${sanitize(q.question)}</div>
+        <div class="question-answer">${sanitize(q.answer)}</div>
+      </div>
+    `).join('');
+  }
+
+  if (questions.length === 0) {
+    html = `
+      <div class="empty-state" style="padding:var(--space-xl);">
+        <div style="font-size:2rem;margin-bottom:var(--space-sm);">💬</div>
+        <h3 class="empty-state-title">Sin preguntas aún</h3>
+        <p class="empty-state-text">${isOwn ? 'Cuando te hagan preguntas aparecerán aquí' : 'Sé el primero en preguntar'}</p>
+      </div>
+    `;
+  }
+
+  // Ask box for non-own profiles
+  if (!isOwn) {
+    html += `
+      <div style="margin-top:var(--space-lg);padding-top:var(--space-lg);border-top:1px solid var(--border-subtle);">
+        <h4 style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-md);">Haz una pregunta anónima</h4>
+        <div style="display:flex;gap:var(--space-sm);">
+          <input type="text" class="input" id="inline-question-input" placeholder="Tu pregunta..." style="flex:1;font-size:var(--text-sm);" maxlength="200" />
+          <button class="btn btn-primary btn-sm" id="inline-question-send" data-user-id="${userId}">${ICONS.send}</button>
+        </div>
+      </div>
+    `;
+  }
+
+  return html;
+}
+
+function renderPointsTab(user) {
+  const points = user.points || 0;
+  const guideItems = POINTS_EARN_GUIDE
+    .map(({ key, emoji }) => {
+      const rule = POINTS_RULES[key];
+      if (!rule) return '';
+      return `
+        <li class="points-earn-item">
+          <span class="points-earn-emoji">${emoji}</span>
+          <span class="points-earn-label">${rule.label}</span>
+          <span class="points-earn-value">+${rule.points}</span>
+        </li>
+      `;
+    })
+    .join('');
+
+  return `
+    <div class="points-tab">
+      <div class="points-hero">
+        <span class="points-hero-icon">${ICONS.zap}</span>
+        <div class="points-hero-value">${points.toLocaleString('es')}</div>
+        <div class="points-hero-label">${points === 1 ? 'punto acumulado' : 'puntos acumulados'}</div>
+      </div>
+
+      <h4 class="points-section-title">¿Cómo ganar más puntos?</h4>
+      <ul class="points-earn-list">
+        ${guideItems}
+      </ul>
+
+      <p class="points-tip">
+        💡 Mantén tu racha: publica, califica las fiestas el domingo y responde preguntas para subir más rápido.
+      </p>
+    </div>
+  `;
+}
+
+function bindProfileEvents(container, user, isOwn) {
+  // Back
+  const backBtn = container.querySelector('#back-btn');
+  if (backBtn) {
+    backBtn.addEventListener('click', () => router.navigate('wall'));
+  }
+
+  // Theme toggle
+  const themeToggle = container.querySelector('#theme-toggle');
+  if (themeToggle) {
+    themeToggle.addEventListener('click', () => {
+      store.toggleTheme();
+      // Re-render to update the toggle button state
+      renderProfile(container);
+    });
+  }
+
+  // Follow
+  const followBtn = container.querySelector('#follow-btn');
+  if (followBtn) {
+    followBtn.addEventListener('click', () => {
+      const result = store.toggleFollow(user.id) || {};
+      const isNowFollowing = store.isFollowing(store.getState().currentUser.id, user.id);
+      followBtn.className = `btn ${isNowFollowing ? 'btn-secondary following' : 'btn-primary'} follow-btn`;
+      followBtn.style.flex = '1';
+      followBtn.textContent = isNowFollowing ? 'Siguiendo ✓' : 'Seguir';
+
+      if (result.awarded) {
+        // Mutual connection achieved (both parties follow each other now).
+        showPointsToast(10, `Conectados con ${user.name} 🤝`);
+      } else {
+        showToast(isNowFollowing ? `Siguiendo a ${user.name}` : `Dejaste de seguir a ${user.name}`, 'info');
+      }
+    });
+  }
+
+  // Ask button
+  const askBtn = container.querySelector('#ask-btn');
+  if (askBtn) {
+    askBtn.addEventListener('click', () => {
+      const tabBtns = container.querySelectorAll('.tab-item');
+      tabBtns.forEach(t => t.classList.remove('active'));
+      tabBtns[1].classList.add('active'); // questions tab
+      const content = container.querySelector('#profile-tab-content');
+      const questions = store.getQuestionsForUser(user.id);
+      content.innerHTML = renderQuestionsTab(questions, false, user.id);
+      bindQuestionEvents(container, user.id);
+    });
+  }
+
+  // Edit profile
+  const editBtn = container.querySelector('#edit-profile');
+  if (editBtn) {
+    editBtn.addEventListener('click', () => {
+      showEditProfileModal(container, user);
+    });
+  }
+
+  // Settings / Logout
+  const settingsBtn = container.querySelector('#settings-btn');
+  if (settingsBtn) {
+    settingsBtn.addEventListener('click', () => {
+      showSettingsModal();
+    });
+  }
+
+  // Tabs
+  const tabs = container.querySelectorAll('.tab-item');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const content = container.querySelector('#profile-tab-content');
+      switch (tab.dataset.tab) {
+        case 'posts':
+          content.innerHTML = renderPostsTab(store.getState().posts.filter(p => p.userId === user.id));
+          break;
+        case 'questions':
+          content.innerHTML = renderQuestionsTab(store.getQuestionsForUser(user.id), isOwn, user.id);
+          bindQuestionEvents(container, user.id);
+          break;
+        case 'puntos':
+          content.innerHTML = renderPointsTab(user);
+          break;
+      }
+    });
+  });
+
+  // Profile search
+  const searchInput = container.querySelector('#profile-search');
+  if (searchInput) {
+    searchInput.addEventListener('input', debounce((e) => {
+      const query = e.target.value.trim();
+      const results = store.searchUsers(query);
+      const resultsDiv = container.querySelector('#search-results');
+      if (!query) {
+        resultsDiv.innerHTML = '';
+        return;
+      }
+      resultsDiv.innerHTML = results.length > 0
+        ? results.filter(u => u.id !== user.id).map(u => `
+          <div class="card mb-sm" style="display:flex;align-items:center;gap:var(--space-md);cursor:pointer;padding:var(--space-sm) var(--space-md);" data-action="view-profile" data-user-id="${u.id}">
+            ${avatarHTML(u, 'avatar-sm')}
+            <div style="flex:1;">
+              <div style="font-size:var(--text-sm);font-weight:600;">${sanitize(u.name)}</div>
+              <div style="font-size:var(--text-xs);color:var(--text-tertiary);">${u.username} · ${u.city}</div>
+            </div>
+            <span class="badge ${roleBadgeClass(u.role)}" style="font-size:0.5625rem;padding:2px 6px;">${roleTitle(u.role)}</span>
+          </div>
+        `).join('')
+        : `<p style="font-size:var(--text-sm);color:var(--text-tertiary);text-align:center;padding:var(--space-lg);">No se encontraron perfiles</p>`;
+
+      // Bind profile clicks
+      resultsDiv.querySelectorAll('[data-action="view-profile"]').forEach(el => {
+        el.addEventListener('click', () => {
+          const userId = el.dataset.userId;
+          store.setState({ viewingUserId: userId });
+          router.navigate('profile-other', { userId });
+        });
+      });
+    }, 250));
+  }
+
+  // Nav — single shared handler. The previous implementation also called
+  // `bindNavFromContainer` here, doubling up with main.js and triggering two
+  // router.navigate() calls per tap.
+  bindNavEvents();
+}
+
+function bindQuestionEvents(container, userId) {
+  // Answer buttons
+  container.querySelectorAll('.answer-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const qId = btn.dataset.questionId;
+      const input = container.querySelector(`input[data-question-id="${qId}"]`);
+      const answer = input?.value?.trim();
+      if (!answer) { showToast('Escribe tu respuesta', 'error'); return; }
+      store.answerQuestion(qId, answer);
+      showToast('Respuesta enviada +5 pts ⚡', 'points');
+      // Re-render questions tab
+      const content = container.querySelector('#profile-tab-content');
+      const questions = store.getQuestionsForUser(userId);
+      const state = store.getState();
+      const isOwn = state.currentUser && state.currentUser.id === userId;
+      content.innerHTML = renderQuestionsTab(questions, isOwn, userId);
+      bindQuestionEvents(container, userId);
+    });
+  });
+
+  // Inline question
+  const sendBtn = container.querySelector('#inline-question-send');
+  if (sendBtn) {
+    sendBtn.addEventListener('click', () => {
+      const input = container.querySelector('#inline-question-input');
+      const text = input?.value?.trim();
+      if (!text) { showToast('Escribe tu pregunta', 'error'); return; }
+      store.addQuestion(userId, text);
+      showToast('Pregunta enviada 📨', 'success');
+      input.value = '';
+    });
+  }
+}
+
+function showEditProfileModal(container, user) {
+  const social = user.social || {};
+  const overlay = createModal(`
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <h2 class="modal-title">Editar perfil</h2>
+
+      <div class="input-group mb-md">
+        <label class="input-label">Nombre</label>
+        <input type="text" class="input" id="edit-name" value="${sanitize(user.name)}" maxlength="30" />
+      </div>
+      <div class="input-group mb-md">
+        <label class="input-label">Bio</label>
+        <textarea class="input textarea" id="edit-bio" maxlength="150" style="min-height:80px;">${sanitize(user.bio || '')}</textarea>
+      </div>
+      <div class="input-group mb-md">
+        <label class="input-label">Ciudad</label>
+        <select class="input" id="edit-city">
+          ${CITY_OPTIONS.map(c =>
+            `<option value="${c}" ${user.city === c ? 'selected' : ''}>${c}</option>`
+          ).join('')}
+        </select>
+      </div>
+
+      <!-- Social Media -->
+      <div style="margin-bottom:var(--space-md);">
+        <label class="input-label" style="margin-bottom:var(--space-sm);display:block;">Redes sociales</label>
+        <div class="input-group mb-sm">
+          <div style="display:flex;align-items:center;gap:var(--space-sm);">
+            <span class="social-edit-icon" style="width:20px;height:20px;color:var(--text-secondary);display:inline-flex;">${ICONS.instagram}</span>
+            <input type="text" class="input" id="edit-instagram" value="${sanitize(social.instagram || '')}" placeholder="usuario de Instagram" style="flex:1;" />
+          </div>
+        </div>
+        <div class="input-group mb-sm">
+          <div style="display:flex;align-items:center;gap:var(--space-sm);">
+            <span class="social-edit-icon" style="width:20px;height:20px;color:var(--text-secondary);display:inline-flex;">${ICONS.tiktok}</span>
+            <input type="text" class="input" id="edit-tiktok" value="${sanitize(social.tiktok || '')}" placeholder="usuario de TikTok" style="flex:1;" />
+          </div>
+        </div>
+        <div class="input-group mb-sm">
+          <div style="display:flex;align-items:center;gap:var(--space-sm);">
+            <span class="social-edit-icon" style="width:20px;height:20px;color:var(--text-secondary);display:inline-flex;">${ICONS.twitter}</span>
+            <input type="text" class="input" id="edit-twitter" value="${sanitize(social.twitter || '')}" placeholder="usuario de X (Twitter)" style="flex:1;" />
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:var(--space-sm);">
+        <button class="btn btn-secondary" id="cancel-edit" style="flex:1;">Cancelar</button>
+        <button class="btn btn-primary" id="save-edit" style="flex:1;">Guardar</button>
+      </div>
+    </div>
+  `);
+
+  overlay.querySelector('#cancel-edit').addEventListener('click', () => overlay.close());
+
+  overlay.querySelector('#save-edit').addEventListener('click', () => {
+    const name = overlay.querySelector('#edit-name').value.trim();
+    const bio = overlay.querySelector('#edit-bio').value.trim();
+    const city = overlay.querySelector('#edit-city').value;
+    const instagram = overlay.querySelector('#edit-instagram').value.trim();
+    const tiktok = overlay.querySelector('#edit-tiktok').value.trim();
+    const twitter = overlay.querySelector('#edit-twitter').value.trim();
+    if (!name) { showToast('El nombre es obligatorio', 'error'); return; }
+
+    const updatedUser = {
+      ...user, name, bio, city,
+      social: { instagram, tiktok, twitter }
+    };
+    const users = store.getState().users.map(u => u.id === user.id ? updatedUser : u);
+    store.setState({ currentUser: updatedUser, users, selectedCity: city });
+    overlay.close();
+    showToast('Perfil actualizado ✅', 'success');
+    renderProfile(container);
+  });
+}
+
+function showSettingsModal() {
+  const overlay = createModal(`
+    <div class="modal" style="max-height:40dvh;">
+      <div class="modal-handle"></div>
+      <h2 class="modal-title">Configuración</h2>
+
+      <div style="display:flex;flex-direction:column;gap:var(--space-sm);">
+        <button class="btn btn-secondary btn-full" id="btn-logout" style="justify-content:flex-start;color:var(--orange);">
+          ${ICONS.logout}
+          Cerrar sesión
+        </button>
+        <button class="btn btn-ghost btn-full" id="btn-reset" style="justify-content:flex-start;color:var(--text-tertiary);">
+          Reiniciar datos (demo)
+        </button>
+      </div>
+    </div>
+  `);
+
+  overlay.querySelector('#btn-logout').addEventListener('click', async () => {
+    overlay.close();
+    if (isSupabaseConfigured()) {
+      await signOut();
+      // onAuthChange in main.js will fire and route to /login, but we
+      // also clear local state immediately so the UI doesn't flicker.
+    }
+    clearLocalSession();
+    router.navigate('login');
+  });
+
+  overlay.querySelector('#btn-reset').addEventListener('click', async () => {
+    if (isSupabaseConfigured()) await signOut();
+    store.resetState();
+    overlay.close();
+    router.navigate('login');
+    showToast('App reiniciada', 'info');
+  });
+}
+

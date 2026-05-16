@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FEEDBACK — Membresías</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --bg-2: #141414;
+    --orange: #ff6a00;
+    --orange-hot: #ff8c1a;
+    --orange-deep: #cc4f00;
+    --text: #f5f5f5;
+    --muted: #8a8a8a;
+    --line: rgba(255, 106, 0, 0.25);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Space Grotesk', sans-serif;
+    min-height: 100vh;
+    padding: 60px 24px;
+    position: relative;
+    overflow-x: hidden;
+  }
+
+  /* grain + glow background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(circle at 20% 10%, rgba(255, 106, 0, 0.15), transparent 40%),
+      radial-gradient(circle at 80% 90%, rgba(255, 106, 0, 0.1), transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.08 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    opacity: 0.5;
+    pointer-events: none;
+    z-index: 1;
+    mix-blend-mode: overlay;
+  }
+
+  .container {
+    max-width: 1280px;
+    margin: 0 auto;
+    position: relative;
+    z-index: 2;
+  }
+
+  /* Header */
+  header {
+    margin-bottom: 64px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 24px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 32px;
+  }
+
+  .brand {
+    font-family: 'Archivo Black', sans-serif;
+    font-size: clamp(48px, 7vw, 88px);
+    color: var(--orange);
+    letter-spacing: -0.04em;
+    line-height: 0.9;
+    text-transform: uppercase;
+    position: relative;
+  }
+
+  .brand::after {
+    content: 'FEEDBACK';
+    position: absolute;
+    left: 2px;
+    top: 0;
+    color: var(--orange-hot);
+    mix-blend-mode: screen;
+    opacity: 0.4;
+    z-index: -1;
+  }
+
+  .brand .dot {
+    color: var(--text);
+    margin-left: 4px;
+  }
+
+  .tagline {
+    text-align: right;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    line-height: 1.6;
+  }
+
+  .tagline strong {
+    color: var(--orange);
+  }
+
+  .section-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.3em;
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .section-title::before,
+  .section-title::after {
+    content: '';
+    height: 1px;
+    background: var(--line);
+    flex: 1;
+  }
+
+  /* Grid */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 24px;
+    margin-bottom: 48px;
+  }
+
+  /* Card */
+  .card {
+    background: var(--bg-2);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    padding: 32px 28px;
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.3s ease, border-color 0.3s ease;
+  }
+
+  .card:hover {
+    transform: translateY(-4px);
+    border-color: var(--orange);
+  }
+
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 3px;
+    background: var(--orange);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.4s ease;
+  }
+
+  .card:hover::before { transform: scaleX(1); }
+
+  /* Tier indicator */
+  .tier-bar {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 24px;
+  }
+
+  .tier-bar span {
+    height: 3px;
+    flex: 1;
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .tier-bar span.active { background: var(--orange); }
+
+  .card-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .card-title {
+    font-family: 'Archivo Black', sans-serif;
+    font-size: 56px;
+    color: var(--text);
+    letter-spacing: -0.03em;
+    line-height: 0.95;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+  }
+
+  .card.vip .card-title { color: var(--orange); }
+  .card.back .card-title {
+    background: linear-gradient(135deg, var(--orange) 0%, var(--orange-hot) 50%, var(--text) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .card-subtitle {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--orange);
+    letter-spacing: 0.1em;
+    margin-bottom: 28px;
+    padding-bottom: 24px;
+    border-bottom: 1px dashed var(--line);
+  }
+
+  /* Profile sections */
+  .profile {
+    margin-bottom: 24px;
+  }
+
+  .profile:last-child { margin-bottom: 0; }
+
+  .profile-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    padding: 8px 12px;
+    background: rgba(255, 106, 0, 0.08);
+    border-left: 2px solid var(--orange);
+  }
+
+  .profile-icon {
+    font-size: 16px;
+  }
+
+  .profile-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--orange);
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+  }
+
+  .benefits {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .benefits li {
+    font-size: 13px;
+    line-height: 1.5;
+    color: rgba(245, 245, 245, 0.85);
+    padding-left: 18px;
+    position: relative;
+  }
+
+  .benefits li::before {
+    content: '▸';
+    position: absolute;
+    left: 0;
+    color: var(--orange);
+    font-size: 10px;
+    top: 4px;
+  }
+
+  .benefits li strong {
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  /* Card footer */
+  .card-footer {
+    margin-top: 28px;
+    padding-top: 20px;
+    border-top: 1px dashed var(--line);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .price-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+  }
+
+  .cta {
+    background: transparent;
+    border: 1px solid var(--orange);
+    color: var(--orange);
+    padding: 10px 18px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .cta:hover {
+    background: var(--orange);
+    color: var(--bg);
+  }
+
+  .card.back .cta {
+    background: var(--orange);
+    color: var(--bg);
+  }
+
+  .card.back .cta:hover {
+    background: var(--orange-hot);
+  }
+
+  /* Recommended badge */
+  .badge {
+    position: absolute;
+    top: 16px;
+    right: -32px;
+    background: var(--orange);
+    color: var(--bg);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    padding: 4px 40px;
+    transform: rotate(45deg);
+    text-transform: uppercase;
+  }
+
+  /* Footer */
+  footer {
+    text-align: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    margin-top: 48px;
+    padding-top: 32px;
+    border-top: 1px solid var(--line);
+  }
+
+  footer span { color: var(--orange); }
+
+  @media (max-width: 600px) {
+    body { padding: 32px 16px; }
+    .card-title { font-size: 44px; }
+    .brand { font-size: 56px; }
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+
+    <header>
+      <h1 class="brand">FEED<span class="dot">/</span>BACK</h1>
+      <div class="tagline">
+        [ <strong>RATE</strong> · REACT · RAVE ]<br>
+        Membership tiers // v.01
+      </div>
+    </header>
+
+    <p class="section-title">Choose your wristband</p>
+
+    <div class="grid">
+
+      <!-- GENERAL -->
+      <div class="card general">
+        <div class="tier-bar">
+          <span class="active"></span><span></span><span></span>
+        </div>
+        <p class="card-label">// tier 01</p>
+        <h2 class="card-title">General</h2>
+        <p class="card-subtitle">Pista libre · Entrada al floor</p>
+
+        <div class="profile">
+          <div class="profile-header">
+            <span class="profile-icon">🎧</span>
+            <span class="profile-name">Raver</span>
+          </div>
+          <ul class="benefits">
+            <li><strong>5 comentarios</strong> por día en fiestas</li>
+            <li>Calificación en vivo estándar</li>
+            <li>Historial de las últimas 10 fiestas</li>
+            <li>Chat en vivo en modo lectura</li>
+            <li>Sigue hasta 20 DJs / promotores</li>
+          </ul>
+        </div>
+
+        <div class="profile">
+          <div class="profile-header">
+            <span class="profile-icon">🎛️</span>
+            <span class="profile-name">DJ</span>
+          </div>
+          <ul class="benefits">
+            <li><strong>2 sets</strong> publicables al mes</li>
+            <li>1 mix/preview (máx. 30 min)</li>
+            <li>Estadísticas básicas de fiestas</li>
+            <li>Responder comentarios</li>
+          </ul>
+        </div>
+
+        <div class="profile">
+          <div class="profile-header">
+            <span class="profile-icon">📣</span>
+            <span class="profile-name">Promotor</span>
+          </div>
+          <ul class="benefits">
+            <li><strong>2 eventos</strong> activos</li>
+            <li>Promoción estándar en el feed</li>
+            <li>Asistentes confirmados</li>
+            <li>1 co-anfitrión por evento</li>
+            <li>Soporte vía comunidad</li>
+          </ul>
+        </div>
+
+        <div class="card-footer">
+          <span class="price-tag">Base · Free</span>
+          <button class="cta">Start</button>
+        </div>
+      </div>
+
+      <!-- VIP -->
+      <div class="card vip">
+        <div class="badge">Popular</div>
+        <div class="tier-bar">
+          <span class="active"></span><span class="active"></span><span></span>
+        </div>
+        <p class="card-label">// tier 02</p>
+        <h2 class="card-title">VIP</h2>
+        <p class="card-subtitle">Zona preferencial · Peak time access</p>
+
+        <div class="profile">
+          <div class="profile-header">
+            <span class="profile-icon">🎧</span>
+            <span class="profile-name">Raver</span>
+          </div>
+          <ul class="benefits">
+            <li>Comentarios <strong>ilimitados</strong></li>
+            <li>Calificación con peso <strong>x2</strong></li>
+            <li>Historial completo de fiestas</li>
+            <li>Badge VIP en el perfil</li>
+            <li>Chat en vivo con escritura</li>
+            <li><strong>5–10%</strong> de descuento en entradas</li>
+            <li>Seguir ilimitado</li>
+          </ul>
+        </div>
+
+        <div class="profile">
+          <div class="profile-header">
+            <span class="profile-icon">🎛️</span>
+            <span class="profile-name">DJ</span>
+          </div>
+          <ul class="benefits">
+            <li><strong>10 sets</strong> publicables al mes</li>
+            <li>5 mixes (máx. 60 min)</li>
+            <li>Stats detallados (asistentes, rating)</li>
+            <li>Rotación en "DJs destacados"</li>
+            <li>Comentario fijado en tu perfil</li>
+            <li>Perfil verificado</li>
+            <li>Booking directo</li>
+          </ul>
+        </div>
+
+        <div class="profile">
+          <div class="profile-header">
+            <span class="profile-icon">📣</span>
+            <span class="profile-name">Promotor</span>
+          </div>
+          <ul class="benefits">
+            <li><strong>10 eventos</strong> activos</li>
+            <li>Destacado en el feed</li>
+            <li>Analítica + ratings y comentarios</li>
+            <li>5 co-anfitriones por evento</li>
+            <li>Venta de entradas (comisión estándar)</li>
+            <li>Email blasts a seguidores</li>
+            <li>Soporte prioritario</li>
+          </ul>
+        </div>
+
+        <div class="card-footer">
+          <span class="price-tag">Most picked</span>
+          <button class="cta">Upgrade</button>
+        </div>
+      </div>
+
+      <!-- BACK -->
+      <div class="card back">
+        <div class="tier-bar">
+          <span class="active"></span><span class="active"></span><span class="active"></span>
+        </div>
+        <p class="card-label">// tier 03 · MAX</p>
+        <h2 class="card-title">Back</h2>
+        <p class="card-subtitle">Detrás de la cabina · All access</p>
+
+        <div class="profile">
+          <div class="profile-header">
+            <span class="profile-icon">🎧</span>
+            <span class="profile-name">Raver</span>
+          </div>
+          <ul class="benefits">
+            <li>Comentarios ilimitados + <strong>destacados</strong></li>
+            <li>Calificación con peso <strong>x3</strong></li>
+            <li>Historial + estadísticas personales</li>
+            <li>Badge <strong>Back</strong> animado</li>
+            <li>Sala privada con DJ / promotor</li>
+            <li><strong>15–20%</strong> + acceso a <strong>preventa</strong></li>
+            <li>Notificaciones push de favoritos</li>
+          </ul>
+        </div>
+
+        <div class="profile">
+          <div class="profile-header">
+            <span class="profile-icon">🎛️</span>
+            <span class="profile-name">DJ</span>
+          </div>
+          <ul class="benefits">
+            <li><strong>Sets ilimitados</strong></li>
+            <li>Mixes sin límite de duración</li>
+            <li>Analytics avanzados <strong>exportables</strong></li>
+            <li>Posición fija en "DJs destacados"</li>
+            <li>Sesiones <strong>Q&amp;A en vivo</strong></li>
+            <li>Verificado premium ✓</li>
+            <li>Portafolio + booking pro</li>
+          </ul>
+        </div>
+
+        <div class="profile">
+          <div class="profile-header">
+            <span class="profile-icon">📣</span>
+            <span class="profile-name">Promotor</span>
+          </div>
+          <ul class="benefits">
+            <li><strong>Eventos ilimitados</strong></li>
+            <li>Top del feed + push masivo</li>
+            <li>Analítica + demografía + heatmaps</li>
+            <li>Co-anfitriones ilimitados</li>
+            <li>Venta de entradas <strong>(comisión reducida)</strong></li>
+            <li>Push + email + cross-promo</li>
+            <li><strong>Account manager</strong> dedicado</li>
+          </ul>
+        </div>
+
+        <div class="card-footer">
+          <span class="price-tag">All access</span>
+          <button class="cta">Go Back</button>
+        </div>
+      </div>
+
+    </div>
+
+    <footer>
+      FEEDBACK<span>.</span>APP &nbsp; — &nbsp; Where the crowd is the curator <span>·</span> 2026
+    </footer>
+
+  </div>
+</body>
+</html>

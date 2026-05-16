@@ -1,0 +1,52 @@
+# Local Supabase config for `supabase start` (optional — only used if
+# you want to spin up a local copy with the CLI). The real project lives
+# at supabase.com; project_id below should match your remote ref.
+
+project_id = "feedback-app"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 16
+
+[realtime]
+enabled = true
+ip_version = "ipv4"
+max_header_length = 4096
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000"]
+jwt_expiry = 3600
+enable_signup = true
+
+[auth.external.google]
+enabled = true
+client_id = "env(GOOGLE_CLIENT_ID)"
+secret    = "env(GOOGLE_CLIENT_SECRET)"
+redirect_uri = ""
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = false
+
+[functions]
+verify_jwt = false  # webhooks come from Bold (no JWT). create-bold-checkout
+                    # verifies the JWT manually using the Authorization header.
+
+[storage]
+enabled = true
+file_size_limit = "10MiB"

@@ -1,0 +1,24 @@
+{
+  "name": "feedback-app",
+  "version": "1.0.0",
+  "description": "FEEDBACK — Social network for parties, rave culture & nightlife",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview --host --port ${PORT:-3000}",
+    "start": "vite preview --host --port ${PORT:-3000}",
+    "supabase:start": "supabase start",
+    "supabase:stop": "supabase stop",
+    "supabase:reset": "supabase db reset",
+    "supabase:push": "supabase db push",
+    "supabase:link": "supabase link --project-ref $SUPABASE_PROJECT_REF",
+    "supabase:deploy": "supabase db push && supabase functions deploy bold-webhook && supabase functions deploy create-bold-checkout"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4"
+  },
+  "devDependencies": {
+    "vite": "^5.4.21"
+  }
+}
