@@ -161,11 +161,8 @@ body {
   z-index: 0;
   pointer-events: none;
   overflow: hidden;
-  /* Gooey filter restored: blur + alpha-threshold matrix in index.html
-     makes overlapping blobs merge organically (metaballs). The RGB
-     channels are identity-matrixed so #ff6600 stays at full saturation. */
-  filter: url(#gooey);
 }
+
 
 .lava-blob {
   position: absolute;
@@ -211,11 +208,11 @@ span > svg {
 /* --- Page Wrapper --- */
 .page {
   padding: var(--space-md);
-  /* Top: generous baseline + iOS notch/Dynamic Island inset. The 32px
-     baseline guarantees comfortable tap targets even on non-iOS where
-     env() resolves to 0; on iPhones with a notch the safe-area-inset
-     adds on top so the bar is always below the system UI. */
-  padding-top: calc(var(--space-xl) + var(--safe-top));
+  /* Top: comfortable baseline + iOS notch/Dynamic Island inset. 24px
+     baseline reads better visually (the 32px bump felt too low). On
+     iPhones with a notch the safe-area-inset adds on top so the bar
+     stays below the system UI. */
+  padding-top: calc(var(--space-lg) + var(--safe-top));
   padding-bottom: calc(var(--navbar-height) + var(--safe-bottom) + var(--space-xl));
   min-height: 100dvh;
   animation: fadeInPage 0.3s var(--ease-out);
@@ -602,7 +599,7 @@ span > svg {
 /* --- Toast / Snackbar --- */
 .toast-container {
   position: fixed;
-  top: calc(var(--space-xl) + var(--safe-top));
+  top: calc(var(--space-lg) + var(--safe-top));
   left: 50%;
   transform: translateX(-50%);
   z-index: var(--z-toast);
@@ -1888,16 +1885,12 @@ span > svg {
   animation: pulse 2s infinite;
 }
 
-/* --- Wall top action row (heart trigger | counter | spacer) --- */
+/* --- Wall top action row (chat left | notifications right) --- */
 .wall-top-row {
-  display: grid;
-  grid-template-columns: 40px 1fr 40px;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   padding: var(--space-md) 0 var(--space-sm);
-}
-
-.wall-top-row .post-counter {
-  justify-self: center;
 }
 
 .wall-top-spacer {
@@ -2293,10 +2286,10 @@ span > svg {
   align-items: center;
   gap: var(--space-sm);
   padding: var(--space-md);
-  /* Sticky at top:0 means iOS notch overlays this bar. Generous top
-     padding + safe-area inset keeps the back button & title clear of
-     any system UI on every device. */
-  padding-top: calc(var(--space-xl) + var(--safe-top));
+  /* Sticky at top:0 means iOS notch overlays this bar. 24px baseline +
+     safe-area inset keeps the back button & title clear of any system
+     UI on every device, without feeling too low. */
+  padding-top: calc(var(--space-lg) + var(--safe-top));
   background: rgba(10, 10, 15, 0.85);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -2845,10 +2838,9 @@ span > svg {
    ============================================ */
 .theme-toggle-wrapper {
   position: absolute;
-  /* Match the generous top baseline used by .page and .chat-header so the
-     toggle visually aligns with the page action row even on iPhones where
-     the safe-area inset is non-zero. */
-  top: calc(var(--space-xl) + var(--safe-top));
+  /* Match the top baseline used by .page and .chat-header so the toggle
+     visually aligns with the page action row on every device. */
+  top: calc(var(--space-lg) + var(--safe-top));
   right: var(--space-md);
   z-index: 10;
 }

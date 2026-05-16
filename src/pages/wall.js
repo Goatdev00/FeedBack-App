@@ -23,19 +23,15 @@ export function renderWall(container) {
   const state = store.getState();
   const user = state.currentUser;
   const posts = sortFeed(state.posts);
-  const postsToday = user ? store.getUserPostsToday(user.id) : 0;
   const unreadNotifs = user ? store.getUnreadNotificationCount() : 0;
 
   container.innerHTML = `
     <div class="page" id="wall-page">
-      <!-- Top action row: chat (left) — post counter (center) — notifications (right) -->
+      <!-- Top action row: chat (left) — notifications (right) -->
       <div class="wall-top-row">
         <button class="chat-trigger" id="chat-btn" title="Chats en vivo" aria-label="Abrir chats">
           ${ICONS.reply}
         </button>
-        <div class="post-counter" title="Publicaciones hechas hoy">
-          📝 <span class="post-counter-value">${postsToday}</span>/5 hoy
-        </div>
         <button class="notifications-trigger ${unreadNotifs > 0 ? 'has-unread' : ''}"
                 id="notifications-btn" title="Notificaciones" aria-label="Ver notificaciones">
           ${ICONS.heart}

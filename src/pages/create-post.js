@@ -28,11 +28,14 @@ export function renderCreatePost(container, params = {}) {
 
   container.innerHTML = `
     <div class="page" id="create-post-page">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-lg);">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm);margin-bottom:var(--space-md);">
         <button class="back-btn" id="back-btn" style="margin-bottom:0;">
           ${ICONS.back}
           <span>Volver</span>
         </button>
+        <div class="post-counter" title="Publicaciones hechas hoy">
+          📝 <span class="post-counter-value">${postsToday}</span>/5 hoy
+        </div>
         <button class="btn btn-primary btn-sm" id="publish-btn">
           Publicar
         </button>
