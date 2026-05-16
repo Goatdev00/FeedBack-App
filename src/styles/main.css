@@ -104,6 +104,7 @@
   --navbar-height: 64px;
   --max-width: 480px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
 }
 
 /* --- Reset & Base --- */
@@ -210,6 +211,11 @@ span > svg {
 /* --- Page Wrapper --- */
 .page {
   padding: var(--space-md);
+  /* Top: generous baseline + iOS notch/Dynamic Island inset. The 32px
+     baseline guarantees comfortable tap targets even on non-iOS where
+     env() resolves to 0; on iPhones with a notch the safe-area-inset
+     adds on top so the bar is always below the system UI. */
+  padding-top: calc(var(--space-xl) + var(--safe-top));
   padding-bottom: calc(var(--navbar-height) + var(--safe-bottom) + var(--space-xl));
   min-height: 100dvh;
   animation: fadeInPage 0.3s var(--ease-out);
@@ -596,7 +602,7 @@ span > svg {
 /* --- Toast / Snackbar --- */
 .toast-container {
   position: fixed;
-  top: var(--space-lg);
+  top: calc(var(--space-xl) + var(--safe-top));
   left: 50%;
   transform: translateX(-50%);
   z-index: var(--z-toast);
@@ -2287,6 +2293,10 @@ span > svg {
   align-items: center;
   gap: var(--space-sm);
   padding: var(--space-md);
+  /* Sticky at top:0 means iOS notch overlays this bar. Generous top
+     padding + safe-area inset keeps the back button & title clear of
+     any system UI on every device. */
+  padding-top: calc(var(--space-xl) + var(--safe-top));
   background: rgba(10, 10, 15, 0.85);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -2835,7 +2845,10 @@ span > svg {
    ============================================ */
 .theme-toggle-wrapper {
   position: absolute;
-  top: var(--space-md);
+  /* Match the generous top baseline used by .page and .chat-header so the
+     toggle visually aligns with the page action row even on iPhones where
+     the safe-area inset is non-zero. */
+  top: calc(var(--space-xl) + var(--safe-top));
   right: var(--space-md);
   z-index: 10;
 }
