@@ -795,6 +795,16 @@ span > svg {
   letter-spacing: 0.5px;
 }
 
+/* Optimistic post still in flight to Supabase — slightly dimmed so the
+   user knows it's not yet synced (but still readable / interactive). */
+.post-card-pending { opacity: 0.65; }
+
+/* Post that the API rejected but we kept locally so the user can see
+   their content. Subtle red-orange left edge marks it as "not synced". */
+.post-card-failed {
+  border-left: 3px solid #ff5050;
+}
+
 /* --- Post Card --- */
 .post-card {
   background: rgba(26, 26, 37, 0.6);

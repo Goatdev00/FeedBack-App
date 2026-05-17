@@ -43,19 +43,18 @@ export async function startCheckout({ tier, billingCycle }) {
     return { mode: 'bold', status: 'redirect', ...data };
   }
 
-  // Mock mode: pretend Bold approved instantly.
-  const { data, error } = await supabase.rpc('dev_mock_activate_membership', {
-    p_tier: tier,
-    p_billing_cycle: billingCycle,
-  });
-  if (error) throw error;
-  return { mode: 'mock', status: 'approved', membershipId: data };
+  // Any non-'bold' mode is "disabled" in production. The dev mock RPCs
+  // were dropped in migration 0010 because they let users self-grant
+  // VIP/Back tier for free — a critical hole. Until Phase 4 wires real
+  // Bold credentials, the membership UI must NOT be reachable.
+  throw new Error('payments_disabled');
 }
 
 /**
- * Dev-only: rollback the active membership back to general for testing.
+ * Reserved for future use. The dev_mock_cancel_membership RPC was
+ * removed for production safety. Real cancellation will go through the
+ * Bold subscription API in Phase 4.
  */
 export async function devCancelMembership() {
-  if (!isSupabaseConfigured()) return;
-  await supabase.rpc('dev_mock_cancel_membership');
+  throw new Error('payments_disabled');
 }

@@ -374,6 +374,31 @@ function isUuid(s) {
   return typeof s === 'string' && UUID_RE.test(s);
 }
 
+// Strip base64 image data URLs (party flyers + post photos) from a state
+// snapshot. Each data URL can run megabytes — five of them blow past
+// the localStorage quota. We keep the metadata (so the UI knows there
+// WAS an image) but null out the bytes; Phase 4 will move uploads to
+// Supabase Storage so this is no longer an issue.
+function pruneHeavyState(state) {
+  const lite = { ...state };
+  if (Array.isArray(lite.parties)) {
+    lite.parties = lite.parties.map(p =>
+      p.flyer && typeof p.flyer === 'string' && p.flyer.startsWith('data:')
+        ? { ...p, flyer: null } : p
+    );
+  }
+  if (Array.isArray(lite.posts)) {
+    lite.posts = lite.posts.map(p =>
+      p.image && typeof p.image === 'string' && p.image.startsWith('data:')
+        ? { ...p, image: null } : p
+    );
+  }
+  // Chat messages live in the in-memory page buffer now; the legacy
+  // state.chatRooms is only a fallback. Safe to drop on quota pressure.
+  lite.chatRooms = {};
+  return lite;
+}
+
 const defaultState = {
   isLoggedIn: false,
   onboardingComplete: false,
@@ -471,7 +496,27 @@ class Store {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
     } catch (e) {
-      console.warn('Failed to save state', e);
+      // QuotaExceededError almost always means base64 image data URLs
+      // (party flyers, post photos) blew past the ~5-10 MB localStorage
+      // budget. Drop the heavy fields and retry — better to lose a
+      // local image preview than to corrupt every subsequent setState.
+      const isQuota = e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014);
+      if (isQuota) {
+        console.warn('[store] localStorage quota hit; dropping heavy fields and retrying');
+        try {
+          const lite = pruneHeavyState(this.state);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(lite));
+          // Match in-memory state to what we actually persisted so the
+          // next setState doesn't re-inflate and re-throw.
+          this.state.parties = lite.parties;
+          this.state.posts = lite.posts;
+          this.state.chatRooms = lite.chatRooms;
+        } catch (retryErr) {
+          console.error('[store] saveState retry also failed', retryErr);
+        }
+      } else {
+        console.warn('Failed to save state', e);
+      }
     }
     // Mirror to Supabase so actions survive across devices/browsers.
     // Debouncing + no-op-on-no-config + sign-in check all live inside
@@ -600,15 +645,26 @@ class Store {
       _api.createPost({ partyId: post.partyId, content: post.content, image: post.image })
         .then((real) => this._replacePost(tempId, real))
         .catch((err) => {
-          console.warn('[store] createPost failed', err);
-          // Roll back optimistic insert.
-          this.state.posts = this.state.posts.filter(p => p.id !== tempId);
-          this.saveState();
-          this.notify();
-          // Tell the user instead of silently swallowing — the typical
-          // root causes are FK violations (stale party id), RLS daily
-          // limit exceeded, or network failure.
-          _surfaceError?.('No se pudo publicar. ' + describeApiError(err));
+          // Detailed log so we can diagnose remotely (FK violation, RLS,
+          // network, etc). Surface every relevant field — Supabase wraps
+          // PostgREST errors in a specific shape.
+          console.error('[store] createPost failed', {
+            code: err?.code, message: err?.message,
+            details: err?.details, hint: err?.hint,
+            statusCode: err?.status, raw: err,
+            partyId: post.partyId, userId: post.userId,
+          });
+          // Do NOT remove the optimistic post. The user still sees it
+          // marked as "sync failed". Next boot will reconcile from
+          // Supabase (failed posts vanish; successful ones stay).
+          const p = this.state.posts.find(x => x.id === tempId);
+          if (p) {
+            p._pending = false;
+            p._syncFailed = true;
+            this.saveState();
+            this.notify();
+          }
+          _surfaceError?.('No se sincronizó tu post. ' + describeApiError(err));
         });
     }
     return newPost;
@@ -643,7 +699,11 @@ class Store {
     // Then persist. Server is the source of truth; rollback on failure.
     if (_api?.toggleLike && !post._pending) {
       _api.toggleLike(postId).catch((err) => {
-        console.warn('[store] toggleLike failed', err);
+        console.error('[store] toggleLike failed', {
+          code: err?.code, message: err?.message,
+          details: err?.details, hint: err?.hint, raw: err,
+          postId, wasLiked,
+        });
         const p = this.state.posts.find(x => x.id === postId);
         if (!p) return;
         if (wasLiked) { p.likedBy.push(uid); p.likes++; }
@@ -685,14 +745,22 @@ class Store {
           this.notify();
         })
         .catch((err) => {
-          console.warn('[store] addComment failed', err);
+          console.error('[store] addComment failed', {
+            code: err?.code, message: err?.message,
+            details: err?.details, hint: err?.hint, raw: err,
+            postId,
+          });
+          // Keep the optimistic comment visible; mark as failed.
           const p = this.state.posts.find(x => x.id === postId);
           if (!p) return;
-          p.comments = (p.comments || []).filter(c => c.id !== tempId);
-          p.replies = p.comments.length;
+          const c = (p.comments || []).find(x => x.id === tempId);
+          if (c) {
+            c._pending = false;
+            c._syncFailed = true;
+          }
           this.saveState();
           this.notify();
-          _surfaceError?.('No se pudo comentar. ' + describeApiError(err));
+          _surfaceError?.('No se sincronizó tu comentario. ' + describeApiError(err));
         });
     }
     return comment;

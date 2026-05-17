@@ -7,7 +7,7 @@ import { router } from '../router.js';
 import { showToast } from '../utils/toast.js';
 import { avatarHTML, debounce, sanitize } from '../utils/helpers.js';
 import { hashStr } from '../utils/dom.js';
-import { renderBottomNav } from '../components/nav.js';
+import { renderBottomNav, bindNavEvents } from '../components/nav.js';
 
 const CITIES = ['Todas', 'Bogotá', 'Medellín', 'Cali', 'Barranquilla'];
 
@@ -233,4 +233,12 @@ function bindPartiesEvents(container) {
       router.navigate('party-detail', { partyId });
     }
   });
+
+  // Self-contained nav binding: renderParties() may be called directly
+  // from within an in-page handler (city filter, attend toggle). Each
+  // such direct call wipes container.innerHTML, including #bottom-nav,
+  // so the new nav loses its listener. Rebinding here guarantees the
+  // bottom nav stays interactive regardless of how we got here — the
+  // router's wrapper still calls bindNavEvents() too, idempotently.
+  bindNavEvents();
 }

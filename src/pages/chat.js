@@ -180,10 +180,25 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
         paint();
       }
     } catch (err) {
-      console.warn('[chat] send failed', err);
-      messages = messages.filter(m => m.id !== tempId);
+      console.error('[chat] send failed', {
+        code: err?.code, message: err?.message,
+        details: err?.details, hint: err?.hint, raw: err,
+        roomKey,
+      });
+      // Keep the message visible, mark it as failed-to-sync. The user
+      // can still read what they typed; a toast tells them it didn't
+      // reach the server.
+      const m = messages.find(x => x.id === tempId);
+      if (m) {
+        m._pending = false;
+        m._syncFailed = true;
+      }
       pendingByContent.delete(optimisticKey(optimistic));
       paint();
+      try {
+        const { showToast } = await import('../utils/toast.js');
+        showToast('No se envió el mensaje al servidor.', 'error', 4500);
+      } catch { /* noop */ }
     }
   });
 

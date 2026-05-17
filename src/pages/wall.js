@@ -7,7 +7,7 @@ import { router } from '../router.js';
 import { showToast } from '../utils/toast.js';
 import { avatarHTML, roleBadgeClass, roleTitle, sanitize } from '../utils/helpers.js';
 import { createModal } from '../utils/dom.js';
-import { renderBottomNav } from '../components/nav.js';
+import { renderBottomNav, bindNavEvents } from '../components/nav.js';
 
 const LIKE_RECENCY_BOOST_MS = 60_000 * 30;
 
@@ -129,7 +129,7 @@ function renderPostCard(post, state) {
   const commentsCount = (post.comments || []).length;
 
   return `
-    <div class="post-card" data-post-id="${post.id}">
+    <div class="post-card ${post._syncFailed ? 'post-card-failed' : ''} ${post._pending ? 'post-card-pending' : ''}" data-post-id="${post.id}">
       <div class="post-header">
         ${avatarHTML(author, 'avatar-md')}
         <div class="post-author-info">
@@ -276,6 +276,13 @@ function bindWallEvents(container) {
     e.preventDefault();
     submitComment(container, input.dataset.postId);
   });
+
+  // Self-contained nav binding: WALL_ACTIONS handlers can call
+  // renderWall(container) directly (after like / send comment), which
+  // wipes the bottom-nav DOM along with the rest. Re-bind here so the
+  // nav buttons keep working regardless of how we got rendered. The
+  // router wrapper still calls bindNavEvents() too — it's idempotent.
+  bindNavEvents();
 }
 
 function showAllCommentsModal(container, postId) {

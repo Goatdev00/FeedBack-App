@@ -18,10 +18,6 @@
 import { supabase, isSupabaseConfigured } from './supabase.js';
 import { registerApi } from './mock-data.js';
 
-// Synthetic party that hosts the global chat room. We hide it from the
-// parties list to keep the UI clean.
-export const GLOBAL_CHAT_PARTY_ID = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
-
 // ---------------------------------------------------------------------
 // Profile shape adapter (matches profile-sync.js so consumers can pass
 // either shape downstream).
@@ -46,10 +42,12 @@ function authorFromRow(p) {
 // =====================================================================
 export async function listParties() {
   if (!isSupabaseConfigured()) return [];
+  // After migration 0009 there is no synthetic global-chat party to
+  // filter out — the global chat lives on a chat_rooms row with
+  // party_id IS NULL.
   const { data, error } = await supabase
     .from('parties')
     .select('*')
-    .neq('id', GLOBAL_CHAT_PARTY_ID)  // hide the synthetic global-chat party
     .order('party_date', { ascending: true });
   if (error) throw error;
   return (data || []).map(partyFromRow);
@@ -308,31 +306,41 @@ export async function toggleAttendance(partyId) {
 // LIVE CHAT — chat_rooms + chat_messages over Supabase Realtime
 // =====================================================================
 // Frontend "room keys":
-//   'general'              → the global chat (hosted on the synthetic
-//                            party with GLOBAL_CHAT_PARTY_ID)
+//   'general'              → the global chat: chat_rooms row with
+//                            party_id IS NULL and type='public'.
 //   'party:<uuid>'         → per-party public chat (auto-created by the
-//                            create_party_chat_rooms() trigger)
+//                            create_party_chat_rooms() trigger).
 //
 // Each helper resolves the room id (uuid) lazily and caches it.
 // =====================================================================
 const _roomIdCache = new Map();
 
-export function roomKeyToPartyId(roomKey) {
-  if (roomKey === 'general') return GLOBAL_CHAT_PARTY_ID;
-  if (roomKey.startsWith('party:')) return roomKey.slice('party:'.length);
-  return null;
-}
-
 export async function resolveChatRoomId(roomKey) {
   if (_roomIdCache.has(roomKey)) return _roomIdCache.get(roomKey);
-  const partyId = roomKeyToPartyId(roomKey);
-  if (!partyId) return null;
-  const { data, error } = await supabase
-    .from('chat_rooms')
-    .select('id')
-    .eq('party_id', partyId)
-    .eq('type', 'public')
-    .maybeSingle();
+
+  let query;
+  if (roomKey === 'general') {
+    // Global room: no party, type=public, exactly one row exists
+    // thanks to the partial unique index in migration 0009.
+    query = supabase
+      .from('chat_rooms')
+      .select('id')
+      .is('party_id', null)
+      .eq('type', 'public')
+      .maybeSingle();
+  } else if (roomKey.startsWith('party:')) {
+    const partyId = roomKey.slice('party:'.length);
+    query = supabase
+      .from('chat_rooms')
+      .select('id')
+      .eq('party_id', partyId)
+      .eq('type', 'public')
+      .maybeSingle();
+  } else {
+    return null;
+  }
+
+  const { data, error } = await query;
   if (error || !data) return null;
   _roomIdCache.set(roomKey, data.id);
   return data.id;

@@ -200,11 +200,10 @@ export function renderCreatePost(container, params = {}) {
       image: photoData,
     });
 
-    showToast('¡Publicación creada! 🎉', 'success');
-    setTimeout(() => {
-      showPointsToast(15, 'Publicación en fiesta');
-    }, 1000);
-
+    // No optimistic success/points toast — those used to overlap with
+    // any error toast from the API call landing ~200-500ms later, hiding
+    // the failure reason from the user. The post appears immediately
+    // on the wall; a toast fires only if the API actually rejects.
     router.navigate('wall');
   });
 }

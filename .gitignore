@@ -1,11 +1,39 @@
 node_modules
 dist
+build
+
+# Environment variables — every variant. Only `.env.example` (no
+# secrets, only placeholders) should ever be committed.
 .env
 .env.local
-.DS_Store
-*.log
+.env.*.local
+.env.development
+.env.production
+.env.staging
+*.env
 
-# Supabase local
+# Editor / OS junk
+.DS_Store
+Thumbs.db
+.idea
+.vscode
+*.log
+*.swp
+*.bak
+*.tmp
+
+# Supabase local artifacts
 .supabase
 supabase/.branches
 supabase/.temp
+
+# Source maps — never ship to prod (Vite default is off, double-defense)
+*.map
+
+# Anything that looks like a private key by accident
+*.pem
+*.p12
+*.key
+id_rsa*
+service-account*.json
+*-credentials.json
