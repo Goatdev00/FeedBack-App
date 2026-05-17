@@ -24,6 +24,10 @@
 const TRIGGER_PX = 80;       // how far user must drag past resistance
 const MAX_PULL_PX = 120;     // hard cap for the indicator's translation
 const DRAG_RESISTANCE = 0.5; // 1 = no resistance, lower = harder pull
+const SPINNER_HOLD_MS = 3000; // how long the spinner stays visible; the
+                             // refresh promise can run longer in the
+                             // background, but the indicator hides at
+                             // the 3-second mark either way.
 
 let _onRefresh = null;
 let _isRefreshing = false;
@@ -106,17 +110,18 @@ export function setupPullToRefresh(onRefresh) {
     setTimeout(() => { indicator.style.transition = ''; }, 200);
     indicator.classList.add('ptr-spinning');
 
-    try {
-      await _onRefresh?.();
-    } catch (e) {
-      console.warn('[ptr] refresh threw', e);
-    } finally {
-      // Brief hold so the spin animation feels intentional, then snap back.
-      setTimeout(() => {
-        reset();
-        _isRefreshing = false;
-      }, 350);
-    }
+    // Fire the refresh in the background — we DO NOT await it. The
+    // spinner has a fixed display lifetime (SPINNER_HOLD_MS) regardless
+    // of how long the underlying network/hydration takes. This keeps
+    // the UI feeling responsive when a refresh takes longer than the
+    // user expects — they get visual confirmation, then the indicator
+    // goes away and the actual data lands a moment later in place.
+    Promise.resolve(_onRefresh?.()).catch((e) => console.warn('[ptr] refresh threw', e));
+
+    setTimeout(() => {
+      reset();
+      _isRefreshing = false;
+    }, SPINNER_HOLD_MS);
   }, { passive: true });
 
   // Cancel pull state if the touch is interrupted (e.g., notification).

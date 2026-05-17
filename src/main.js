@@ -236,12 +236,26 @@ function refreshFromSupabaseInBackground() {
       const profilesById = new Map(real.profiles.map(u => [u.id, u]));
       const legacyUsers = state.users.filter(u => !profilesById.has(u.id) && u.id.startsWith('u'));
       const mergedUsers = [...real.profiles, ...legacyUsers];
+
+      // Always trust Supabase as the source of truth. Earlier code
+      // preserved the cached state.parties when real.parties was empty,
+      // which kept showing the MOCK_PARTIES from defaultState (with
+      // their hardcoded `reports.energia` values) forever — masking
+      // the real Supabase state and looking like "old data".
+      console.info('[hydrate]', {
+        parties: real.parties.length,
+        posts: real.posts.length,
+        follows: real.follows.length,
+        profiles: real.profiles.length,
+      });
       store.setState({
-        parties: real.parties.length ? real.parties : state.parties,
+        parties: real.parties,
         posts: real.posts,
         follows: real.follows,
         users: mergedUsers,
       });
+    } else if (realR.status === 'rejected') {
+      console.warn('[hydrate] failed', realR.reason);
     }
 
     if (cloud) {

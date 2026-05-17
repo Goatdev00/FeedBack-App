@@ -189,13 +189,14 @@ const MOCK_PARTIES = [
     startTime: '22:00',
     endTime: '06:00',
     genres: ['Techno', 'Dark Techno'],
-    promotor: 'u3',
-    djs: ['u2'],
+    promotor: null,
+    djs: [],
     flyer: null,
-    attendees: ['u1', 'u3', 'u6'],
-    rating: { musica: 4.2, energia: 4.5, organizacion: 4.0, seguridad: 3.8, locacion: 4.3, publico: 4.1 },
-    reports: { ambiente: 85, seguridad: 70, musica: 92, aforo: 65, energia: 88 },
+    attendees: [],
+    rating: {},
+    reports: {},
     sponsored: false,
+    status: 'upcoming',
     description: 'Una noche de techno puro en lo más profundo del underground bogotano.'
   },
   {
@@ -207,13 +208,14 @@ const MOCK_PARTIES = [
     startTime: '21:00',
     endTime: '04:00',
     genres: ['House', 'Disco', 'Deep House'],
-    promotor: 'u3',
+    promotor: null,
     djs: [],
     flyer: null,
-    attendees: ['u1', 'u4'],
-    rating: { musica: 4.0, energia: 3.8, organizacion: 4.2, seguridad: 4.5, locacion: 4.0, publico: 3.9 },
-    reports: { ambiente: 78, seguridad: 85, musica: 80, aforo: 50, energia: 75 },
+    attendees: [],
+    rating: {},
+    reports: {},
     sponsored: true,
+    status: 'upcoming',
     description: 'La mejor selección de house y disco en la terraza más icónica de la ciudad.'
   },
   {
@@ -226,12 +228,13 @@ const MOCK_PARTIES = [
     endTime: '07:00',
     genres: ['Drum & Bass', 'Jungle', 'Breakbeat'],
     promotor: null,
-    djs: ['u5'],
+    djs: [],
     flyer: null,
-    attendees: ['u4', 'u5'],
-    rating: { musica: 4.6, energia: 4.8, organizacion: 3.5, seguridad: 3.2, locacion: 3.8, publico: 4.4 },
-    reports: { ambiente: 90, seguridad: 55, musica: 95, aforo: 80, energia: 95 },
+    attendees: [],
+    rating: {},
+    reports: {},
     sponsored: false,
+    status: 'upcoming',
     description: 'La catedral del bass te espera con los mejores DJs nacionales.'
   },
   {
@@ -244,12 +247,13 @@ const MOCK_PARTIES = [
     endTime: '05:00',
     genres: ['Melodic Techno', 'Progressive'],
     promotor: null,
-    djs: ['u2'],
+    djs: [],
     flyer: null,
-    attendees: ['u2'],
-    rating: { musica: 4.4, energia: 4.1, organizacion: 4.3, seguridad: 4.6, locacion: 4.8, publico: 4.0 },
-    reports: { ambiente: 82, seguridad: 90, musica: 88, aforo: 45, energia: 80 },
+    attendees: [],
+    rating: {},
+    reports: {},
     sponsored: false,
+    status: 'upcoming',
     description: 'Viaje sonoro a través del melodic techno en el venue más premium de Medellín.'
   },
   {
@@ -264,10 +268,11 @@ const MOCK_PARTIES = [
     promotor: null,
     djs: [],
     flyer: null,
-    attendees: ['u4'],
-    rating: { musica: 3.9, energia: 3.7, organizacion: 3.5, seguridad: 3.8, locacion: 3.6, publico: 3.5 },
-    reports: { ambiente: 70, seguridad: 68, musica: 75, aforo: 40, energia: 72 },
+    attendees: [],
+    rating: {},
+    reports: {},
     sponsored: false,
+    status: 'upcoming',
     description: 'Minimal vibes en el corazón de Cali.'
   }
 ];
@@ -494,7 +499,21 @@ class Store {
 
   saveState() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+      // Phase 3: posts / parties / follows / users live in Supabase
+      // tables. Persisting them locally just bloats the localStorage
+      // quota — for a user that follows ~50 people and sees ~100 posts
+      // it grows past 5 MB easily and every subsequent setState fails
+      // with QuotaExceededError, cascading into "post disappears" bugs.
+      // We skip them on the local write but keep them in the in-memory
+      // store. Boot rehydration from Supabase populates them again.
+      const persisted = {
+        ...this.state,
+        posts: [],
+        parties: [],
+        follows: [],
+        users: [],
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
     } catch (e) {
       // QuotaExceededError almost always means base64 image data URLs
       // (party flyers, post photos) blew past the ~5-10 MB localStorage
@@ -887,9 +906,16 @@ class Store {
     return this.state.parties.filter(p => p.city === city);
   }
 
+  // Phase 3: filter by status, not by exact date. The Supabase-seeded
+  // parties carry `party_date = current_date` from the moment migration
+  // 0007 was run — that becomes stale the next day. Using `status`
+  // (live / upcoming) keeps any non-finished party visible in the
+  // "Lo que está pasando ahora" strip regardless of calendar date.
   getTodayParties(city) {
-    const todayStr = new Date().toISOString().split('T')[0];
-    return this.getPartiesByCity(city).filter(p => p.date === todayStr);
+    return this.getPartiesByCity(city).filter(p => {
+      const status = p.status || 'upcoming';
+      return status !== 'finished';
+    });
   }
 
   addParty(party) {
