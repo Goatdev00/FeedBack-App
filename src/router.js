@@ -6,6 +6,7 @@ class Router {
   constructor() {
     this.routes = Object.create(null);
     this.currentRoute = null;
+    this.currentParams = {};
     this.navigating = false;  // guard against re-entrant navigation
   }
 
@@ -37,6 +38,7 @@ class Router {
       document.querySelectorAll('.modal-overlay').forEach((node) => node.remove());
 
       this.currentRoute = name;
+      this.currentParams = params || {};
       window.scrollTo(0, 0);
       render(app, params);
     } finally {
@@ -46,6 +48,22 @@ class Router {
 
   getCurrentRoute() {
     return this.currentRoute;
+  }
+
+  getCurrentParams() {
+    return this.currentParams || {};
+  }
+
+  /**
+   * Re-render the current route without modal teardown / scroll reset.
+   * Used by pull-to-refresh after Supabase data is refreshed.
+   */
+  refreshCurrentRoute() {
+    if (!this.currentRoute) return;
+    const render = this.routes[this.currentRoute];
+    const app = document.getElementById('app');
+    if (!render || !app) return;
+    render(app, this.currentParams || {});
   }
 }
 

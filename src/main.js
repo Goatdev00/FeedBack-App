@@ -23,6 +23,7 @@ import { onAuthChange } from './data/auth.js';
 import { syncProfileIntoStore, clearLocalSession } from './data/profile-sync.js';
 import { loadCloudState, flushCloudSave, stripCloudExclusions } from './data/cloud-state.js';
 import { hydrateAll, subscribeRealtime } from './data/api.js';
+import { setupPullToRefresh } from './utils/pull-to-refresh.js';
 
 // --- Pages ---
 import { renderLogin } from './pages/login.js';
@@ -88,6 +89,42 @@ try {
 } catch { /* localStorage might be denied in private mode */ }
 
 initLavaLamp('lava-bg');
+
+// Instagram-style pull-to-refresh: drag down from the top of any feed
+// page to re-fetch the world from Supabase. Skips chat rooms / forms.
+setupPullToRefresh(async () => {
+  if (!isSupabaseConfigured()) return;
+  try {
+    const [realR, cloudR] = await Promise.allSettled([
+      hydrateAll(),
+      loadCloudState(),
+    ]);
+    const real  = realR.status  === 'fulfilled' ? realR.value  : null;
+    const cloud = cloudR.status === 'fulfilled' ? cloudR.value : null;
+
+    if (real) {
+      const state = store.getState();
+      const profilesById = new Map(real.profiles.map(u => [u.id, u]));
+      const legacyUsers = state.users.filter(u => !profilesById.has(u.id) && u.id.startsWith('u'));
+      store.setState({
+        parties: real.parties.length ? real.parties : state.parties,
+        posts: real.posts,
+        follows: real.follows,
+        users: [...real.profiles, ...legacyUsers],
+      });
+    }
+    if (cloud) {
+      store.hydrateFromCloud(stripCloudExclusions(cloud));
+    }
+
+    // Re-render the page so the new state is reflected. This uses the
+    // tracked currentParams so routes that need them (party-detail,
+    // profile-other) don't lose their context.
+    router.refreshCurrentRoute();
+  } catch (e) {
+    console.warn('[ptr] refresh failed', e);
+  }
+});
 
 // Force-flush any debounced cloud save before the tab closes. Without
 // this, an action taken in the last 1.5s before closing would never
@@ -217,16 +254,38 @@ function refreshFromSupabaseInBackground() {
 
     try { subscribeRealtime(store); } catch (e) { console.warn('[main] realtime failed', e); }
 
-    // Re-render the wall now that posts + profiles are hydrated. We
-    // ONLY do this for /wall (and only if the user is still there),
-    // because other routes need params (partyId, userId) that the
-    // router doesn't track — re-navigating without them would break
-    // party-detail / profile-other / chat pages.
-    if (router.getCurrentRoute() === 'wall') {
-      router.navigate('wall');
+    // Re-render the current route now that posts + parties + profiles
+    // are hydrated. Otherwise the user keeps seeing the localStorage-
+    // cached "old" data on routes other than /wall until they navigate
+    // away and back (the "fiestas viejas → nuevas después de un rato"
+    // effect). `router.refreshCurrentRoute()` re-renders using tracked
+    // currentParams, so party-detail / profile-other / chat-party keep
+    // their context intact.
+    //
+    // Forms and chat rooms are excluded — re-rendering them would wipe
+    // a half-typed message or post.
+    if (DATA_DRIVEN_ROUTES.has(router.getCurrentRoute())) {
+      router.refreshCurrentRoute();
     }
   });
 }
+
+// Routes whose visible content depends on store.posts / store.parties /
+// store.users / store.follows / etc. These get re-rendered after a
+// background hydrate completes. Everything not listed here (login,
+// onboarding, create-post, create-party, select-party, sunday-rating,
+// chat-general, chat-party) holds in-flight UI state that a re-render
+// would corrupt.
+const DATA_DRIVEN_ROUTES = new Set([
+  'wall',
+  'parties',
+  'party-detail',
+  'profile',
+  'profile-other',
+  'notifications',
+  'chat-hub',
+  'chat-parties',
+]);
 
 function showSundayPrompt() {
   const overlay = createModal(`

@@ -5,15 +5,17 @@
 // client within ~200ms via the supabase_realtime publication.
 // ============================================
 
-import { store, ICONS, formatRelative } from '../data/mock-data.js';
+import { store, ICONS, formatRelative, describeApiError } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { avatarHTML, roleBadgeClass, roleTitle, sanitize } from '../utils/helpers.js';
 import {
   listChatMessages,
   sendChatMessageDB,
   subscribeChatRoom,
+  resolveChatRoomId,
 } from '../data/api.js';
 import { supabase } from '../data/supabase.js';
+import { showToast } from '../utils/toast.js';
 
 const GENERAL_ROOM_KEY = 'general';
 
@@ -111,8 +113,32 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
 
   // ====== Hydrate history from Supabase + subscribe to new inserts ======
   let unsubscribeRealtime = () => {};
+  let roomMissing = false;
 
   (async () => {
+    // Pre-flight: confirm the chat_room exists in Supabase. If not, the
+    // most likely cause is migration 0009 not applied yet (no global
+    // room with party_id IS NULL). Show a clear inline error instead of
+    // letting the user type into a black hole.
+    const roomId = await resolveChatRoomId(roomKey);
+    if (!roomId) {
+      roomMissing = true;
+      messagesEl.innerHTML = `
+        <div class="chat-empty">
+          <div class="chat-empty-icon">⚠️</div>
+          <p style="color:var(--orange);font-weight:600;">No se pudo conectar al chat.</p>
+          <p style="font-size:var(--text-xs);color:var(--text-tertiary);margin-top:8px;">
+            La sala no existe en el servidor. Verifica que las migraciones
+            <code>0008</code> y <code>0009</code> estén aplicadas en Supabase.
+          </p>
+        </div>
+      `;
+      // Disable input so the user doesn't keep trying.
+      input.disabled = true;
+      input.placeholder = 'Chat no disponible';
+      return;
+    }
+
     try {
       messages = await listChatMessages(roomKey);
     } catch (err) {
@@ -149,6 +175,10 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (roomMissing) {
+      showToast('Chat no disponible. Aplica migration 0009.', 'error', 5000);
+      return;
+    }
     const text = input.value.trim();
     if (!text) return;
     input.value = '';
@@ -186,8 +216,9 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
         roomKey,
       });
       // Keep the message visible, mark it as failed-to-sync. The user
-      // can still read what they typed; a toast tells them it didn't
-      // reach the server.
+      // can still read what they typed; the toast tells them WHY it
+      // didn't reach the server using the same describeApiError used
+      // by posts / comments / likes.
       const m = messages.find(x => x.id === tempId);
       if (m) {
         m._pending = false;
@@ -195,10 +226,14 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
       }
       pendingByContent.delete(optimisticKey(optimistic));
       paint();
-      try {
-        const { showToast } = await import('../utils/toast.js');
-        showToast('No se envió el mensaje al servidor.', 'error', 4500);
-      } catch { /* noop */ }
+
+      // Special-case: the message bubbled up as 'room_not_found' from
+      // resolveChatRoomId — that's almost always migration 0009 missing.
+      // For anything else, surface the real Supabase error code/message.
+      const reason = err?.message === 'room_not_found'
+        ? 'Sala de chat no creada en el servidor (aplica migration 0009).'
+        : describeApiError(err);
+      showToast('No se envió: ' + reason, 'error', 5000);
     }
   });
 

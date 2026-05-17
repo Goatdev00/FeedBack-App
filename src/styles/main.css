@@ -119,6 +119,11 @@ html {
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
   scroll-behavior: smooth;
+  /* Disable the browser's native pull-to-refresh so our custom one
+     (see src/utils/pull-to-refresh.js) is the only handler that runs.
+     `contain` keeps the elastic bounce visual on iOS but stops the
+     gesture from reaching the browser-level reload action. */
+  overscroll-behavior-y: contain;
 }
 
 body {
@@ -1605,6 +1610,50 @@ span > svg {
   border-top-color: var(--orange);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
+}
+
+/* --- Pull-to-refresh indicator (Instagram-style) ---
+   Floats above the page edge while the user pulls down. The transform
+   and opacity are set inline from JS based on drag distance; when the
+   refresh fires we add `.ptr-spinning` for the rotating loop. */
+.ptr-indicator {
+  position: fixed;
+  top: calc(-44px + max(8px, var(--safe-top)));   /* hidden above the safe-area edge */
+  left: 50%;
+  transform: translateX(-50%);
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  background: rgba(26, 26, 37, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-orange);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1500;
+  pointer-events: none;
+  opacity: 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35), 0 0 18px var(--orange-glow);
+  will-change: transform, opacity;
+}
+
+[data-theme="light"] .ptr-indicator {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(255, 106, 0, 0.4);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1), 0 0 18px var(--orange-glow);
+}
+
+.ptr-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 106, 0, 0.25);
+  border-top-color: var(--orange);
+  border-radius: 50%;
+}
+
+.ptr-indicator.ptr-spinning .ptr-spinner {
+  animation: spin 0.7s linear infinite;
 }
 
 /* --- Responsive helpers --- */

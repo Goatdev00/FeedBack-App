@@ -1228,7 +1228,8 @@ let _surfaceError = null;
 export function registerErrorSurface(fn) { _surfaceError = fn; }
 
 // Translate Supabase / Postgres error shapes into a single human line.
-function describeApiError(err) {
+// Exported so chat.js / other pages can reuse the same vocabulary.
+export function describeApiError(err) {
   if (!err) return 'Error desconocido.';
   // PostgREST errors usually carry .code, .message, .details
   const code = err.code || err.error || '';
