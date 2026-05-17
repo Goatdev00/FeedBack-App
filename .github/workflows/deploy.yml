@@ -14,6 +14,14 @@ concurrency:
   group: "pages"
   cancel-in-progress: true
 
+# Opt the workflow into Node.js 24 for action runtimes. GitHub will force
+# this default starting June 2026 anyway; setting it now silences the
+# deprecation warnings AND surfaces any incompatibility early instead of
+# on D-day. Doesn't affect the Node version used to build the app — that
+# is set per-step via `actions/setup-node`.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -24,7 +32,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Node 22 is current LTS (active maintenance until 2027). Stays
+          # ahead of Vite/Supabase requirements without using a tagged
+          # bleeding-edge version that GitHub-hosted runners may lag.
+          node-version: 22
           cache: npm
 
       - name: Install dependencies

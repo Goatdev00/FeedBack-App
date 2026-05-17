@@ -957,13 +957,20 @@ begin
   end if;
 end $$;
 
-alter publication supabase_realtime add table public.chat_messages;
-alter publication supabase_realtime add table public.live_ratings;
-alter publication supabase_realtime add table public.parties;
-alter publication supabase_realtime add table public.posts;
-alter publication supabase_realtime add table public.post_likes;
-alter publication supabase_realtime add table public.post_comments;
-alter publication supabase_realtime add table public.party_attendees;
+do $$ 
+declare
+  t text;
+begin
+  for t in select unnest(array['chat_messages','live_ratings','parties','posts','post_likes','post_comments','party_attendees'])
+  loop
+    if not exists (
+      select 1 from pg_publication_tables 
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t
+    ) then
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    end if;
+  end loop;
+end $$;
 -- =====================================================================
 -- FEEDBACK — Phase 2: onboarding flag + Bold-less dev mock activation
 -- =====================================================================
