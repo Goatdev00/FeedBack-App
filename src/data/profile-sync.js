@@ -65,6 +65,14 @@ export async function syncProfileIntoStore() {
   }
 
   const currentUser = profileRowToCurrentUser(profile);
+  if (!currentUser) {
+    // Edge case: auth.users row exists but public.profiles row doesn't
+    // (e.g., the handle_new_user trigger silently failed). Returning
+    // null lets routeAfterSession fall through to /wall with whatever
+    // session-derived state we have, instead of crashing here.
+    console.warn('[profile-sync] no profile row for this auth user');
+    return null;
+  }
   const state = store.getState();
   const existingUsers = state.users.filter(u => u.id !== currentUser.id && u.id !== 'u_self');
   store.setState({

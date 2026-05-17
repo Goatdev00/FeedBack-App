@@ -24,10 +24,10 @@
 const TRIGGER_PX = 80;       // how far user must drag past resistance
 const MAX_PULL_PX = 120;     // hard cap for the indicator's translation
 const DRAG_RESISTANCE = 0.5; // 1 = no resistance, lower = harder pull
-const SPINNER_HOLD_MS = 3000; // how long the spinner stays visible; the
+const SPINNER_HOLD_MS = 1000; // how long the spinner stays visible; the
                              // refresh promise can run longer in the
                              // background, but the indicator hides at
-                             // the 3-second mark either way.
+                             // the 1-second mark either way.
 
 let _onRefresh = null;
 let _isRefreshing = false;

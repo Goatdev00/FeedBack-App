@@ -8,6 +8,7 @@ import { showToast } from '../utils/toast.js';
 import { avatarHTML, roleBadgeClass, roleTitle, sanitize } from '../utils/helpers.js';
 import { createModal } from '../utils/dom.js';
 import { renderBottomNav, bindNavEvents } from '../components/nav.js';
+import { refreshFromSupabaseInBackground } from '../data/hydration.js';
 
 const LIKE_RECENCY_BOOST_MS = 60_000 * 30;
 
@@ -24,6 +25,12 @@ export function renderWall(container) {
   const user = state.currentUser;
   const posts = sortFeed(state.posts);
   const unreadNotifs = user ? store.getUnreadNotificationCount() : 0;
+
+  // Belt-and-suspenders: if the wall rendered without a prior hydrate
+  // (e.g. user came straight from /onboarding → /wall without re-
+  // entering routeAfterSession), kick one off. The in-flight guard
+  // inside refreshFromSupabaseInBackground coalesces concurrent calls.
+  if (!state.hydrated) refreshFromSupabaseInBackground();
 
   container.innerHTML = `
     <div class="page" id="wall-page">
@@ -51,7 +58,7 @@ export function renderWall(container) {
       <div id="feed-container">
         ${posts.length > 0
           ? posts.map(post => renderPostCard(post, state)).join('')
-          : renderEmptyWall()
+          : state.hydrated ? renderEmptyWall() : renderWallSkeleton()
         }
       </div>
     </div>
@@ -177,6 +184,18 @@ function renderPostCard(post, state) {
           ${ICONS.send}
         </button>
       </div>
+    </div>
+  `;
+}
+
+function renderWallSkeleton() {
+  // Shown while the first Supabase hydration is in flight — better UX
+  // than flashing the "no publications yet" empty state to a user who
+  // actually has posts that just haven't loaded yet.
+  return `
+    <div class="empty-state">
+      <div class="spinner" style="margin: 0 auto var(--space-md);"></div>
+      <p class="empty-state-text">Cargando publicaciones...</p>
     </div>
   `;
 }

@@ -427,6 +427,11 @@ const defaultState = {
   // ISO timestamp of the last time the user opened /notifications.
   // Anything newer than this counts as unread in the heart dot.
   lastNotificationsViewed: null,
+  // Has the first Supabase hydration completed since this session?
+  // Lets pages distinguish "no data yet because still loading" from
+  // "no data because the table is genuinely empty" so we can render a
+  // skeleton vs an empty-state accordingly. Never persisted to localStorage.
+  hydrated: false,
   // Live chat rooms keyed by 'general' or `party:<id>`. Each value is an
   // array of message objects { id, userId, content, createdAt }. This is
   // local-only state for Phase 2; Phase 4 swaps it for chat_messages in

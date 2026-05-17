@@ -24,6 +24,7 @@ import { syncProfileIntoStore, clearLocalSession } from './data/profile-sync.js'
 import { loadCloudState, flushCloudSave, stripCloudExclusions } from './data/cloud-state.js';
 import { hydrateAll, subscribeRealtime } from './data/api.js';
 import { setupPullToRefresh } from './utils/pull-to-refresh.js';
+import { refreshFromSupabaseInBackground } from './data/hydration.js';
 
 // --- Pages ---
 import { renderLogin } from './pages/login.js';
@@ -174,18 +175,18 @@ if (isSupabaseConfigured()) {
 }
 
 async function routeAfterSession() {
-  // FAST PATH: if we already have a cached currentUser in localStorage
-  // (returning user), navigate to the wall IMMEDIATELY using cached data.
-  // All Supabase queries run in parallel in the background and the
-  // store.subscribe-based renderers refresh the UI as data arrives.
-  // Result: perceived boot is instant for returning users, instead of
-  // staring at a blank screen for ~1-3s while 7 queries fire serially.
-  const cached = store.getState();
-  const hasCachedSession = cached.currentUser && cached.onboardingComplete;
+  // ALWAYS kick off hydration first — it doesn't block. Previously this
+  // sat behind early `return` branches, so a new user going through
+  // /onboarding → /wall never triggered the hydrate, leaving the wall
+  // visibly empty (state.hydrated stayed false forever).
+  refreshFromSupabaseInBackground();
 
-  if (hasCachedSession) {
+  // FAST PATH: returning user with cached profile. Navigate immediately
+  // using whatever state we have; the background hydrate just refreshes
+  // the visible data once it lands.
+  const cached = store.getState();
+  if (cached.currentUser && cached.onboardingComplete) {
     routeWallOrSunday();
-    refreshFromSupabaseInBackground();
     return;
   }
 
@@ -195,7 +196,6 @@ async function routeAfterSession() {
   const profile = await syncProfileIntoStore();
   if (!profile) {
     router.navigate('wall');
-    refreshFromSupabaseInBackground();
     return;
   }
   if (!profile.onboardingComplete) {
@@ -219,87 +219,9 @@ function routeWallOrSunday() {
   router.navigate('wall');
 }
 
-// Fire all three hydration queries in parallel. None of them block
-// rendering — the store's subscribe callbacks pick up the new data and
-// re-render the visible page as each promise lands.
-function refreshFromSupabaseInBackground() {
-  Promise.allSettled([
-    syncProfileIntoStore(),
-    hydrateAll(),
-    loadCloudState(),
-  ]).then(([profileR, realR, cloudR]) => {
-    const real  = realR.status === 'fulfilled' ? realR.value : null;
-    const cloud = cloudR.status === 'fulfilled' ? cloudR.value : null;
-
-    if (real) {
-      const state = store.getState();
-      const profilesById = new Map(real.profiles.map(u => [u.id, u]));
-      const legacyUsers = state.users.filter(u => !profilesById.has(u.id) && u.id.startsWith('u'));
-      const mergedUsers = [...real.profiles, ...legacyUsers];
-
-      // Always trust Supabase as the source of truth. Earlier code
-      // preserved the cached state.parties when real.parties was empty,
-      // which kept showing the MOCK_PARTIES from defaultState (with
-      // their hardcoded `reports.energia` values) forever — masking
-      // the real Supabase state and looking like "old data".
-      console.info('[hydrate]', {
-        parties: real.parties.length,
-        posts: real.posts.length,
-        follows: real.follows.length,
-        profiles: real.profiles.length,
-      });
-      store.setState({
-        parties: real.parties,
-        posts: real.posts,
-        follows: real.follows,
-        users: mergedUsers,
-      });
-    } else if (realR.status === 'rejected') {
-      console.warn('[hydrate] failed', realR.reason);
-    }
-
-    if (cloud) {
-      store.hydrateFromCloud(stripCloudExclusions(cloud));
-    }
-
-    if (profileR.status === 'rejected') {
-      console.warn('[main] profile sync failed', profileR.reason);
-    }
-
-    try { subscribeRealtime(store); } catch (e) { console.warn('[main] realtime failed', e); }
-
-    // Re-render the current route now that posts + parties + profiles
-    // are hydrated. Otherwise the user keeps seeing the localStorage-
-    // cached "old" data on routes other than /wall until they navigate
-    // away and back (the "fiestas viejas → nuevas después de un rato"
-    // effect). `router.refreshCurrentRoute()` re-renders using tracked
-    // currentParams, so party-detail / profile-other / chat-party keep
-    // their context intact.
-    //
-    // Forms and chat rooms are excluded — re-rendering them would wipe
-    // a half-typed message or post.
-    if (DATA_DRIVEN_ROUTES.has(router.getCurrentRoute())) {
-      router.refreshCurrentRoute();
-    }
-  });
-}
-
-// Routes whose visible content depends on store.posts / store.parties /
-// store.users / store.follows / etc. These get re-rendered after a
-// background hydrate completes. Everything not listed here (login,
-// onboarding, create-post, create-party, select-party, sunday-rating,
-// chat-general, chat-party) holds in-flight UI state that a re-render
-// would corrupt.
-const DATA_DRIVEN_ROUTES = new Set([
-  'wall',
-  'parties',
-  'party-detail',
-  'profile',
-  'profile-other',
-  'notifications',
-  'chat-hub',
-  'chat-parties',
-]);
+// refreshFromSupabaseInBackground moved to src/data/hydration.js so
+// other modules (wall.js empty-state fallback, pull-to-refresh) can
+// import it without creating a cycle with main.js.
 
 function showSundayPrompt() {
   const overlay = createModal(`
