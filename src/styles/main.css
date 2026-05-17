@@ -231,11 +231,11 @@ span > svg {
 /* --- Page Wrapper --- */
 .page {
   padding: var(--space-md);
-  /* Top: use whichever is larger between 12px (desktop baseline) and
+  /* Top: use whichever is larger between 8px (desktop baseline) and
      the iOS safe-area inset. We do NOT stack them — that pushed content
-     too low on iPhone PWA (12+44=56). `max()` keeps desktop at 12 and
-     iPhone exactly at the system safe-area boundary, no extra padding. */
-  padding-top: max(12px, var(--safe-top));
+     too low on iPhone PWA. `max()` keeps desktop at 8 and iPhone exactly
+     at the system safe-area boundary, no extra padding. */
+  padding-top: max(8px, var(--safe-top));
   padding-bottom: calc(var(--navbar-height) + var(--safe-bottom) + var(--space-xl));
   min-height: 100dvh;
   animation: fadeInPage 0.3s var(--ease-out);
@@ -622,7 +622,7 @@ span > svg {
 /* --- Toast / Snackbar --- */
 .toast-container {
   position: fixed;
-  top: max(12px, var(--safe-top));
+  top: max(8px, var(--safe-top));
   left: 50%;
   transform: translateX(-50%);
   z-index: var(--z-toast);
@@ -1908,12 +1908,16 @@ span > svg {
   animation: pulse 2s infinite;
 }
 
-/* --- Wall top action row (chat left | notifications right) --- */
+/* --- Wall top action row (chat left | notifications right) ---
+   Top padding kept tiny (4px) so the icons sit close to the page edge.
+   The .page already adds max(8px, safe-top) above us, so on iPhone PWA
+   the buttons end up just below the Dynamic Island, no extra empty
+   space above them. */
 .wall-top-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-md) 0 var(--space-sm);
+  padding: 4px 0 var(--space-sm);
 }
 
 .wall-top-spacer {
@@ -2312,7 +2316,7 @@ span > svg {
   /* Sticky at top:0 means iOS notch overlays this bar. max() avoids
      stacking the baseline on top of the safe-area inset, which would
      push the back button uncomfortably low on iPhone PWA. */
-  padding-top: max(12px, var(--safe-top));
+  padding-top: max(8px, var(--safe-top));
   background: rgba(10, 10, 15, 0.85);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -2862,10 +2866,10 @@ span > svg {
 .theme-toggle-wrapper {
   position: absolute;
   /* Match the visual top of the wall's chat/heart icons:
-     page padding-top = max(12px, safe-top), plus .wall-top-row's own
-     16px top padding. Same max() trick keeps the toggle aligned on
-     both desktop and iPhone PWA without piling extra space. */
-  top: calc(max(12px, var(--safe-top)) + 16px);
+     page padding-top = max(8px, safe-top), plus .wall-top-row's own
+     4px top padding. Keeps the toggle aligned on both desktop and
+     iPhone PWA without piling extra space. */
+  top: calc(max(8px, var(--safe-top)) + 4px);
   right: var(--space-md);
   z-index: 10;
 }

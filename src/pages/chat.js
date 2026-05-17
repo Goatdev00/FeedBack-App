@@ -1,12 +1,19 @@
 // ============================================
 // FEEDBACK — Chat Room (reusable for general + per-party)
-// Phase 2: localStorage-backed messages, single-tab.
-// Phase 4: same UI, swap store calls for Supabase Realtime subscribe/insert.
+// Phase 3: Supabase chat_messages + Realtime broadcast. Every message
+// goes to public.chat_messages and arrives on every other connected
+// client within ~200ms via the supabase_realtime publication.
 // ============================================
 
 import { store, ICONS, formatRelative } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { avatarHTML, roleBadgeClass, roleTitle, sanitize } from '../utils/helpers.js';
+import {
+  listChatMessages,
+  sendChatMessageDB,
+  subscribeChatRoom,
+} from '../data/api.js';
+import { supabase } from '../data/supabase.js';
 
 const GENERAL_ROOM_KEY = 'general';
 
@@ -49,7 +56,9 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
         <span class="chat-live-indicator" title="En vivo">●</span>
       </div>
 
-      <div class="chat-messages" id="chat-messages"></div>
+      <div class="chat-messages" id="chat-messages">
+        <div class="chat-empty"><div class="chat-empty-icon">💬</div><p>Cargando mensajes...</p></div>
+      </div>
 
       <form class="chat-input-row" id="chat-form">
         <input type="text" class="chat-input" id="chat-input"
@@ -66,58 +75,170 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
   const form = container.querySelector('#chat-form');
   const input = container.querySelector('#chat-input');
 
-  let lastRenderedSig = '';
+  // ====== Local in-memory message buffer (this page only) ======
+  // We don't push chat into the global store because (a) the volume can
+  // grow large and (b) the chat is page-scoped. State here:
+  //
+  //   messages           — array of {id, userId, content, createdAt, ...}
+  //   pendingByContent   — set of contents currently flying to the server,
+  //                        used to dedupe the realtime echo from the user's
+  //                        own insert.
+  //   userCache          — id → user lookup for foreign authors we haven't
+  //                        seen in state.users yet (fills lazily).
+  let messages = [];
+  const pendingByContent = new Map(); // contentKey → tempId
+  const userCache = new Map();
 
+  let lastRenderedSig = '';
   function paint() {
-    const msgs = store.getChatMessages(roomKey);
-    // Cheap diffing: avoid rerendering identical lists.
-    const sig = msgs.length + ':' + (msgs.at(-1)?.id || '');
+    const sig = messages.length + ':' + (messages.at(-1)?.id || '');
     if (sig === lastRenderedSig) return;
     lastRenderedSig = sig;
 
     const wasNearBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80;
 
-    messagesEl.innerHTML = msgs.length === 0
+    messagesEl.innerHTML = messages.length === 0
       ? `<div class="chat-empty">
            <div class="chat-empty-icon">💬</div>
            <p>Aún nadie ha escrito. ¡Rompe el hielo!</p>
          </div>`
-      : msgs.map((m, i) => renderMessage(m, msgs[i - 1], user.id)).join('');
+      : messages.map((m, i) => renderMessage(m, messages[i - 1], user.id, userCache)).join('');
 
     if (wasNearBottom) {
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
   }
 
-  paint();
-  // Subscribe to store changes so other tabs / future realtime updates
-  // immediately repaint without manual reload.
-  const unsubscribe = store.subscribe(paint);
+  // ====== Hydrate history from Supabase + subscribe to new inserts ======
+  let unsubscribeRealtime = () => {};
 
-  // First paint: jump to bottom regardless of scroll position.
-  requestAnimationFrame(() => { messagesEl.scrollTop = messagesEl.scrollHeight; });
+  (async () => {
+    try {
+      messages = await listChatMessages(roomKey);
+    } catch (err) {
+      console.warn('[chat] history fetch failed', err);
+      messages = [];
+    }
+    // Fetch any missing author profiles in one batch so renderMessage
+    // doesn't render empty bubbles for users not in state.users yet.
+    await fillUserCache(messages, userCache);
+    paint();
+    requestAnimationFrame(() => { messagesEl.scrollTop = messagesEl.scrollHeight; });
+  })();
 
-  form.addEventListener('submit', (e) => {
+  unsubscribeRealtime = subscribeChatRoom(roomKey, async (msg) => {
+    // Drop the realtime echo of our own optimistic insert.
+    const key = optimisticKey(msg);
+    if (pendingByContent.has(key)) {
+      const tempId = pendingByContent.get(key);
+      // Replace the optimistic row with the canonical server row.
+      const idx = messages.findIndex(m => m.id === tempId);
+      if (idx !== -1) messages[idx] = msg;
+      pendingByContent.delete(key);
+    } else {
+      // Foreign message — append unless we already have it.
+      if (!messages.some(m => m.id === msg.id)) {
+        messages.push(msg);
+      }
+    }
+    if (!userCache.has(msg.userId) && !store.getUserById(msg.userId)) {
+      await fetchUserInto(msg.userId, userCache);
+    }
+    paint();
+  });
+
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = input.value.trim();
     if (!text) return;
-    store.sendChatMessage(roomKey, text);
     input.value = '';
     input.focus();
+
+    // Optimistic local insert: show the message immediately, dedupe the
+    // realtime echo by content+timestamp.
+    const tempId = 'pending_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+    const optimistic = {
+      id: tempId,
+      userId: user.id,
+      content: text,
+      authorTier: user.tier || 'general',
+      authorRole: user.role || 'raver',
+      isHost: false,
+      createdAt: new Date(),
+      _pending: true,
+    };
+    messages.push(optimistic);
+    pendingByContent.set(optimisticKey(optimistic), tempId);
+    paint();
+
+    try {
+      const real = await sendChatMessageDB(roomKey, text);
+      if (real) {
+        const idx = messages.findIndex(m => m.id === tempId);
+        if (idx !== -1) messages[idx] = real;
+        pendingByContent.delete(optimisticKey(optimistic));
+        paint();
+      }
+    } catch (err) {
+      console.warn('[chat] send failed', err);
+      messages = messages.filter(m => m.id !== tempId);
+      pendingByContent.delete(optimisticKey(optimistic));
+      paint();
+    }
   });
 
   container.querySelector('#back-btn').addEventListener('click', () => {
-    unsubscribe();
+    unsubscribeRealtime();
     router.navigate(backRoute);
   });
 }
 
-function renderMessage(m, prev, currentUserId) {
-  const author = store.getUserById(m.userId);
+function optimisticKey(msg) {
+  // userId+content is enough to dedupe within a small time window — we
+  // delete the entry as soon as the server echo lands so collisions are
+  // virtually impossible.
+  return `${msg.userId}::${msg.content}`;
+}
+
+async function fillUserCache(messages, cache) {
+  const missing = new Set();
+  for (const m of messages) {
+    if (!cache.has(m.userId) && !store.getUserById(m.userId)) missing.add(m.userId);
+  }
+  if (missing.size === 0) return;
+  const { data } = await supabase
+    .from('profiles')
+    .select('id, name, username, role, avatar_url, membership_tier')
+    .in('id', Array.from(missing));
+  for (const p of data || []) {
+    cache.set(p.id, profileRowToUserShape(p));
+  }
+}
+
+async function fetchUserInto(userId, cache) {
+  const { data } = await supabase
+    .from('profiles')
+    .select('id, name, username, role, avatar_url, membership_tier')
+    .eq('id', userId)
+    .maybeSingle();
+  if (data) cache.set(userId, profileRowToUserShape(data));
+}
+
+function profileRowToUserShape(p) {
+  return {
+    id: p.id,
+    name: p.name,
+    username: p.username?.startsWith('@') ? p.username : `@${p.username}`,
+    role: p.role,
+    avatar: p.avatar_url || null,
+    premium: p.membership_tier && p.membership_tier !== 'general',
+  };
+}
+
+function renderMessage(m, prev, currentUserId, userCache) {
+  const author = store.getUserById(m.userId) || userCache.get(m.userId);
   if (!author) return '';
   const isMine = m.userId === currentUserId;
-  // Group consecutive messages from the same author within 5 min: hide
-  // the avatar + name on follow-ups so the conversation feels threaded.
   const sameAsPrev = prev
     && prev.userId === m.userId
     && (m.createdAt.getTime() - prev.createdAt.getTime()) < 5 * 60_000;

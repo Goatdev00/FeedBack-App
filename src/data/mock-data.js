@@ -669,11 +669,23 @@ class Store {
     this.applyTheme(newTheme);
     this.saveState();
     this.notify();
+
+    // Persist to Supabase profile so the preference follows the user
+    // across devices and survives a localStorage wipe.
+    if (_api?.patchProfileTheme) {
+      _api.patchProfileTheme(newTheme).catch((err) =>
+        console.warn('[store] theme persist failed', err));
+    }
     return newTheme;
   }
 
   applyTheme(theme) {
-    document.documentElement.setAttribute('data-theme', theme || 'dark');
+    const t = theme === 'light' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', t);
+    // Mirror to a dedicated top-level key so the SYNC bootstrap in
+    // main.js can apply the right theme before any async query runs.
+    // This eliminates the "flash of wrong theme" on returning visits.
+    try { localStorage.setItem('feedback.theme', t); } catch { /* noop */ }
   }
 
   // --- Points ---

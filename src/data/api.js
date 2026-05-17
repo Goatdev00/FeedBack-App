@@ -18,6 +18,10 @@
 import { supabase, isSupabaseConfigured } from './supabase.js';
 import { registerApi } from './mock-data.js';
 
+// Synthetic party that hosts the global chat room. We hide it from the
+// parties list to keep the UI clean.
+export const GLOBAL_CHAT_PARTY_ID = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+
 // ---------------------------------------------------------------------
 // Profile shape adapter (matches profile-sync.js so consumers can pass
 // either shape downstream).
@@ -45,6 +49,7 @@ export async function listParties() {
   const { data, error } = await supabase
     .from('parties')
     .select('*')
+    .neq('id', GLOBAL_CHAT_PARTY_ID)  // hide the synthetic global-chat party
     .order('party_date', { ascending: true });
   if (error) throw error;
   return (data || []).map(partyFromRow);
@@ -299,6 +304,131 @@ export async function toggleAttendance(partyId) {
   }
 }
 
+// =====================================================================
+// LIVE CHAT — chat_rooms + chat_messages over Supabase Realtime
+// =====================================================================
+// Frontend "room keys":
+//   'general'              → the global chat (hosted on the synthetic
+//                            party with GLOBAL_CHAT_PARTY_ID)
+//   'party:<uuid>'         → per-party public chat (auto-created by the
+//                            create_party_chat_rooms() trigger)
+//
+// Each helper resolves the room id (uuid) lazily and caches it.
+// =====================================================================
+const _roomIdCache = new Map();
+
+export function roomKeyToPartyId(roomKey) {
+  if (roomKey === 'general') return GLOBAL_CHAT_PARTY_ID;
+  if (roomKey.startsWith('party:')) return roomKey.slice('party:'.length);
+  return null;
+}
+
+export async function resolveChatRoomId(roomKey) {
+  if (_roomIdCache.has(roomKey)) return _roomIdCache.get(roomKey);
+  const partyId = roomKeyToPartyId(roomKey);
+  if (!partyId) return null;
+  const { data, error } = await supabase
+    .from('chat_rooms')
+    .select('id')
+    .eq('party_id', partyId)
+    .eq('type', 'public')
+    .maybeSingle();
+  if (error || !data) return null;
+  _roomIdCache.set(roomKey, data.id);
+  return data.id;
+}
+
+export async function listChatMessages(roomKey, limit = 100) {
+  if (!isSupabaseConfigured()) return [];
+  const roomId = await resolveChatRoomId(roomKey);
+  if (!roomId) return [];
+  const { data, error } = await supabase
+    .from('chat_messages')
+    .select('id, room_id, user_id, content, author_tier, author_role, is_host, status, created_at')
+    .eq('room_id', roomId)
+    .eq('status', 'visible')
+    .order('created_at', { ascending: true })
+    .limit(limit);
+  if (error) throw error;
+  return (data || []).map(chatMsgFromRow);
+}
+
+function chatMsgFromRow(m) {
+  return {
+    id: m.id,
+    userId: m.user_id,
+    content: m.content,
+    authorTier: m.author_tier,
+    authorRole: m.author_role,
+    isHost: !!m.is_host,
+    createdAt: new Date(m.created_at),
+  };
+}
+
+export async function sendChatMessageDB(roomKey, content) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const text = (content || '').trim();
+  if (!text) return null;
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('not_authenticated');
+  const roomId = await resolveChatRoomId(roomKey);
+  if (!roomId) throw new Error('room_not_found');
+
+  // author_tier / author_role / is_host are snapshotted by the
+  // snapshot_message_meta() BEFORE INSERT trigger — we only send the
+  // raw content + ids.
+  const { data, error } = await supabase
+    .from('chat_messages')
+    .insert({ room_id: roomId, user_id: user.id, content: text })
+    .select('id, room_id, user_id, content, author_tier, author_role, is_host, status, created_at')
+    .single();
+  if (error) throw error;
+  return chatMsgFromRow(data);
+}
+
+/**
+ * Subscribe to new chat_messages in a room. Returns an unsubscribe fn.
+ * The page passes a callback that receives the new message object —
+ * the page is responsible for deciding when to repaint.
+ */
+export function subscribeChatRoom(roomKey, onMessage) {
+  let channel = null;
+  let cancelled = false;
+
+  (async () => {
+    const roomId = await resolveChatRoomId(roomKey);
+    if (!roomId || cancelled || !isSupabaseConfigured()) return;
+    channel = supabase
+      .channel(`chat-room:${roomId}`)
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'chat_messages', filter: `room_id=eq.${roomId}` },
+        (payload) => {
+          if (!payload.new) return;
+          onMessage(chatMsgFromRow(payload.new));
+        })
+      .subscribe();
+  })();
+
+  return () => {
+    cancelled = true;
+    if (channel) supabase.removeChannel(channel);
+  };
+}
+
+// =====================================================================
+// PROFILE PATCH (theme, etc) — small partial updates
+// =====================================================================
+export async function patchProfileTheme(theme) {
+  if (!isSupabaseConfigured()) return;
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+  const { error } = await supabase
+    .from('profiles')
+    .update({ theme: theme === 'light' ? 'light' : 'dark' })
+    .eq('id', user.id);
+  if (error) throw error;
+}
+
 // Register write-side helpers with the store so it can persist through
 // to Supabase. Reads are still triggered from main.js via hydrateAll().
 registerApi({
@@ -308,6 +438,7 @@ registerApi({
   toggleFollow,
   toggleAttendance,
   createParty,
+  patchProfileTheme,
 });
 
 // =====================================================================
@@ -345,7 +476,14 @@ export function subscribeRealtime(store) {
         // Skip if this is the same row we already inserted optimistically.
         const state = store.getState();
         if (state.posts.some(p => p.id === fresh.id)) return;
-        store.setState({ posts: [fresh, ...state.posts] });
+
+        // Make sure the author is in state.users — otherwise wall.js
+        // silently filters out this post via its `if (!author) return ''`.
+        const next = { posts: [fresh, ...state.posts] };
+        if (fresh.author && !state.users.some(u => u.id === fresh.author.id)) {
+          next.users = [fresh.author, ...state.users];
+        }
+        store.setState(next);
       })
     // Likes: increment/decrement the corresponding post's like array.
     .on('postgres_changes',
@@ -377,7 +515,7 @@ export function subscribeRealtime(store) {
     // Comments: append to the matching post.
     .on('postgres_changes',
       { event: 'INSERT', schema: 'public', table: 'post_comments' },
-      (payload) => {
+      async (payload) => {
         const c = payload.new;
         if (!c) return;
         const state = store.getState();
@@ -392,7 +530,19 @@ export function subscribeRealtime(store) {
           createdAt: new Date(c.created_at),
         });
         post.replies = post.comments.length;
-        store.setState({ posts: [...state.posts] });
+
+        // Ensure the commenter is in state.users so wall.js can render
+        // their name. If we don't have them locally, fetch lazily.
+        const next = { posts: [...state.posts] };
+        if (!state.users.some(u => u.id === c.user_id)) {
+          const { data } = await supabase
+            .from('profiles')
+            .select('id, name, username, role, city, avatar_url, membership_tier, points')
+            .eq('id', c.user_id)
+            .maybeSingle();
+          if (data) next.users = [authorFromRow(data), ...state.users];
+        }
+        store.setState(next);
       })
     // New party (e.g. a promoter just created one) → prepend to list.
     .on('postgres_changes',

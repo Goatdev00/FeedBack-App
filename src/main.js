@@ -70,6 +70,17 @@ router.register('chat-party', renderChatParty);
 //   * Today is Sunday and first time today           → /wall + Sunday modal
 // =====================================================================
 
+// Apply the user's preferred theme SYNCHRONOUSLY from a dedicated
+// top-level localStorage key BEFORE anything async happens — otherwise
+// the page paints in the default theme for a beat, then flips when
+// Supabase auth + profile sync complete (visible "flash of wrong theme").
+try {
+  const cachedTheme = localStorage.getItem('feedback.theme');
+  if (cachedTheme === 'light' || cachedTheme === 'dark') {
+    document.documentElement.setAttribute('data-theme', cachedTheme);
+  }
+} catch { /* localStorage might be denied in private mode */ }
+
 initLavaLamp('lava-bg');
 
 // Force-flush any debounced cloud save before the tab closes. Without
@@ -120,73 +131,39 @@ if (isSupabaseConfigured()) {
 }
 
 async function routeAfterSession() {
-  // Try a few times before giving up — a single network blip during the
-  // first paint after OAuth shouldn't kick an authenticated user back to
-  // the login screen.
-  let profile = null;
-  for (let attempt = 0; attempt < 3 && !profile; attempt++) {
-    profile = await syncProfileIntoStore();
-    if (!profile && attempt < 2) {
-      await new Promise(r => setTimeout(r, 400 * (attempt + 1))); // 400ms, 800ms
-    }
-  }
+  // FAST PATH: if we already have a cached currentUser in localStorage
+  // (returning user), navigate to the wall IMMEDIATELY using cached data.
+  // All Supabase queries run in parallel in the background and the
+  // store.subscribe-based renderers refresh the UI as data arrives.
+  // Result: perceived boot is instant for returning users, instead of
+  // staring at a blank screen for ~1-3s while 7 queries fire serially.
+  const cached = store.getState();
+  const hasCachedSession = cached.currentUser && cached.onboardingComplete;
 
-  if (!profile) {
-    // We KNOW the session is valid (onAuthChange already validated it).
-    // The profile row just isn't reachable right now. Park on /wall —
-    // it'll re-fetch when the user interacts, and the legacy localStorage
-    // store keeps the UI functional in the meantime. Forcing /login here
-    // would be a worse experience than a partially-empty wall.
-    router.navigate('wall');
+  if (hasCachedSession) {
+    routeWallOrSunday();
+    refreshFromSupabaseInBackground();
     return;
   }
 
+  // SLOW PATH (first sign-in or onboarding incomplete): we need the
+  // profile row to decide onboarding vs wall, so wait for it. Single
+  // round-trip is acceptable here.
+  const profile = await syncProfileIntoStore();
+  if (!profile) {
+    router.navigate('wall');
+    refreshFromSupabaseInBackground();
+    return;
+  }
   if (!profile.onboardingComplete) {
     router.navigate('onboarding');
     return;
   }
+  routeWallOrSunday();
+  refreshFromSupabaseInBackground();
+}
 
-  // Hydrate the normalized entities (parties, posts, follows, profiles,
-  // attendance) from Supabase. These are the source of truth in Phase 3.
-  try {
-    const real = await hydrateAll();
-    if (real) {
-      const state = store.getState();
-      // Merge: real parties/posts replace the legacy mock; the legacy
-      // mock users stay alongside real profiles so DJ/promotor avatars
-      // for old seeds keep rendering until Phase 4 deprecates them.
-      const profilesById = new Map(real.profiles.map(u => [u.id, u]));
-      const legacyUsers = state.users.filter(u => !profilesById.has(u.id) && u.id.startsWith('u'));
-      const mergedUsers = [...real.profiles, ...legacyUsers];
-
-      store.setState({
-        parties: real.parties.length ? real.parties : state.parties,
-        posts: real.posts,
-        follows: real.follows,
-        users: mergedUsers,
-      });
-    }
-  } catch (e) {
-    console.warn('[main] supabase hydration failed', e);
-  }
-
-  // Subscribe to realtime changes — new posts / likes / comments from
-  // OTHER users will appear in the wall without a refresh. Safe to call
-  // multiple times: subscribeRealtime is idempotent.
-  try { subscribeRealtime(store); } catch (e) { console.warn('[main] realtime failed', e); }
-
-  // Hydrate the non-normalized leftovers (chat, ratings, questions,
-  // awardedFollows, lastNotificationsViewed, etc.) from user_app_state.
-  // Phase 4 will fold these into proper tables. Strip any keys that
-  // belong to migrated entities (posts/parties/follows/users) before
-  // merging — otherwise a stale blob would overwrite the shared feed.
-  try {
-    const cloud = await loadCloudState();
-    if (cloud) store.hydrateFromCloud(stripCloudExclusions(cloud));
-  } catch (e) {
-    console.warn('[main] cloud hydration failed', e);
-  }
-
+function routeWallOrSunday() {
   if (isSunday) {
     const sundayKey = `sunday_${new Date().toISOString().split('T')[0]}`;
     if (!sessionStorage.getItem(sundayKey)) {
@@ -197,6 +174,50 @@ async function routeAfterSession() {
     }
   }
   router.navigate('wall');
+}
+
+// Fire all three hydration queries in parallel. None of them block
+// rendering — the store's subscribe callbacks pick up the new data and
+// re-render the visible page as each promise lands.
+function refreshFromSupabaseInBackground() {
+  Promise.allSettled([
+    syncProfileIntoStore(),
+    hydrateAll(),
+    loadCloudState(),
+  ]).then(([profileR, realR, cloudR]) => {
+    const real  = realR.status === 'fulfilled' ? realR.value : null;
+    const cloud = cloudR.status === 'fulfilled' ? cloudR.value : null;
+
+    if (real) {
+      const state = store.getState();
+      const profilesById = new Map(real.profiles.map(u => [u.id, u]));
+      const legacyUsers = state.users.filter(u => !profilesById.has(u.id) && u.id.startsWith('u'));
+      const mergedUsers = [...real.profiles, ...legacyUsers];
+      store.setState({
+        parties: real.parties.length ? real.parties : state.parties,
+        posts: real.posts,
+        follows: real.follows,
+        users: mergedUsers,
+      });
+    }
+
+    if (cloud) {
+      store.hydrateFromCloud(stripCloudExclusions(cloud));
+    }
+
+    if (profileR.status === 'rejected') {
+      console.warn('[main] profile sync failed', profileR.reason);
+    }
+
+    try { subscribeRealtime(store); } catch (e) { console.warn('[main] realtime failed', e); }
+
+    // CRITICAL: re-render the current route now that the store has the
+    // freshly-hydrated posts + profiles + parties. Otherwise the wall
+    // keeps showing whatever was cached at first paint (filtering out
+    // posts whose authors weren't in state.users yet).
+    const currentRoute = router.getCurrentRoute();
+    if (currentRoute) router.navigate(currentRoute, router.getCurrentParams?.() || {});
+  });
 }
 
 function showSundayPrompt() {
