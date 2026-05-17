@@ -366,6 +366,14 @@ export const SUNDAY_CATEGORIES = [
 
 const STORAGE_KEY = 'feedback_app_state';
 
+// Used by loadState() to scrap legacy non-UUID ids inherited from the
+// pre-Phase-3 mock data. Anything that doesn't match the canonical v4
+// UUID shape gets purged so Supabase hydration can repopulate clean.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function isUuid(s) {
+  return typeof s === 'string' && UUID_RE.test(s);
+}
+
 const defaultState = {
   isLoggedIn: false,
   onboardingComplete: false,
@@ -423,6 +431,32 @@ class Store {
           parsed.questions.forEach(q => {
             q.createdAt = new Date(q.createdAt);
           });
+        }
+        // Phase 3 migration: any cached parties/posts that still use the
+        // legacy 'p1'..'p5' / 'post1'..'post6' string IDs would cause FK
+        // violations against the UUID-keyed Supabase tables. Wipe them
+        // so hydrateAll() repopulates with fresh server data.
+        if (parsed.parties?.some(p => !isUuid(p.id))) {
+          console.info('[store] legacy party IDs detected; clearing cached posts/parties');
+          parsed.parties = [];
+          parsed.posts = [];
+        }
+        if (parsed.posts?.some(p => !isUuid(p.partyId) || !isUuid(p.userId))) {
+          parsed.posts = [];
+        }
+        // Same for chatRooms keys that reference legacy party IDs.
+        if (parsed.chatRooms) {
+          for (const key of Object.keys(parsed.chatRooms)) {
+            if (key.startsWith('party:') && !isUuid(key.slice('party:'.length))) {
+              delete parsed.chatRooms[key];
+            }
+          }
+        }
+        // Same for follows referencing legacy mock user IDs (u1-u6).
+        if (parsed.follows?.some(f => /^u\d+$/.test(f.followingId) || /^u\d+$/.test(f.followerId))) {
+          parsed.follows = parsed.follows.filter(
+            f => isUuid(f.followingId) && isUuid(f.followerId)
+          );
         }
         // Merge with defaults for new fields
         return { ...defaultState, ...parsed };
@@ -571,6 +605,10 @@ class Store {
           this.state.posts = this.state.posts.filter(p => p.id !== tempId);
           this.saveState();
           this.notify();
+          // Tell the user instead of silently swallowing — the typical
+          // root causes are FK violations (stale party id), RLS daily
+          // limit exceeded, or network failure.
+          _surfaceError?.('No se pudo publicar. ' + describeApiError(err));
         });
     }
     return newPost;
@@ -612,6 +650,7 @@ class Store {
         else { p.likedBy = p.likedBy.filter(id => id !== uid); p.likes--; }
         this.saveState();
         this.notify();
+        _surfaceError?.('No se pudo dar like. ' + describeApiError(err));
       });
     }
   }
@@ -653,6 +692,7 @@ class Store {
           p.replies = p.comments.length;
           this.saveState();
           this.notify();
+          _surfaceError?.('No se pudo comentar. ' + describeApiError(err));
         });
     }
     return comment;
@@ -1111,6 +1151,27 @@ export function registerCloudSave(fn) { _queueCloudSave = fn; }
 // an import cycle (api.js → supabase.js, not via mock-data.js).
 let _api = null;
 export function registerApi(api) { _api = api; }
+
+// Same pattern again for the toast helper — we can't import toast.js
+// directly without a cycle (toast → dom utilities → ... → mock-data).
+// main.js calls registerErrorSurface(showToast) so failed writes
+// surface visibly instead of vanishing silently.
+let _surfaceError = null;
+export function registerErrorSurface(fn) { _surfaceError = fn; }
+
+// Translate Supabase / Postgres error shapes into a single human line.
+function describeApiError(err) {
+  if (!err) return 'Error desconocido.';
+  // PostgREST errors usually carry .code, .message, .details
+  const code = err.code || err.error || '';
+  const msg  = err.message || err.error_description || String(err);
+  if (code === '23503') return 'Referencia inválida (recarga la app).';
+  if (code === '42501' || /row-level security|permission/i.test(msg)) {
+    return 'Permiso denegado por el servidor.';
+  }
+  if (/network|fetch|timeout/i.test(msg)) return 'Sin conexión al servidor.';
+  return msg.length > 80 ? msg.slice(0, 80) + '...' : msg;
+}
 
 export const store = new Store();
 export { formatRelative, isSunday };

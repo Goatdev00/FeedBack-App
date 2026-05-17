@@ -8,7 +8,13 @@
 // ============================================
 
 import { router } from './router.js';
-import { store, isSunday } from './data/mock-data.js';
+import { store, isSunday, registerErrorSurface } from './data/mock-data.js';
+import { showToast } from './utils/toast.js';
+
+// Wire failed Supabase writes to visible toasts. Without this, an API
+// rejection (FK violation, RLS denial, network) would just be a console
+// warning the user never sees — they'd think "my post disappeared".
+registerErrorSurface((msg) => showToast(msg, 'error', 4500));
 import { bindNavEvents } from './components/nav.js';
 import { initLavaLamp } from './utils/lava-lamp.js';
 import { createModal } from './utils/dom.js';
@@ -211,12 +217,14 @@ function refreshFromSupabaseInBackground() {
 
     try { subscribeRealtime(store); } catch (e) { console.warn('[main] realtime failed', e); }
 
-    // CRITICAL: re-render the current route now that the store has the
-    // freshly-hydrated posts + profiles + parties. Otherwise the wall
-    // keeps showing whatever was cached at first paint (filtering out
-    // posts whose authors weren't in state.users yet).
-    const currentRoute = router.getCurrentRoute();
-    if (currentRoute) router.navigate(currentRoute, router.getCurrentParams?.() || {});
+    // Re-render the wall now that posts + profiles are hydrated. We
+    // ONLY do this for /wall (and only if the user is still there),
+    // because other routes need params (partyId, userId) that the
+    // router doesn't track — re-navigating without them would break
+    // party-detail / profile-other / chat pages.
+    if (router.getCurrentRoute() === 'wall') {
+      router.navigate('wall');
+    }
   });
 }
 

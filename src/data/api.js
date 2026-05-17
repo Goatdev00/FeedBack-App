@@ -473,12 +473,27 @@ export function subscribeRealtime(store) {
           .single();
         if (error || !data) return;
         const fresh = postFromRow({ ...data, post_likes: [], post_comments: [] });
-        // Skip if this is the same row we already inserted optimistically.
         const state = store.getState();
+
+        // Skip the canonical row if it's already in the list.
         if (state.posts.some(p => p.id === fresh.id)) return;
 
-        // Make sure the author is in state.users — otherwise wall.js
-        // silently filters out this post via its `if (!author) return ''`.
+        // If this is the realtime echo of OUR own optimistic insert,
+        // replace the pending row in place instead of duplicating. We
+        // match by (userId + content) since createPost may not have
+        // replied yet with the server id.
+        const pendingIdx = state.posts.findIndex(
+          p => p._pending && p.userId === fresh.userId && p.content === fresh.content
+        );
+        if (pendingIdx !== -1) {
+          const replaced = [...state.posts];
+          replaced[pendingIdx] = fresh;
+          store.setState({ posts: replaced });
+          return;
+        }
+
+        // Foreign new post → prepend + make sure the author is in state.users
+        // so wall.js can render their name (otherwise it filters silently).
         const next = { posts: [fresh, ...state.posts] };
         if (fresh.author && !state.users.some(u => u.id === fresh.author.id)) {
           next.users = [fresh.author, ...state.users];
