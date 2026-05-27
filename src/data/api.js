@@ -17,6 +17,7 @@
 
 import { supabase, isSupabaseConfigured } from './supabase.js';
 import { registerApi } from './mock-data.js';
+import { router } from '../router.js';
 
 // ---------------------------------------------------------------------
 // Profile shape adapter (matches profile-sync.js so consumers can pass
@@ -589,6 +590,29 @@ export function subscribeRealtime(store) {
         const state = store.getState();
         if (state.parties.some(x => x.id === p.id)) return;
         store.setState({ parties: [partyFromRow(p), ...state.parties] });
+      })
+    // Any new chat message anywhere → flip the unread flag so the wall's
+    // chat icon shows the green dot. We deliberately listen across ALL
+    // rooms here (no filter) so a message in any party room OR the
+    // general room triggers the indicator. The per-room subscription in
+    // chat.js still handles the in-room paint; this is purely the
+    // "you have unread chats" signal for users on /wall.
+    .on('postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'chat_messages' },
+      (payload) => {
+        const m = payload.new;
+        if (!m) return;
+        const state = store.getState();
+        // Skip our own messages.
+        if (state.currentUser && m.user_id === state.currentUser.id) return;
+        // Already flagged — don't churn setState.
+        if (state.hasUnreadChat) return;
+        store.setState({ hasUnreadChat: true });
+        // The wall isn't a long-lived component (no store.subscribe), so
+        // setState alone won't repaint the chat-trigger. Force a refresh
+        // ONLY when /wall is the visible route — other pages don't show
+        // this icon and don't need to re-render on chat activity.
+        if (router.getCurrentRoute() === 'wall') router.refreshCurrentRoute();
       })
     .subscribe();
 

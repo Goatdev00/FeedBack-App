@@ -37,3 +37,7 @@ supabase/.temp
 id_rsa*
 service-account*.json
 *-credentials.json
+
+# Claude settings
+.claude/
+

@@ -47,6 +47,10 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
   const user = state.currentUser;
   if (!user) { router.navigate('login'); return; }
 
+  // Entering a live room — user is now seeing chat activity directly, so
+  // the wall's unread dot should reset.
+  if (state.hasUnreadChat) store.setState({ hasUnreadChat: false });
+
   container.innerHTML = `
     <div class="page chat-page" id="chat-room-page">
       <div class="chat-header">

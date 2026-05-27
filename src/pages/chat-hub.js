@@ -12,6 +12,10 @@ export function renderChatHub(container) {
   const user = state.currentUser;
   if (!user) { router.navigate('login'); return; }
 
+  // The user just opened the chat section — drop the unread flag so the
+  // green dot on /wall's chat icon disappears next time they go back.
+  if (state.hasUnreadChat) store.setState({ hasUnreadChat: false });
+
   // Today's parties count → shown on the per-party card as social proof.
   const todayParties = store.getTodayParties(state.selectedCity);
 

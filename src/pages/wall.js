@@ -36,8 +36,10 @@ export function renderWall(container) {
     <div class="page" id="wall-page">
       <!-- Top action row: chat (left) — notifications (right) -->
       <div class="wall-top-row">
-        <button class="chat-trigger" id="chat-btn" title="Chats en vivo" aria-label="Abrir chats">
+        <button class="chat-trigger ${state.hasUnreadChat ? 'has-unread' : ''}"
+                id="chat-btn" title="Chats en vivo" aria-label="Abrir chats">
           ${ICONS.reply}
+          ${state.hasUnreadChat ? `<span class="chat-dot"></span>` : ''}
         </button>
         <button class="notifications-trigger ${unreadNotifs > 0 ? 'has-unread' : ''}"
                 id="notifications-btn" title="Notificaciones" aria-label="Ver notificaciones">

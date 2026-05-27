@@ -430,6 +430,11 @@ const defaultState = {
   // ISO timestamp of the last time the user opened /notifications.
   // Anything newer than this counts as unread in the heart dot.
   lastNotificationsViewed: null,
+  // Flips true the moment a chat_messages INSERT arrives via realtime
+  // from someone other than the current user. The wall reads this to
+  // paint a green dot on the chat icon. Cleared when the user opens any
+  // chat route (chat-hub / chat-parties / chat-general / chat-party).
+  hasUnreadChat: false,
   // Has the first Supabase hydration completed since this session?
   // Lets pages distinguish "no data yet because still loading" from
   // "no data because the table is genuinely empty" so we can render a

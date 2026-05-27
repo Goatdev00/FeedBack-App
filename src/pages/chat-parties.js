@@ -12,6 +12,8 @@ export function renderChatParties(container) {
   const user = state.currentUser;
   if (!user) { router.navigate('login'); return; }
 
+  if (state.hasUnreadChat) store.setState({ hasUnreadChat: false });
+
   const todayStr = new Date().toISOString().split('T')[0];
   const todayParties = state.parties.filter(p => p.date === todayStr);
   const otherParties = state.parties.filter(p => p.date !== todayStr);
