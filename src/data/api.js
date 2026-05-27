@@ -77,7 +77,8 @@ function partyFromRow(p) {
 
 export async function createParty(input) {
   if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
   if (!user) throw new Error('not_authenticated');
   const row = {
     name: input.name,
@@ -99,6 +100,10 @@ export async function createParty(input) {
 // =====================================================================
 // POSTS
 // =====================================================================
+// Hard cap on the initial post hydration. Boot pulls just enough to
+// fill the visible feed; older posts can be paginated in later.
+const POSTS_INITIAL_LIMIT = 50;
+
 export async function listPosts() {
   if (!isSupabaseConfigured()) return [];
   const { data, error } = await supabase
@@ -109,7 +114,8 @@ export async function listPosts() {
       post_likes(user_id),
       post_comments(id, user_id, content, created_at)
     `)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .limit(POSTS_INITIAL_LIMIT);
   if (error) throw error;
   return (data || []).map(postFromRow);
 }
@@ -143,7 +149,8 @@ function postFromRow(p) {
 
 export async function createPost({ partyId, content, image }) {
   if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
   if (!user) throw new Error('not_authenticated');
   const { data, error } = await supabase
     .from('posts')
@@ -168,7 +175,8 @@ export async function createPost({ partyId, content, image }) {
 // =====================================================================
 export async function toggleLike(postId) {
   if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
   if (!user) throw new Error('not_authenticated');
 
   // Check if already liked. cheap because of the (post_id,user_id) PK.
@@ -201,7 +209,8 @@ export async function toggleLike(postId) {
 // =====================================================================
 export async function addComment(postId, text) {
   if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
   if (!user) throw new Error('not_authenticated');
   const { data, error } = await supabase
     .from('post_comments')
@@ -233,7 +242,8 @@ export async function listFollows() {
 
 export async function toggleFollow(targetId) {
   if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
   if (!user) throw new Error('not_authenticated');
   if (user.id === targetId) return { changed: false };
 
@@ -275,7 +285,8 @@ export async function listAttendees() {
 
 export async function toggleAttendance(partyId) {
   if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
   if (!user) throw new Error('not_authenticated');
 
   const { data: existing } = await supabase
@@ -377,7 +388,8 @@ export async function sendChatMessageDB(roomKey, content) {
   if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
   const text = (content || '').trim();
   if (!text) return null;
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
   if (!user) throw new Error('not_authenticated');
   const roomId = await resolveChatRoomId(roomKey);
   if (!roomId) throw new Error('room_not_found');
@@ -428,7 +440,8 @@ export function subscribeChatRoom(roomKey, onMessage) {
 // =====================================================================
 export async function patchProfileTheme(theme) {
   if (!isSupabaseConfigured()) return;
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
   if (!user) return;
   const { error } = await supabase
     .from('profiles')

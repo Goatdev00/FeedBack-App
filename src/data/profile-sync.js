@@ -51,8 +51,11 @@ export function profileRowToCurrentUser(p) {
 export async function syncProfileIntoStore() {
   if (!isSupabaseConfigured()) return null;
 
-  const { data: { user }, error: userErr } = await supabase.auth.getUser();
-  if (userErr || !user) return null;
+  // getSession() reads from localStorage (no network); getUser() round-trips
+  // to /auth/v1/user every time. On boot we were paying ~1-3s per call.
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
+  if (!user) return null;
 
   const { data: profile, error } = await supabase
     .from('profiles')
@@ -92,7 +95,8 @@ export async function syncProfileIntoStore() {
  */
 export async function patchProfile(patch) {
   if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
   if (!user) throw new Error('not_authenticated');
 
   const { data, error } = await supabase

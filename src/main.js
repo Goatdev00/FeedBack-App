@@ -107,8 +107,11 @@ setupPullToRefresh(async () => {
       const state = store.getState();
       const profilesById = new Map(real.profiles.map(u => [u.id, u]));
       const legacyUsers = state.users.filter(u => !profilesById.has(u.id) && u.id.startsWith('u'));
+      // No more `real.parties.length ? real : cached` fallback: after the
+      // 0012 wipe, an empty Supabase response is the TRUTH, not a stale
+      // signal to fall back to localStorage. Show empty state honestly.
       store.setState({
-        parties: real.parties.length ? real.parties : state.parties,
+        parties: real.parties,
         posts: real.posts,
         follows: real.follows,
         users: [...real.profiles, ...legacyUsers],
@@ -203,7 +206,9 @@ async function routeAfterSession() {
     return;
   }
   routeWallOrSunday();
-  refreshFromSupabaseInBackground();
+  // (we already kicked off refreshFromSupabaseInBackground at the top of
+  // this function — the _inFlight guard would coalesce a second call,
+  // but firing it again is just noise.)
 }
 
 function routeWallOrSunday() {

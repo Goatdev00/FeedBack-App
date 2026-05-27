@@ -369,7 +369,11 @@ export const SUNDAY_CATEGORIES = [
 // STATE MANAGEMENT (localStorage-backed)
 // ============================================
 
-const STORAGE_KEY = 'feedback_app_state';
+// Bump the suffix whenever you do a hard data reset on the backend (e.g.
+// migration 0012 wiped all posts/parties). Returning users will see their
+// old cached posts/parties auto-evicted on next load instead of staring
+// at ghosts of test data while Supabase refills.
+const STORAGE_KEY = 'feedback_app_state_v2';
 
 // Used by loadState() to scrap legacy non-UUID ids inherited from the
 // pre-Phase-3 mock data. Anything that doesn't match the canonical v4
@@ -408,17 +412,16 @@ const defaultState = {
   isLoggedIn: false,
   onboardingComplete: false,
   currentUser: null,
-  users: MOCK_USERS,
-  parties: MOCK_PARTIES,
-  posts: MOCK_POSTS,
-  questions: MOCK_QUESTIONS,
-  follows: [
-    { followerId: 'u1', followingId: 'u2' },
-    { followerId: 'u1', followingId: 'u3' },
-    { followerId: 'u4', followingId: 'u2' },
-    { followerId: 'u6', followingId: 'u1' },
-    { followerId: 'u6', followingId: 'u3' },
-  ],
+  // Pre-launch (post-migration 0012): everything user-facing starts empty
+  // so the first paint never shows demo data. Supabase hydration will
+  // fill these from real tables. The legacy MOCK_* arrays are kept above
+  // for reference / fallback in pages that still scan them, but they are
+  // intentionally NOT wired into defaultState anymore.
+  users: [],
+  parties: [],
+  posts: [],
+  questions: [],
+  follows: [],
   sundayRatings: {},
   dailyPostCount: {},
   // Pairs already rewarded with the followConnection bonus, so unfollow→
@@ -504,19 +507,31 @@ class Store {
 
   saveState() {
     try {
-      // Phase 3: posts / parties / follows / users live in Supabase
-      // tables. Persisting them locally just bloats the localStorage
-      // quota — for a user that follows ~50 people and sees ~100 posts
-      // it grows past 5 MB easily and every subsequent setState fails
-      // with QuotaExceededError, cascading into "post disappears" bugs.
-      // We skip them on the local write but keep them in the in-memory
-      // store. Boot rehydration from Supabase populates them again.
+      // Lightweight cache so refresh paints the wall instantly with the
+      // last-known state. Caveats applied to stay well under the ~5MB
+      // localStorage quota:
+      //   * posts: cap at 50 most recent. Strip any base64 image data
+      //     URLs (each can be MBs). Cap inline comments at 5/post.
+      //   * users: store only fields the UI actually reads, drop big bio.
+      //   * parties / follows: untouched, the lists are small.
       const persisted = {
         ...this.state,
-        posts: [],
-        parties: [],
-        follows: [],
-        users: [],
+        posts: (this.state.posts || []).slice(0, 50).map(p => ({
+          ...p,
+          image: p.image && typeof p.image === 'string' && p.image.startsWith('data:') ? null : p.image,
+          comments: (p.comments || []).slice(-5),
+        })),
+        users: (this.state.users || []).map(u => ({
+          id: u.id,
+          name: u.name,
+          username: u.username,
+          role: u.role,
+          city: u.city,
+          avatar: u.avatar,
+          tier: u.tier,
+          premium: u.premium,
+          points: u.points,
+        })),
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
     } catch (e) {

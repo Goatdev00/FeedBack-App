@@ -82,7 +82,8 @@ export function stripCloudExclusions(cloud) {
  */
 export async function loadCloudState() {
   if (!isSupabaseConfigured()) return null;
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
   if (!user) return null;
 
   const { data, error } = await supabase
@@ -135,7 +136,8 @@ export async function flushCloudSave(state) {
 
 async function fireUpload(state) {
   if (!isSupabaseConfigured()) return;
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
   if (!user) return;
 
   const projected = projectSyncable(state);

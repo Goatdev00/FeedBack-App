@@ -7,16 +7,18 @@
 // pull-to-refresh) can call the SAME idempotent function without
 // importing main.js (which would create a circular dependency).
 //
-// What it does:
-//   1. In parallel: re-fetch the user's profile, all normalized
-//      entities (parties / posts / follows / attendees / profiles), and
-//      the legacy cloud blob.
-//   2. Merge profiles + legacy mock users into state.users.
-//   3. setState the migrated entities authoritatively (no cache merge).
-//   4. Apply the cloud blob with migrated keys stripped.
-//   5. Subscribe to realtime (idempotent).
-//   6. Flip state.hydrated to true so skeleton loaders swap to real data.
-//   7. Re-render the current page if it's in DATA_DRIVEN_ROUTES.
+// What it does (fully parallel, render-as-you-go):
+//   - Fire all four side fetches at once: profile sync, hydrateAll,
+//     loadCloudState, subscribeRealtime. Each resolves independently and
+//     pushes its slice into the store + refreshes the route THE MOMENT it
+//     lands. The old shape awaited Promise.allSettled before doing
+//     anything, so the slowest query gated the first paint of EVERY
+//     other slice — that was a big chunk of the 20-second boot.
+//   - Realtime subscription starts in parallel too: no point waiting for
+//     queries before opening the WebSocket.
+//   - state.hydrated flips to true the moment hydrateAll resolves (real
+//     data is on screen). Skeletons swap out as soon as data is real,
+//     not when the slowest peripheral request also settles.
 //
 // Re-entrancy guard: simultaneous callers (boot + pull-to-refresh +
 // wall's auto-trigger) are coalesced into one in-flight refresh. Extra
@@ -42,19 +44,29 @@ const DATA_DRIVEN_ROUTES = new Set([
 
 let _inFlight = false;
 
+function maybeRefreshRoute() {
+  if (DATA_DRIVEN_ROUTES.has(router.getCurrentRoute())) {
+    router.refreshCurrentRoute();
+  }
+}
+
 export function refreshFromSupabaseInBackground() {
   if (_inFlight) return;
   _inFlight = true;
 
-  Promise.allSettled([
-    syncProfileIntoStore(),
-    hydrateAll(),
-    loadCloudState(),
-  ]).then(([profileR, realR, cloudR]) => {
-    const real  = realR.status  === 'fulfilled' ? realR.value  : null;
-    const cloud = cloudR.status === 'fulfilled' ? cloudR.value : null;
+  // Realtime is fire-and-forget. Open the WS up front so server-pushed
+  // changes can start streaming while the initial fetch is still in
+  // flight; the subscribe helper is idempotent.
+  try { subscribeRealtime(store); } catch (e) { console.warn('[hydrate] realtime failed', e); }
 
-    if (real) {
+  // --- profile sync (independent) ---
+  const profilePromise = syncProfileIntoStore()
+    .catch(e => { console.warn('[hydrate] profile sync failed', e); return null; });
+
+  // --- hydrateAll (the big one — controls when the wall stops being a skeleton) ---
+  const hydratePromise = hydrateAll()
+    .then(real => {
+      if (!real) return;
       const state = store.getState();
       const profilesById = new Map(real.profiles.map(u => [u.id, u]));
       const legacyUsers = state.users.filter(u => !profilesById.has(u.id) && u.id.startsWith('u'));
@@ -71,32 +83,31 @@ export function refreshFromSupabaseInBackground() {
         posts: real.posts,
         follows: real.follows,
         users: mergedUsers,
+        hydrated: true,
       });
-    } else if (realR.status === 'rejected') {
-      console.warn('[hydrate] failed', realR.reason);
-    }
+      maybeRefreshRoute();
+    })
+    .catch(e => {
+      console.warn('[hydrate] failed', e);
+      // Still flip hydrated so the skeleton doesn't spin forever.
+      if (!store.getState().hydrated) {
+        store.setState({ hydrated: true });
+        maybeRefreshRoute();
+      }
+    });
 
-    if (cloud) {
+  // --- cloud state blob (low-priority, secondary) ---
+  const cloudPromise = loadCloudState()
+    .then(cloud => {
+      if (!cloud) return;
       store.hydrateFromCloud(stripCloudExclusions(cloud));
-    }
+      maybeRefreshRoute();
+    })
+    .catch(e => { console.warn('[hydrate] cloud-state load failed', e); });
 
-    if (profileR.status === 'rejected') {
-      console.warn('[hydrate] profile sync failed', profileR.reason);
-    }
-
-    try { subscribeRealtime(store); } catch (e) { console.warn('[hydrate] realtime failed', e); }
-
-    // First hydration done — flips off any skeleton loaders. We do this
-    // even when individual queries failed so the user doesn't stare at
-    // a spinner forever; the empty state is at least honest.
-    if (!store.getState().hydrated) {
-      store.setState({ hydrated: true });
-    }
-
-    if (DATA_DRIVEN_ROUTES.has(router.getCurrentRoute())) {
-      router.refreshCurrentRoute();
-    }
-  }).finally(() => {
+  // Release the in-flight lock only when every branch is done, so the
+  // next pull-to-refresh re-fires everything cleanly.
+  Promise.allSettled([profilePromise, hydratePromise, cloudPromise]).finally(() => {
     _inFlight = false;
   });
 }
