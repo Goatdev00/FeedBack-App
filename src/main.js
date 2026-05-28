@@ -89,6 +89,20 @@ try {
   }
 } catch { /* localStorage might be denied in private mode */ }
 
+// Register the service worker. This is what makes "Add to home screen"
+// mint a modern WebAPK on Android — without a SW, Chrome falls back to a
+// legacy install targeting an old Android SDK, which Google Play Protect
+// blocks ("built for an older version of Android"). Registered after load
+// so it never competes with the first paint. Dev (localhost over Vite) is
+// fine too, but we guard on https/localhost to avoid noisy failures.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((e) => {
+      console.warn('[sw] registration failed', e);
+    });
+  });
+}
+
 initLavaLamp('lava-bg');
 
 // Instagram-style pull-to-refresh: drag down from the top of any feed
@@ -196,8 +210,18 @@ async function routeAfterSession() {
   // SLOW PATH (first sign-in or onboarding incomplete): we need the
   // profile row to decide onboarding vs wall, so wait for it. Single
   // round-trip is acceptable here.
-  const profile = await syncProfileIntoStore();
+  let profile = await syncProfileIntoStore();
+  // Retry once after a short delay: the `handle_new_user` trigger that
+  // creates public.profiles from auth.users isn't always settled by the
+  // time the OAuth callback fires (we've seen ~300ms gaps in practice).
+  // Without this, brand-new users land on /wall with currentUser=null
+  // and every page that needs it (profile, chats, notifications) bails.
   if (!profile) {
+    await new Promise(r => setTimeout(r, 400));
+    profile = await syncProfileIntoStore();
+  }
+  if (!profile) {
+    console.warn('[routeAfterSession] session present but profile row missing — pages will use requireCurrentUser fallback');
     router.navigate('wall');
     return;
   }

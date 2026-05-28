@@ -10,7 +10,7 @@ import { createModal } from '../utils/dom.js';
 import { renderBottomNav, bindNavEvents } from '../components/nav.js';
 import { isSupabaseConfigured } from '../data/supabase.js';
 import { signOut } from '../data/auth.js';
-import { clearLocalSession } from '../data/profile-sync.js';
+import { clearLocalSession, requireCurrentUser } from '../data/profile-sync.js';
 import { flushCloudSave } from '../data/cloud-state.js';
 
 const CITY_OPTIONS = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena', 'Otra'];
@@ -28,10 +28,8 @@ const POINTS_EARN_GUIDE = [
 ];
 
 export function renderProfile(container) {
-  const state = store.getState();
-  const user = state.currentUser;
-  if (!user) { router.navigate('login'); return; }
-  // Apply user's theme
+  if (!requireCurrentUser(container)) return;
+  const user = store.getState().currentUser;
   store.applyTheme(user.theme || 'dark');
   renderProfileView(container, user, true);
 }

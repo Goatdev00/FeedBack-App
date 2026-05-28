@@ -6,11 +6,12 @@
 import { store, ICONS } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { renderBottomNav } from '../components/nav.js';
+import { requireCurrentUser } from '../data/profile-sync.js';
 
 export function renderChatHub(container) {
+  if (!requireCurrentUser(container)) return;
   const state = store.getState();
   const user = state.currentUser;
-  if (!user) { router.navigate('login'); return; }
 
   // The user just opened the chat section — drop the unread flag so the
   // green dot on /wall's chat icon disappears next time they go back.

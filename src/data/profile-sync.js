@@ -11,6 +11,7 @@
 
 import { supabase, isSupabaseConfigured } from './supabase.js';
 import { store } from './mock-data.js';
+import { router } from '../router.js';
 
 /**
  * Map a Supabase profiles row → the shape the legacy UI expects.
@@ -116,6 +117,60 @@ export async function patchProfile(patch) {
     users: [currentUser, ...existingUsers],
   });
   return currentUser;
+}
+
+/**
+ * Pages that depend on `state.currentUser` (profile, chats, notifications)
+ * call this at the top of their render. Three outcomes:
+ *
+ *   1. currentUser is already populated → returns true, page renders normally.
+ *   2. currentUser is null but a Supabase session exists → paints a
+ *      "Cargando perfil..." scaffold, fires syncProfileIntoStore in the
+ *      background, and on success refreshes the current route so the page
+ *      re-renders WITH the populated user. Returns false (caller bails).
+ *   3. No session at all → schedules a navigate('login') on the next tick
+ *      (outside the current navigate frame so the re-entrancy guard in
+ *      the router doesn't swallow it). Returns false.
+ *
+ * Before this helper existed, pages did:
+ *   if (!user) { router.navigate('login'); return; }
+ * which silently dropped (the outer navigate was still in progress, so the
+ * inner navigate('login') hit the re-entrancy guard) — the page render
+ * aborted without touching the container, leaving whatever was on screen
+ * before (usually the wall) and making the nav button feel broken.
+ */
+export function requireCurrentUser(container) {
+  if (store.getState().currentUser) return true;
+
+  if (container) {
+    container.innerHTML = `
+      <div class="page">
+        <div class="empty-state" style="margin:auto;">
+          <div class="empty-state-icon">⏳</div>
+          <p class="empty-state-text">Cargando perfil...</p>
+        </div>
+      </div>
+    `;
+  }
+
+  syncProfileIntoStore()
+    .then(profile => {
+      if (profile && store.getState().currentUser) {
+        router.refreshCurrentRoute();
+      } else {
+        // Session is gone or profile row missing — bounce out cleanly.
+        // setTimeout breaks us out of the current navigate frame so the
+        // router's re-entrancy guard doesn't drop this call.
+        console.warn('[require-user] sync returned no profile, redirecting to login');
+        setTimeout(() => router.navigate('login'), 0);
+      }
+    })
+    .catch(e => {
+      console.warn('[require-user] sync threw', e);
+      setTimeout(() => router.navigate('login'), 0);
+    });
+
+  return false;
 }
 
 /**

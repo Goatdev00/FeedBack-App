@@ -6,11 +6,12 @@ import { store, ICONS } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { sanitize } from '../utils/helpers.js';
 import { renderBottomNav } from '../components/nav.js';
+import { requireCurrentUser } from '../data/profile-sync.js';
 
 export function renderChatParties(container) {
+  if (!requireCurrentUser(container)) return;
   const state = store.getState();
   const user = state.currentUser;
-  if (!user) { router.navigate('login'); return; }
 
   if (state.hasUnreadChat) store.setState({ hasUnreadChat: false });
 

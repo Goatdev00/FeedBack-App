@@ -6,6 +6,7 @@ import { store, ICONS, formatRelative } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { avatarHTML, sanitize } from '../utils/helpers.js';
 import { renderBottomNav } from '../components/nav.js';
+import { requireCurrentUser } from '../data/profile-sync.js';
 
 const KIND_META = {
   follow:   { icon: '🤝', accent: 'follow'   },
@@ -15,9 +16,9 @@ const KIND_META = {
 };
 
 export function renderNotifications(container) {
+  if (!requireCurrentUser(container)) return;
   const state = store.getState();
   const user = state.currentUser;
-  if (!user) { router.navigate('login'); return; }
 
   // Snapshot the unread threshold BEFORE marking as read, so items just
   // received still render with the "is-new" highlight on this visit.

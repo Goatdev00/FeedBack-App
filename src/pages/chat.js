@@ -15,6 +15,7 @@ import {
   resolveChatRoomId,
 } from '../data/api.js';
 import { supabase } from '../data/supabase.js';
+import { requireCurrentUser } from '../data/profile-sync.js';
 import { showToast } from '../utils/toast.js';
 
 const GENERAL_ROOM_KEY = 'general';
@@ -43,9 +44,9 @@ export function renderChatParty(container, params = {}) {
 }
 
 function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
+  if (!requireCurrentUser(container)) return;
   const state = store.getState();
   const user = state.currentUser;
-  if (!user) { router.navigate('login'); return; }
 
   // Entering a live room — user is now seeing chat activity directly, so
   // the wall's unread dot should reset.
