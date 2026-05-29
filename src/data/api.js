@@ -651,12 +651,19 @@ export async function hydrateAll() {
 // =====================================================================
 // PROFILES (for users[] in the legacy store)
 // =====================================================================
+// Cap on the profiles pulled into users[] on boot. These power lookups
+// (comment author names, other-profile pages) — not the wall feed, which
+// gets authors inline. 500 is plenty for the foreseeable user base; if we
+// outgrow it, lookups should move to on-demand single-row fetches.
+const PROFILES_LIMIT = 500;
+
 export async function listProfiles() {
   if (!isSupabaseConfigured()) return [];
   const { data, error } = await supabase
     .from('profiles')
     .select('id, name, username, role, city, bio, avatar_url, social, membership_tier, points, created_at')
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .limit(PROFILES_LIMIT);
   if (error) throw error;
   return (data || []).map(p => ({
     id: p.id,
