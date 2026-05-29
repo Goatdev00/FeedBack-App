@@ -478,6 +478,19 @@ class Store {
     } catch { /* localStorage may be denied (private mode) */ }
   }
 
+  // Diagnostic: which top-level state field is bloating serialization?
+  // Only called when a quota error fires, so it costs nothing normally.
+  logStateSizes() {
+    try {
+      const sizes = Object.entries(this.state)
+        .map(([k, v]) => [k, JSON.stringify(v)?.length || 0])
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6)
+        .map(([k, n]) => `${k}=${(n / 1024).toFixed(0)}KB`);
+      console.warn('[store] biggest state fields:', sizes.join('  '));
+    } catch { /* ignore */ }
+  }
+
   loadState() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -572,6 +585,7 @@ class Store {
         const isQuota = e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014);
         if (isQuota) {
           console.warn('[store] localStorage quota hit; purging stale keys + dropping heavy fields');
+          this.logStateSizes();
           // Free space orphaned by previous key versions, then retry lean.
           this.purgeStaleStorage();
           try {
