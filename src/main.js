@@ -183,9 +183,11 @@ if (isSupabaseConfigured()) {
     }
 
     if (newUserId !== routedUserId) {
-      // Genuine sign-in or initial-session-restored.
+      // Genuine sign-in or initial-session-restored. Pass the session we
+      // already have straight down so the boot path never re-calls
+      // getSession() (which serializes behind supabase-js's auth lock).
       routedUserId = newUserId;
-      await routeAfterSession();
+      await routeAfterSession(session);
     }
     // Same user, different event (TOKEN_REFRESHED, USER_UPDATED). Stay
     // on whatever route the user is on.
@@ -196,12 +198,12 @@ if (isSupabaseConfigured()) {
   router.navigate('login');
 }
 
-async function routeAfterSession() {
+async function routeAfterSession(session) {
   // ALWAYS kick off hydration first — it doesn't block. Previously this
   // sat behind early `return` branches, so a new user going through
   // /onboarding → /wall never triggered the hydrate, leaving the wall
   // visibly empty (state.hydrated stayed false forever).
-  refreshFromSupabaseInBackground();
+  refreshFromSupabaseInBackground(session);
 
   // FAST PATH: returning user with cached profile. Navigate immediately
   // using whatever state we have; the background hydrate just refreshes
@@ -215,7 +217,7 @@ async function routeAfterSession() {
   // SLOW PATH (first sign-in or onboarding incomplete): we need the
   // profile row to decide onboarding vs wall, so wait for it. Single
   // round-trip is acceptable here.
-  let profile = await syncProfileIntoStore();
+  let profile = await syncProfileIntoStore(session);
   // Retry once after a short delay: the `handle_new_user` trigger that
   // creates public.profiles from auth.users isn't always settled by the
   // time the OAuth callback fires (we've seen ~300ms gaps in practice).
@@ -223,7 +225,7 @@ async function routeAfterSession() {
   // and every page that needs it (profile, chats, notifications) bails.
   if (!profile) {
     await new Promise(r => setTimeout(r, 400));
-    profile = await syncProfileIntoStore();
+    profile = await syncProfileIntoStore(session);
   }
   if (!profile) {
     console.warn('[routeAfterSession] session present but profile row missing — pages will use requireCurrentUser fallback');

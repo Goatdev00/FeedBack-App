@@ -66,7 +66,7 @@ function flipHydrated() {
   if (!store.getState().hydrated) store.setState({ hydrated: true });
 }
 
-export function refreshFromSupabaseInBackground() {
+export function refreshFromSupabaseInBackground(knownSession) {
   if (_inFlight) return;
   _inFlight = true;
 
@@ -78,7 +78,7 @@ export function refreshFromSupabaseInBackground() {
   try { subscribeRealtime(store); } catch (e) { console.warn('[hydrate] realtime failed', e); }
 
   // --- profile sync (auth-dependent, independent of the feed) ---
-  const pProfile = syncProfileIntoStore()
+  const pProfile = syncProfileIntoStore(knownSession)
     .then(() => mark('profile'))
     .catch((e) => console.warn('[hydrate] profile sync failed', e));
 
@@ -135,7 +135,7 @@ export function refreshFromSupabaseInBackground() {
     .catch((e) => console.warn('[hydrate] profiles failed', e));
 
   // --- CLOUD STATE blob (preferences) — lowest priority ---
-  const pCloud = loadCloudState()
+  const pCloud = loadCloudState(knownSession)
     .then((cloud) => {
       if (cloud) {
         store.hydrateFromCloud(stripCloudExclusions(cloud));

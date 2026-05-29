@@ -454,8 +454,28 @@ const defaultState = {
 class Store {
   constructor() {
     this.listeners = [];
+    this.purgeStaleStorage();   // free quota before we try to read/write
     this.state = this.loadState();
     this.cleanExpiredPosts();
+  }
+
+  // Earlier builds persisted to 'feedback_app_state' (no _v2 suffix). When
+  // the key was bumped, the old one was orphaned — and it still holds
+  // megabytes of base64 flyers/photos from past testing, filling the ~5MB
+  // localStorage quota so even the tiny current state can't be written
+  // (QuotaExceededError). That failure cascades: every setState retries the
+  // write synchronously and stalls the main thread, which is what dragged
+  // boot hydration out to ~20s. Drop every feedback_app_state* key that
+  // isn't the one we're using now.
+  purgeStaleStorage() {
+    try {
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('feedback_app_state') && k !== STORAGE_KEY) {
+          localStorage.removeItem(k);
+        }
+      }
+    } catch { /* localStorage may be denied (private mode) */ }
   }
 
   loadState() {
@@ -511,55 +531,67 @@ class Store {
   }
 
   saveState() {
-    try {
-      // Lightweight cache so refresh paints the wall instantly with the
-      // last-known state. Caveats applied to stay well under the ~5MB
-      // localStorage quota:
-      //   * posts: cap at 50 most recent. Strip any base64 image data
-      //     URLs (each can be MBs). Cap inline comments at 5/post.
-      //   * users: store only fields the UI actually reads, drop big bio.
-      //   * parties / follows: untouched, the lists are small.
-      const persisted = {
-        ...this.state,
-        posts: (this.state.posts || []).slice(0, 50).map(p => ({
-          ...p,
-          image: p.image && typeof p.image === 'string' && p.image.startsWith('data:') ? null : p.image,
-          comments: (p.comments || []).slice(-5),
-        })),
-        users: (this.state.users || []).map(u => ({
-          id: u.id,
-          name: u.name,
-          username: u.username,
-          role: u.role,
-          city: u.city,
-          avatar: u.avatar,
-          tier: u.tier,
-          premium: u.premium,
-          points: u.points,
-        })),
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
-    } catch (e) {
-      // QuotaExceededError almost always means base64 image data URLs
-      // (party flyers, post photos) blew past the ~5-10 MB localStorage
-      // budget. Drop the heavy fields and retry — better to lose a
-      // local image preview than to corrupt every subsequent setState.
-      const isQuota = e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014);
-      if (isQuota) {
-        console.warn('[store] localStorage quota hit; dropping heavy fields and retrying');
-        try {
-          const lite = pruneHeavyState(this.state);
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(lite));
-          // Match in-memory state to what we actually persisted so the
-          // next setState doesn't re-inflate and re-throw.
-          this.state.parties = lite.parties;
-          this.state.posts = lite.posts;
-          this.state.chatRooms = lite.chatRooms;
-        } catch (retryErr) {
-          console.error('[store] saveState retry also failed', retryErr);
+    // If a prior write proved localStorage is unusable (persistent quota
+    // failure), skip the local cache entirely. Re-trying setItem on every
+    // single setState is what blocked the main thread and dragged boot
+    // hydration to ~20s. Cloud sync below still persists the user's data.
+    if (!this._cacheDisabled) {
+      try {
+        // Lightweight cache so refresh paints the wall instantly with the
+        // last-known state. Caveats applied to stay well under the ~5MB
+        // localStorage quota:
+        //   * posts: cap at 50 most recent. Strip any base64 image data
+        //     URLs (each can be MBs). Cap inline comments at 5/post.
+        //   * users: store only fields the UI actually reads, drop big bio.
+        //   * parties / follows: untouched, the lists are small.
+        const persisted = {
+          ...this.state,
+          posts: (this.state.posts || []).slice(0, 50).map(p => ({
+            ...p,
+            image: p.image && typeof p.image === 'string' && p.image.startsWith('data:') ? null : p.image,
+            comments: (p.comments || []).slice(-5),
+          })),
+          users: (this.state.users || []).map(u => ({
+            id: u.id,
+            name: u.name,
+            username: u.username,
+            role: u.role,
+            city: u.city,
+            avatar: u.avatar,
+            tier: u.tier,
+            premium: u.premium,
+            points: u.points,
+          })),
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
+      } catch (e) {
+        // QuotaExceededError almost always means base64 image data URLs
+        // (party flyers, post photos) blew past the ~5-10 MB localStorage
+        // budget. Drop the heavy fields and retry — better to lose a
+        // local image preview than to corrupt every subsequent setState.
+        const isQuota = e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014);
+        if (isQuota) {
+          console.warn('[store] localStorage quota hit; purging stale keys + dropping heavy fields');
+          // Free space orphaned by previous key versions, then retry lean.
+          this.purgeStaleStorage();
+          try {
+            const lite = pruneHeavyState(this.state);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(lite));
+            // Match in-memory state to what we actually persisted so the
+            // next setState doesn't re-inflate and re-throw.
+            this.state.parties = lite.parties;
+            this.state.posts = lite.posts;
+            this.state.chatRooms = lite.chatRooms;
+          } catch (retryErr) {
+            // Still no room even after purge+prune. Stop hammering
+            // localStorage on every setState — that synchronous retry loop
+            // is what froze the UI. Cloud sync keeps the data safe.
+            this._cacheDisabled = true;
+            console.warn('[store] localStorage unusable; disabling local cache for this session', retryErr?.name);
+          }
+        } else {
+          console.warn('Failed to save state', e);
         }
-      } else {
-        console.warn('Failed to save state', e);
       }
     }
     // Mirror to Supabase so actions survive across devices/browsers.

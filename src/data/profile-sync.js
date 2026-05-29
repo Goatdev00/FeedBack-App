@@ -49,13 +49,18 @@ export function profileRowToCurrentUser(p) {
  *
  * Returns the mapped currentUser (or null if no session / no profile).
  */
-export async function syncProfileIntoStore() {
+export async function syncProfileIntoStore(knownSession) {
   if (!isSupabaseConfigured()) return null;
 
-  // getSession() reads from localStorage (no network); getUser() round-trips
-  // to /auth/v1/user every time. On boot we were paying ~1-3s per call.
-  const { data: { session } } = await supabase.auth.getSession();
-  const user = session?.user;
+  // Prefer the session handed in by onAuthChange — calling getSession()
+  // here would re-enter supabase-js's navigator.locks-guarded auth path,
+  // and three near-simultaneous getSession() calls on boot can serialize
+  // behind a slow token refresh, stalling every REST request for seconds.
+  let user = knownSession?.user;
+  if (!user) {
+    const { data: { session } } = await supabase.auth.getSession();
+    user = session?.user;
+  }
   if (!user) return null;
 
   const { data: profile, error } = await supabase

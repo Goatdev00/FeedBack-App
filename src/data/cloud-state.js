@@ -80,10 +80,15 @@ export function stripCloudExclusions(cloud) {
  * Pull the cloud blob for the signed-in user. Returns null on no row,
  * no config, no session, or any read error.
  */
-export async function loadCloudState() {
+export async function loadCloudState(knownSession) {
   if (!isSupabaseConfigured()) return null;
-  const { data: { session } } = await supabase.auth.getSession();
-  const user = session?.user;
+  // Reuse the boot session when available — see syncProfileIntoStore for
+  // why we avoid redundant getSession() calls during startup.
+  let user = knownSession?.user;
+  if (!user) {
+    const { data: { session } } = await supabase.auth.getSession();
+    user = session?.user;
+  }
   if (!user) return null;
 
   const { data, error } = await supabase
