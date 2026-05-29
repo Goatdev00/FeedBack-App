@@ -6,6 +6,7 @@ import { store, ICONS } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { showToast } from '../utils/toast.js';
 import { sanitize } from '../utils/helpers.js';
+import { fileToResizedDataURL } from '../utils/image.js';
 import { isSupabaseConfigured } from '../data/supabase.js';
 import { patchProfile } from '../data/profile-sync.js';
 
@@ -192,15 +193,16 @@ function bindStepEvents(container) {
     const uploadBtn = container.querySelector('#photo-upload');
     const fileInput = container.querySelector('#photo-input');
     uploadBtn.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', (e) => {
+    fileInput.addEventListener('change', async (e) => {
       const file = e.target.files[0];
-      if (file) {
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-          formData.avatar = ev.target.result;
-          uploadBtn.innerHTML = `<img src="${formData.avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" />`;
-        };
-        reader.readAsDataURL(file);
+      if (!file) return;
+      try {
+        // Downscale before storing — a raw camera photo as base64 is
+        // multi-MB and breaks profile reads + localStorage.
+        formData.avatar = await fileToResizedDataURL(file);
+        uploadBtn.innerHTML = `<img src="${formData.avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" />`;
+      } catch {
+        showToast('No se pudo procesar la imagen', 'error');
       }
     });
   }

@@ -6,6 +6,7 @@ import { store, ICONS, REPORT_CATEGORIES } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { showToast, showPointsToast } from '../utils/toast.js';
 import { avatarHTML } from '../utils/helpers.js';
+import { fileToResizedDataURL } from '../utils/image.js';
 
 export function renderCreatePost(container, params = {}) {
   const state = store.getState();
@@ -139,16 +140,17 @@ export function renderCreatePost(container, params = {}) {
   const previewImg = container.querySelector('#preview-img');
 
   photoBtn.addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', (e) => {
+  fileInput.addEventListener('change', async (e) => {
     const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        photoData = ev.target.result;
-        previewImg.src = photoData;
-        preview.style.display = 'block';
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+    try {
+      // Downscale + JPEG-compress so post photos don't get stored as
+      // multi-MB base64 (which bloats the feed query and localStorage).
+      photoData = await fileToResizedDataURL(file, 1280, 0.82);
+      previewImg.src = photoData;
+      preview.style.display = 'block';
+    } catch {
+      showToast('No se pudo procesar la imagen', 'error');
     }
   });
 

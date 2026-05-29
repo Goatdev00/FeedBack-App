@@ -557,11 +557,17 @@ class Store {
         //     URLs (each can be MBs). Cap inline comments at 5/post.
         //   * users: store only fields the UI actually reads, drop big bio.
         //   * parties / follows: untouched, the lists are small.
+        // Drop base64 data-URI images everywhere — a single camera photo
+        // can be 12 MB and instantly blows the ~5 MB localStorage budget.
+        const stripDataUri = (v) => (typeof v === 'string' && v.startsWith('data:') ? null : v);
         const persisted = {
           ...this.state,
+          currentUser: this.state.currentUser
+            ? { ...this.state.currentUser, avatar: stripDataUri(this.state.currentUser.avatar) }
+            : null,
           posts: (this.state.posts || []).slice(0, 50).map(p => ({
             ...p,
-            image: p.image && typeof p.image === 'string' && p.image.startsWith('data:') ? null : p.image,
+            image: stripDataUri(p.image),
             comments: (p.comments || []).slice(-5),
           })),
           users: (this.state.users || []).map(u => ({
@@ -570,7 +576,7 @@ class Store {
             username: u.username,
             role: u.role,
             city: u.city,
-            avatar: u.avatar,
+            avatar: stripDataUri(u.avatar),
             tier: u.tier,
             premium: u.premium,
             points: u.points,

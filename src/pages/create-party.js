@@ -5,6 +5,7 @@
 import { store, ICONS } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { showToast } from '../utils/toast.js';
+import { fileToResizedDataURL } from '../utils/image.js';
 
 const GENRES = [
   'Techno', 'Hardtechno', 'House', 'Deep House', 'Tech House', 'Melodic Techno',
@@ -137,17 +138,19 @@ export function renderCreateParty(container) {
   const flyerPreviewImg = container.querySelector('#flyer-preview-img');
 
   flyerUpload.addEventListener('click', () => flyerInput.click());
-  flyerInput.addEventListener('change', (e) => {
+  flyerInput.addEventListener('change', async (e) => {
     const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        flyerData = ev.target.result;
-        flyerPreviewImg.src = flyerData;
-        flyerPreview.style.display = 'block';
-        flyerUpload.style.display = 'none';
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+    try {
+      // Flyers are content images, so allow a larger max than avatars,
+      // but still downscale + JPEG-compress so they don't land in the DB
+      // as multi-MB base64 (which times out party reads).
+      flyerData = await fileToResizedDataURL(file, 1280, 0.82);
+      flyerPreviewImg.src = flyerData;
+      flyerPreview.style.display = 'block';
+      flyerUpload.style.display = 'none';
+    } catch {
+      showToast('No se pudo procesar la imagen', 'error');
     }
   });
 
