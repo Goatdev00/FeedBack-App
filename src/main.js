@@ -7,6 +7,11 @@
 // Built mobile-first with vanilla JS + Vite + Supabase.
 // ============================================
 
+import { initDebugOverlay } from './utils/debug-overlay.js';
+// Must run before anything logs — visiting partyrate.site/?debug shows an
+// on-screen console (iPhone has no reachable DevTools). No-op otherwise.
+initDebugOverlay();
+
 import { router } from './router.js';
 import { store, isSunday, registerErrorSurface } from './data/mock-data.js';
 import { showToast } from './utils/toast.js';
@@ -22,7 +27,7 @@ import { isSupabaseConfigured } from './data/supabase.js';
 import { onAuthChange } from './data/auth.js';
 import { syncProfileIntoStore, clearLocalSession } from './data/profile-sync.js';
 import { loadCloudState, flushCloudSave, stripCloudExclusions } from './data/cloud-state.js';
-import { hydrateAll, subscribeRealtime } from './data/api.js';
+import { hydrateAll } from './data/api.js';
 import { setupPullToRefresh } from './utils/pull-to-refresh.js';
 import { refreshFromSupabaseInBackground } from './data/hydration.js';
 
