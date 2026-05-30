@@ -55,11 +55,25 @@ const DATA_DRIVEN_ROUTES = new Set([
 ]);
 
 let _inFlight = false;
+let _refreshScheduled = false;
 
+// Coalesce refresh calls: each hydration phase (posts, parties, profile,
+// profiles, cloud) lands in its own microtask and used to call
+// router.refreshCurrentRoute() directly. That re-rendered the whole
+// #app innerHTML 4–5 times in quick succession, wiping and re-painting
+// the bottom nav each pass — visible as a "jumping" menu on first boot,
+// especially on iOS where the lava filter also competes for the main
+// thread. Coalescing into a single rAF tick paints once per frame.
 function maybeRefreshRoute() {
-  if (DATA_DRIVEN_ROUTES.has(router.getCurrentRoute())) {
-    router.refreshCurrentRoute();
-  }
+  if (!DATA_DRIVEN_ROUTES.has(router.getCurrentRoute())) return;
+  if (_refreshScheduled) return;
+  _refreshScheduled = true;
+  requestAnimationFrame(() => {
+    _refreshScheduled = false;
+    if (DATA_DRIVEN_ROUTES.has(router.getCurrentRoute())) {
+      router.refreshCurrentRoute();
+    }
+  });
 }
 
 function flipHydrated() {

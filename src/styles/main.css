@@ -157,12 +157,12 @@ body {
 }
 
 /* --- Lava Lamp / Metaballs Background ---
-   Single self-contained SVG: blobs are <circle>s inside the same <svg>
-   that owns <filter id="gooey">. The filter is applied via the SVG
-   `filter` attribute on the <g> wrapper (see index.html). No CSS
-   `filter: url(#id)` on HTML elements anywhere — that wiring is the one
-   iOS Safari mishandles. This shape works in WebKit, Blink and Gecko. */
-#lava-svg {
+   WebGL canvas. The fragment shader computes the metaball field per
+   pixel (see src/utils/lava-lamp.js). All we do here is pin the canvas
+   to the visible app column. The drawing buffer is sized in the JS via
+   canvas.width/.height — do NOT set them via CSS dimensions or you'll
+   get blurry low-res rendering. */
+#lava-canvas {
   position: fixed;
   top: 0;
   left: 50%;
@@ -172,10 +172,6 @@ body {
   height: 100vh;
   z-index: 0;
   pointer-events: none;
-  overflow: hidden;
-  /* preserveAspectRatio is irrelevant since we don't set a viewBox —
-     the SVG canvas matches its CSS box pixel-for-pixel, and lava-lamp.js
-     positions circles in those same pixel coordinates. */
   display: block;
 }
 
@@ -2738,7 +2734,7 @@ span > svg {
   border-right: 1px solid rgba(0, 0, 0, 0.06);
 }
 
-[data-theme="light"] #lava-svg {
+[data-theme="light"] #lava-canvas {
   opacity: 1;
 }
 

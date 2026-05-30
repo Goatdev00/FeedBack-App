@@ -55,56 +55,15 @@
 <body>
   <div id="app"></div>
 
-  <!-- Lava Lamp / Metaballs Background.
-       CANONICAL goo-filter setup: blobs are SVG <circle>s rendered INSIDE
-       the same <svg> that owns the <filter>, and the filter is applied via
-       the SVG attribute filter="url(#gooey)" on the <g> wrapper — NOT via
-       CSS `filter:` on an HTML element. This avoids every iOS Safari bug
-       around cross-DOM HTML→SVG filter references (cache-on-first-paint
-       resolution failure, 0×0 host SVG dropping the filter registration,
-       `will-change` paradoxically disabling filters, stdDeviation cost
-       limits silently substituting `none`). The whole goo lives in one
-       self-contained SVG tree, which WebKit, Blink and Gecko all handle
-       reliably.
-
-       The color matrix has identity RGB rows and only manipulates the
-       alpha channel, so blob #ff6600 is preserved bit-for-bit. feBlend
-       composites the original sharp blobs over the gooey threshold layer:
-       centers stay crisp, edges + nearby blobs merge into metaballs.
-       (Don't swap feBlend for feComposite atop — it would clip to the
-       unblurred source and kill the merge.) -->
-  <svg id="lava-svg" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <defs>
-      <!-- Quality knobs (DON'T tighten these without testing on a real
-           retina device — Safari downsamples filter buffers and the join
-           between blobs is where artefacts show first):
-           * x/y/width/height: filter region. Must be wide enough that the
-             blur halo isn't clipped at the box edge. 200% (50% margin all
-             around) keeps the bridge between two merging blobs smooth even
-             when both blobs are near the viewport edges. Tighter regions
-             cause the merge arc to render with too few intermediate pixels
-             → visible stairsteps.
-           * stdDeviation: bigger blur = wider, smoother bridge but more
-             GPU. 16 is a sweet spot on iOS without falling off the cost
-             cliff that disables the filter.
-           * feColorMatrix alpha row "0 0 0 N M": N is the contrast (larger
-             = sharper edge), M is the cutoff (more negative = more area
-             erased). The previous "22 -10" was high-contrast and chewed
-             through the anti-aliasing band. "18 -7" gives ~30% more pixels
-             of gradient transition → buttery merges. -->
-      <filter id="gooey" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
-        <feGaussianBlur in="SourceGraphic" stdDeviation="13" result="blur"/>
-        <feColorMatrix in="blur" mode="matrix"
-          values="1 0 0 0 0
-                  0 1 0 0 0
-                  0 0 1 0 0
-                  0 0 0 30 -13"
-          result="gooey"/>
-        <feBlend in="SourceGraphic" in2="gooey"/>
-      </filter>
-    </defs>
-    <g id="lava-blobs" filter="url(#gooey)" shape-rendering="geometricPrecision"></g>
-  </svg>
+  <!-- Lava Lamp / Metaballs Background — WebGL renderer.
+       The metaball field is computed entirely in the fragment shader
+       (1/d² potential per blob, summed, smoothstepped against a
+       threshold). The JS side only pushes 12 vec3s of (x, y, radius)
+       per frame as a uniform array — microseconds of work. Result:
+       buttery 60fps on every device, including iOS Safari where the
+       SVG goo-filter approach was bottlenecked on CPU. See
+       src/utils/lava-lamp.js for shader sources + setup. -->
+  <canvas id="lava-canvas" aria-hidden="true"></canvas>
 
   <script type="module" src="/src/main.js"></script>
 </body>
