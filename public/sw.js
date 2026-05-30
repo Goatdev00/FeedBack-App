@@ -58,3 +58,74 @@ self.addEventListener('fetch', (event) => {
       )
   );
 });
+
+// =====================================================================
+// Web Push notifications (added with migration 0015)
+// =====================================================================
+// The Edge Function `send-push` constructs the JSON payload server-side
+// — see supabase/functions/send-push/index.ts — so this listener only
+// has to parse it defensively and surface it as a system notification.
+// Network-first caching above stays untouched.
+// =====================================================================
+
+self.addEventListener('push', (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch {
+    // Some pushes arrive with no payload (raw signaling); show a generic
+    // notification rather than dropping the event entirely.
+    payload = {};
+  }
+
+  const title = payload.title || 'PartyRate';
+  const body  = payload.body  || '';
+  const url   = payload.url   || '/';
+
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      icon: '/icons/icon-192.png',
+      badge: '/icons/badge-72.png',
+      data: { url },
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = event.notification.data?.url || '/';
+  const targetAbs = new URL(target, self.location.origin).href;
+
+  event.waitUntil((async () => {
+    const all = await self.clients.matchAll({
+      type: 'window',
+      includeUncontrolled: true,
+    });
+
+    // Prefer a window already open on the exact target URL.
+    let match = all.find((c) => c.url === targetAbs);
+
+    // Otherwise fall back to any same-origin window so the user lands in
+    // the app instead of opening a duplicate tab.
+    if (!match) {
+      match = all.find((c) => {
+        try { return new URL(c.url).origin === self.location.origin; }
+        catch { return false; }
+      });
+    }
+
+    if (match) {
+      try { await match.focus(); } catch { /* ignore */ }
+      // If we focused a window that isn't on the target URL, try to
+      // navigate it. Some engines (notably older Safari) don't
+      // implement Client.navigate, so we silently ignore the failure.
+      if (match.url !== targetAbs && 'navigate' in match) {
+        try { await match.navigate(targetAbs); } catch { /* ignore */ }
+      }
+      return;
+    }
+
+    await self.clients.openWindow(targetAbs);
+  })());
+});
