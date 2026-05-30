@@ -3,6 +3,11 @@
 // ============================================
 
 import { router } from '../router.js';
+import {
+  notifyNewLike,
+  notifyNewComment,
+  notifyNewFollower,
+} from '../notifications/notify.js';
 
 // Repaint the visible page when state mutations matter to the UI but no
 // component is subscribed. The wall doesn't subscribe to the store, so
@@ -810,6 +815,14 @@ class Store {
     this.saveState();
     this.notify();
 
+    // Web push to the author — only on a NEW like (not unlike) and only
+    // when the author isn't the current user. Fire-and-forget: errors
+    // are swallowed inside notifyNewLike, so a push failure never
+    // affects the like itself.
+    if (!wasLiked && post.userId && post.userId !== uid) {
+      notifyNewLike(post.userId, this.state.currentUser.username, postId);
+    }
+
     // Then persist. Server is the source of truth; rollback on failure.
     if (_api?.toggleLike && !post._pending) {
       _api.toggleLike(postId).catch((err) => {
@@ -847,6 +860,11 @@ class Store {
     post.replies = post.comments.length;
     this.saveState();
     this.notify();
+
+    // Web push to the author — only when commenter is not the author.
+    if (post.userId && post.userId !== this.state.currentUser.id) {
+      notifyNewComment(post.userId, this.state.currentUser.username, postId);
+    }
 
     if (_api?.addComment && !post._pending) {
       _api.addComment(postId, text)
@@ -980,6 +998,14 @@ class Store {
     if (_api?.toggleFollow) {
       _api.toggleFollow(targetId).catch((err) => console.warn('[store] toggleFollow failed', err));
     }
+
+    // Web push to the followee — only when we just STARTED following
+    // (no push on unfollow), fire-and-forget. Errors are swallowed
+    // inside notifyNewFollower.
+    if (nowFollowing) {
+      notifyNewFollower(targetId, this.state.currentUser.username);
+    }
+
     return { changed: true, nowFollowing, awarded, mutual };
   }
 

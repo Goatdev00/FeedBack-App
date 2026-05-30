@@ -30,6 +30,7 @@ import { loadCloudState, flushCloudSave, stripCloudExclusions } from './data/clo
 import { hydrateAll } from './data/api.js';
 import { setupPullToRefresh } from './utils/pull-to-refresh.js';
 import { refreshFromSupabaseInBackground } from './data/hydration.js';
+import { showPermissionModal } from './notifications/permission-modal.js';
 
 // --- Pages ---
 import { renderLogin } from './pages/login.js';
@@ -253,6 +254,13 @@ function routeWallOrSunday() {
     }
   }
   router.navigate('wall');
+  // Offer to enable web push once the wall has had a moment to paint.
+  // The modal self-inhibits if the user already decided (granted or
+  // dismissed) and silently does nothing if push isn't supported.
+  setTimeout(() => {
+    const uid = store.getState().currentUser?.id;
+    if (uid) showPermissionModal(uid);
+  }, 1500);
 }
 
 // refreshFromSupabaseInBackground moved to src/data/hydration.js so
