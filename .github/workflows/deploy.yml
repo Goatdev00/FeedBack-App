@@ -47,6 +47,11 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           VITE_BOLD_API_KEY: ${{ secrets.VITE_BOLD_API_KEY }}
+          # Web Push: the VAPID public key gets embedded in the bundle at
+          # build time (the private key NEVER leaves Supabase secrets).
+          # Without this, the permission modal shows "Falta configuración
+          # (VAPID)" in production even if the local .env already has it.
+          VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

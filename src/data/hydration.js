@@ -78,8 +78,14 @@ export function refreshFromSupabaseInBackground(knownSession) {
   try { subscribeRealtime(store); } catch (e) { console.warn('[hydrate] realtime failed', e); }
 
   // --- profile sync (auth-dependent, independent of the feed) ---
+  // Refresh the current route once the profile lands: without this, pPosts
+  // can win the race, paint the wall while state.users is still empty,
+  // and the user's own posts silently disappear (renderPostCard falls back
+  // to post.author, but comments and other users[] lookups also wake up
+  // here). Foreign users' posts render fine in the meantime because their
+  // authors arrived inline with the posts query.
   const pProfile = syncProfileIntoStore(knownSession)
-    .then(() => mark('profile'))
+    .then(() => { maybeRefreshRoute(); mark('profile'); })
     .catch((e) => console.warn('[hydrate] profile sync failed', e));
 
   // --- POSTS: the main wall content; paint the instant it lands ---

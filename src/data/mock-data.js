@@ -731,9 +731,27 @@ class Store {
     const expires = new Date(now);
     expires.setDate(expires.getDate() + 7);
     const tempId = 'pending_' + Date.now();
+    // Snapshot the current user as the inline author so the wall card can
+    // render the optimistic row even when state.users hasn't been hydrated
+    // yet (boot race: pPosts can land before listProfiles populates the
+    // users[] cache). Without this, the user's own pending post is the only
+    // card that fails the author lookup and silently returns ''.
+    const me = this.state.currentUser;
+    const inlineAuthor = me ? {
+      id: me.id,
+      name: me.name,
+      username: me.username,
+      role: me.role,
+      city: me.city,
+      avatar: me.avatar,
+      premium: me.premium,
+      tier: me.tier,
+      points: me.points,
+    } : null;
     const newPost = {
       id: tempId,
       ...post,
+      author: inlineAuthor,
       likes: 0,
       replies: 0,
       likedBy: [],

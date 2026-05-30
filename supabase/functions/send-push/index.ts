@@ -19,12 +19,12 @@
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import webpush from 'npm:web-push@3';
 
-const SUPABASE_URL              = Deno.env.get('SUPABASE_URL') ?? '';
-const SUPABASE_ANON_KEY         = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
+const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-const VAPID_PUBLIC_KEY          = Deno.env.get('VAPID_PUBLIC_KEY') ?? '';
-const VAPID_PRIVATE_KEY         = Deno.env.get('VAPID_PRIVATE_KEY') ?? '';
-const VAPID_SUBJECT             = Deno.env.get('VAPID_SUBJECT') ?? '';
+const VAPID_PUBLIC_KEY = Deno.env.get('VAPID_PUBLIC_KEY') ?? '';
+const VAPID_PRIVATE_KEY = Deno.env.get('VAPID_PRIVATE_KEY') ?? '';
+const VAPID_SUBJECT = Deno.env.get('VAPID_SUBJECT') ?? '';
 
 if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY || !VAPID_SUBJECT) {
   console.warn('[send-push] missing VAPID secrets — setVapidDetails will throw on send');
@@ -33,7 +33,7 @@ if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY || !VAPID_SUBJECT) {
 }
 
 const CORS_HEADERS = {
-  'Access-Control-Allow-Origin':  '*',
+  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
 };
@@ -41,10 +41,10 @@ const CORS_HEADERS = {
 type PushType = 'like' | 'comment' | 'follow' | 'chat';
 
 interface RequestBody {
-  type:     PushType;
+  type: PushType;
   toUserId: string;
-  postId?:  string;
-  roomId?:  string;
+  postId?: string;
+  roomId?: string;
 }
 
 function json(status: number, body: Record<string, unknown>) {
@@ -67,26 +67,26 @@ function buildMessage(
     case 'like':
       return {
         title: 'Nuevo like',
-        body:  `A ${fromUsername} le gustó tu publicación`,
-        url:   `/posts/${body.postId}`,
+        body: `A ${fromUsername} le gustó tu publicación`,
+        url: `/posts/${body.postId}`,
       };
     case 'comment':
       return {
         title: 'Nuevo comentario',
-        body:  `${fromUsername} comentó tu publicación`,
-        url:   `/posts/${body.postId}`,
+        body: `${fromUsername} comentó tu publicación`,
+        url: `/posts/${body.postId}`,
       };
     case 'follow':
       return {
         title: 'Nuevo seguidor',
-        body:  `${fromUsername} empezó a seguirte`,
-        url:   `/u/${handle}`,
+        body: `${fromUsername} empezó a seguirte`,
+        url: `/u/${handle}`,
       };
     case 'chat':
       return {
         title: 'Nuevo mensaje',
-        body:  `${fromUsername} te envió un mensaje`,
-        url:   `/chat/${body.roomId}`,
+        body: `${fromUsername} te envió un mensaje`,
+        url: `/chat/${body.roomId}`,
       };
   }
 }
@@ -123,7 +123,7 @@ Deno.serve(async (req: Request) => {
 
   const authedClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: authHeader } },
-    auth:   { persistSession: false, autoRefreshToken: false },
+    auth: { persistSession: false, autoRefreshToken: false },
   });
 
   const { data: { user }, error: userErr } = await authedClient.auth.getUser();

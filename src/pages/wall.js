@@ -131,7 +131,14 @@ function renderPostComments(post) {
 }
 
 function renderPostCard(post, state) {
-  const author = store.getUserById(post.userId);
+  // Prefer the inline author the listPosts query joins in — it's always
+  // present and matches the post's user_id. Fall back to the users[] cache
+  // only if the row arrived without an author (e.g. an optimistic temp
+  // post). This covers the race where state.users hasn't been populated
+  // yet (own profile not synced, listProfiles still in flight): without it
+  // the user's own posts disappear from THEIR own wall while others still
+  // see them, because foreign clients' caches already have the author.
+  const author = post.author || store.getUserById(post.userId);
   if (!author) return '';
   const party = store.getPartyById(post.partyId);
   const currentUser = state.currentUser;

@@ -1,0 +1,28 @@
+-- =====================================================================
+-- FEEDBACK — Fix SECURITY DEFINER on public.party_live_ratings
+-- =====================================================================
+-- Supabase Advisor flagged the view as "Security Definer View" (critical).
+-- The view in 0001_init_schema.sql does NOT include the SECURITY DEFINER
+-- keyword, but Postgres' default behavior for views is to execute with
+-- the OWNER's privileges (here `postgres`), which silently bypasses the
+-- RLS policies on the underlying live_ratings table. Any authenticated
+-- user querying the view can see rows their own RLS policy would
+-- otherwise filter out.
+--
+-- Postgres 15+ exposes `security_invoker` as a view option: when ON, the
+-- view runs with the CALLER's permissions, so RLS applies as expected.
+-- Supabase runs PG15+, so we turn it on here.
+--
+-- Why this is safe today: ratings_read on live_ratings is currently
+-- `for select to authenticated using (true)`, so flipping the view to
+-- invoker doesn't change what anyone can read. The fix restores the
+-- invariant that the view respects whatever RLS lives on the base
+-- table, so future tightening of live_ratings RLS cannot be silently
+-- bypassed via this view.
+--
+-- If Advisor flags more views or functions later, apply the same
+-- pattern: `alter view ... set (security_invoker = true)` for views,
+-- and explicit `security invoker` + tight `search_path` for functions.
+-- =====================================================================
+
+alter view public.party_live_ratings set (security_invoker = true);
