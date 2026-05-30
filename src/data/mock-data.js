@@ -2,6 +2,20 @@
 // FEEDBACK — Mock Data & State Management
 // ============================================
 
+import { router } from '../router.js';
+
+// Repaint the visible page when state mutations matter to the UI but no
+// component is subscribed. The wall doesn't subscribe to the store, so
+// without this the optimistic-pending → real-post swap never updates the
+// DOM (the post stays visibly "pending"/transparent until manual refresh).
+// Scoped to data-driven routes so re-render is cheap and idempotent.
+const UI_ROUTES_TO_REPAINT = new Set(['wall', 'parties', 'profile', 'profile-other']);
+function repaintIfNeeded() {
+  if (UI_ROUTES_TO_REPAINT.has(router.getCurrentRoute())) {
+    router.refreshCurrentRoute();
+  }
+}
+
 // --- SVG Icons ---
 export const ICONS = {
   profile: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
@@ -759,6 +773,7 @@ class Store {
             p._syncFailed = true;
             this.saveState();
             this.notify();
+            repaintIfNeeded();
           }
           _surfaceError?.('No se sincronizó tu post. ' + describeApiError(err));
         });
@@ -772,6 +787,9 @@ class Store {
     this.state.posts[idx] = real;
     this.saveState();
     this.notify();
+    // Wall is not store-subscribed, so without this the .post-card-pending
+    // class lingers in the DOM even though _pending: true is gone.
+    repaintIfNeeded();
   }
 
   toggleLike(postId) {
@@ -1013,8 +1031,15 @@ class Store {
     if (_api?.createParty) {
       _api.createParty(party)
         .then((real) => {
-          const idx = this.state.parties.findIndex(p => p.id === tempId);
-          if (idx !== -1) this.state.parties[idx] = { ...real, attendees: [] };
+          // If the realtime echo beat us to it and already inserted the
+          // real row, just drop the temp — otherwise replace in place.
+          const realExists = this.state.parties.some(p => p.id === real.id);
+          if (realExists) {
+            this.state.parties = this.state.parties.filter(p => p.id !== tempId);
+          } else {
+            const idx = this.state.parties.findIndex(p => p.id === tempId);
+            if (idx !== -1) this.state.parties[idx] = { ...real, attendees: [] };
+          }
           this.saveState();
           this.notify();
         })
@@ -1175,6 +1200,27 @@ class Store {
           navigate: { route: 'wall' },
         });
       }
+    }
+
+    // Your own posts that got auto-hidden by the report system (10+
+    // reports → posts.hidden_at flipped server-side via the report_post
+    // RPC). RLS keeps these rows visible only to you, the author.
+    for (const post of this.state.posts) {
+      if (post.userId !== uid) continue;
+      if (!post.hiddenAt) continue;
+      const preview = (post.content || '').length > 60
+        ? post.content.slice(0, 60) + '…'
+        : (post.content || 'tu publicación');
+      out.push({
+        id: `blocked:${post.id}`,
+        kind: 'blocked',
+        system: true,
+        systemIcon: '🚫',
+        actor: null,
+        time: new Date(post.hiddenAt),
+        text: `tu publicación fue ocultada por múltiples reportes: "${preview}"`,
+        navigate: { route: 'profile' },
+      });
     }
 
     // Anonymous questions sent to you

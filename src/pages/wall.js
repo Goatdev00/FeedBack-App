@@ -9,6 +9,7 @@ import { avatarHTML, roleBadgeClass, roleTitle, sanitize } from '../utils/helper
 import { createModal } from '../utils/dom.js';
 import { renderBottomNav, bindNavEvents } from '../components/nav.js';
 import { refreshFromSupabaseInBackground } from '../data/hydration.js';
+import { reportPost } from '../data/api.js';
 
 const LIKE_RECENCY_BOOST_MS = 60_000 * 30;
 
@@ -136,11 +137,45 @@ function renderPostCard(post, state) {
   const currentUser = state.currentUser;
   const isLiked = !!(currentUser && post.likedBy.includes(currentUser.id));
   const commentsCount = (post.comments || []).length;
+  const isOwn = currentUser && post.userId === currentUser.id;
+
+  // Auto-hidden by report threshold. RLS already prevents foreign clients
+  // from receiving these rows; only the author still sees the post — and
+  // here we replace the body with a "blocked" banner instead of the
+  // original content + actions. Defensive: also bail for non-owners just
+  // in case a stale cached row carries hiddenAt.
+  if (post.hiddenAt) {
+    if (!isOwn) return '';
+    return `
+      <div class="post-card post-card-hidden" data-post-id="${post.id}">
+        <div class="post-header">
+          <span data-action="view-profile" data-user-id="${author.id}" style="cursor:pointer;display:inline-flex;">
+            ${avatarHTML(author, 'avatar-md')}
+          </span>
+          <div class="post-author-info">
+            <div class="post-author-name">${sanitize(author.name)}</div>
+            <div class="post-party-tag" style="color:var(--text-tertiary);">
+              ${formatRelative(new Date(post.createdAt))}
+            </div>
+          </div>
+        </div>
+        <div class="post-hidden-banner">
+          <div class="post-hidden-icon">🚫</div>
+          <div class="post-hidden-text">
+            <strong>Publicación oculta por reportes</strong>
+            <p>Tu publicación recibió 10 o más reportes y ya no es visible para otros usuarios.</p>
+          </div>
+        </div>
+      </div>
+    `;
+  }
 
   return `
     <div class="post-card ${post._syncFailed ? 'post-card-failed' : ''} ${post._pending ? 'post-card-pending' : ''}" data-post-id="${post.id}">
       <div class="post-header">
-        ${avatarHTML(author, 'avatar-md')}
+        <span data-action="view-profile" data-user-id="${author.id}" style="cursor:pointer;display:inline-flex;">
+          ${avatarHTML(author, 'avatar-md')}
+        </span>
         <div class="post-author-info">
           <div class="post-author-name" data-action="view-profile" data-user-id="${author.id}" style="cursor:pointer;">
             ${sanitize(author.name)}
@@ -173,9 +208,11 @@ function renderPostCard(post, state) {
         <button class="post-action" data-action="question-author" data-user-id="${author.id}">
           ${ICONS.question}
         </button>
-        <button class="post-action" data-action="report-post" data-post-id="${post.id}" style="margin-left:auto;">
-          ${ICONS.flag}
-        </button>
+        ${isOwn ? '' : `
+          <button class="post-action" data-action="report-post" data-post-id="${post.id}" style="margin-left:auto;" title="Reportar">
+            ${ICONS.flag}
+          </button>
+        `}
       </div>
 
       ${renderPostComments(post)}
@@ -252,10 +289,67 @@ const WALL_ACTIONS = {
   'question-author'(container, action) {
     showQuestionModal(container, action.dataset.userId);
   },
-  'report-post'() {
-    showToast('Publicación reportada. Gracias por tu feedback.', 'info');
+  'report-post'(_container, action) {
+    showReportModal(action.dataset.postId);
   },
 };
+
+const REPORT_REASONS = [
+  { id: 'spam',           emoji: '🚫', label: 'Spam' },
+  { id: 'offensive',      emoji: '😡', label: 'Ofensivo o discurso de odio' },
+  { id: 'misinformation', emoji: '❌', label: 'Información falsa' },
+  { id: 'self_promotion', emoji: '📢', label: 'Autopromoción' },
+  { id: 'harassment',     emoji: '⚠️', label: 'Acoso o intimidación' },
+  { id: 'other',          emoji: '📁', label: 'Otro' },
+];
+
+function showReportModal(postId) {
+  const overlay = createModal(`
+    <div class="modal" style="max-height:80dvh;">
+      <div class="modal-handle"></div>
+      <div class="modal-title">Reportar publicación</div>
+      <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-md);">
+        ¿Por qué reportas esta publicación? Si recibe 10 reportes se ocultará automáticamente.
+      </p>
+      <div style="display:flex;flex-direction:column;gap:var(--space-sm);">
+        ${REPORT_REASONS.map(r => `
+          <button class="report-reason-btn" data-reason="${r.id}">
+            <span class="report-reason-emoji">${r.emoji}</span>
+            <span>${r.label}</span>
+          </button>
+        `).join('')}
+      </div>
+      <button class="btn btn-ghost btn-sm" id="cancel-report" style="width:100%;margin-top:var(--space-md);">Cancelar</button>
+    </div>
+  `);
+
+  overlay.querySelector('#cancel-report').addEventListener('click', () => overlay.close());
+
+  overlay.querySelectorAll('.report-reason-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const reason = btn.dataset.reason;
+      overlay.close();
+      try {
+        const result = await reportPost(postId, reason);
+        if (result?.hidden) {
+          showToast(`Reporte registrado. La publicación fue ocultada (${result.count} reportes).`, 'success', 4500);
+        } else {
+          showToast(`Reporte registrado (${result?.count || '?'}/${result?.threshold || 10}).`, 'success');
+        }
+      } catch (err) {
+        const msg = err?.message || '';
+        if (msg.includes('cannot_report_own_post')) {
+          showToast('No puedes reportar tu propia publicación.', 'error');
+        } else if (msg.includes('post_not_found')) {
+          showToast('La publicación ya no existe.', 'error');
+        } else {
+          showToast('No se pudo reportar la publicación.', 'error');
+          console.warn('[report-post]', err);
+        }
+      }
+    });
+  });
+}
 
 function bindWallEvents(container) {
   // The wall page root is regenerated by each renderWall, so listeners on it
@@ -321,9 +415,11 @@ function showAllCommentsModal(container, postId) {
           if (!commenter) return '';
           return `
             <div style="display:flex;gap:var(--space-sm);align-items:flex-start;">
-              ${avatarHTML(commenter, 'avatar-sm')}
+              <span data-action="view-profile" data-user-id="${commenter.id}" style="cursor:pointer;display:inline-flex;">
+                ${avatarHTML(commenter, 'avatar-sm')}
+              </span>
               <div style="flex:1;">
-                <div style="font-size:var(--text-sm);font-weight:600;">${sanitize(commenter.name)}</div>
+                <div data-action="view-profile" data-user-id="${commenter.id}" style="cursor:pointer;font-size:var(--text-sm);font-weight:600;">${sanitize(commenter.name)}</div>
                 <div style="font-size:var(--text-sm);color:var(--text-secondary);line-height:1.5;">${sanitize(c.text)}</div>
                 <div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-top:2px;">${formatRelative(new Date(c.createdAt))}</div>
               </div>
@@ -351,6 +447,19 @@ function showAllCommentsModal(container, postId) {
   overlay.querySelector('#modal-comment-send').addEventListener('click', sendModalComment);
   overlay.querySelector('#modal-comment-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') sendModalComment();
+  });
+
+  // Clicks on a commenter's avatar/name → open their profile. The wall's
+  // root-level delegate doesn't reach modals (they live in document.body),
+  // so we wire a local delegate here.
+  overlay.addEventListener('click', (e) => {
+    const trigger = e.target.closest('[data-action="view-profile"]');
+    if (!trigger) return;
+    const userId = trigger.dataset.userId;
+    if (!userId) return;
+    overlay.close();
+    store.setState({ viewingUserId: userId });
+    router.navigate('profile-other', { userId });
   });
 }
 

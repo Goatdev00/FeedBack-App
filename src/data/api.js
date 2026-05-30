@@ -111,6 +111,7 @@ export async function listPosts() {
     .from('posts')
     .select(`
       id, user_id, party_id, content, image_url, type, created_at, expires_at,
+      hidden_at, hidden_reason,
       author:profiles!posts_user_id_fkey(id, name, username, role, city, avatar_url, membership_tier, points),
       post_likes(user_id),
       post_comments(id, user_id, content, created_at)
@@ -144,6 +145,8 @@ function postFromRow(p) {
     replies: comments.length,
     createdAt: new Date(p.created_at),
     expiresAt: new Date(p.expires_at),
+    hiddenAt: p.hidden_at ? new Date(p.hidden_at) : null,
+    hiddenReason: p.hidden_reason || null,
     author: p.author ? authorFromRow(p.author) : null,
   };
 }
@@ -169,6 +172,22 @@ export async function createPost({ partyId, content, image }) {
     .single();
   if (error) throw error;
   return postFromRow({ ...data, post_likes: [], post_comments: [] });
+}
+
+// =====================================================================
+// REPORTS — abuse / spam, with auto-hide at threshold
+// =====================================================================
+// Calls the SECURITY DEFINER report_post() RPC, which is the ONLY way a
+// client can write to post_reports or flip posts.hidden_at. Returns the
+// post-rpc shape: { count, hidden, threshold }.
+export async function reportPost(postId, reason) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data, error } = await supabase.rpc('report_post', {
+    p_post_id: postId,
+    p_reason: reason,
+  });
+  if (error) throw error;
+  return data;
 }
 
 // =====================================================================
@@ -461,6 +480,7 @@ registerApi({
   toggleAttendance,
   createParty,
   patchProfileTheme,
+  reportPost,
 });
 
 // =====================================================================
@@ -511,6 +531,9 @@ export function subscribeRealtime(store) {
           const replaced = [...state.posts];
           replaced[pendingIdx] = fresh;
           store.setState({ posts: replaced });
+          // Wall isn't store-subscribed; without a repaint the
+          // .post-card-pending class lingers in the DOM.
+          if (router.getCurrentRoute() === 'wall') router.refreshCurrentRoute();
           return;
         }
 
@@ -521,6 +544,29 @@ export function subscribeRealtime(store) {
           next.users = [fresh.author, ...state.users];
         }
         store.setState(next);
+        if (router.getCurrentRoute() === 'wall') router.refreshCurrentRoute();
+      })
+    // Post updates (most importantly: hidden_at flipping when a post
+    // crosses the report threshold). RLS prevents non-author clients
+    // from receiving the row at all once it's hidden; the author still
+    // gets it and can render the "blocked by reports" overlay.
+    .on('postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'posts' },
+      (payload) => {
+        const p = payload.new;
+        if (!p) return;
+        const state = store.getState();
+        const idx = state.posts.findIndex(x => x.id === p.id);
+        if (idx === -1) return;
+        const merged = {
+          ...state.posts[idx],
+          hiddenAt: p.hidden_at ? new Date(p.hidden_at) : null,
+          hiddenReason: p.hidden_reason || null,
+        };
+        const next = [...state.posts];
+        next[idx] = merged;
+        store.setState({ posts: next });
+        if (router.getCurrentRoute() === 'wall') router.refreshCurrentRoute();
       })
     // Likes: increment/decrement the corresponding post's like array.
     .on('postgres_changes',
@@ -588,8 +634,26 @@ export function subscribeRealtime(store) {
         const p = payload.new;
         if (!p) return;
         const state = store.getState();
+        // Already in the list (real id) → ignore echo.
         if (state.parties.some(x => x.id === p.id)) return;
-        store.setState({ parties: [partyFromRow(p), ...state.parties] });
+
+        const fresh = partyFromRow(p);
+        // If this is the realtime echo of OUR own optimistic insert, the
+        // local entry still has a temp id (pending_<ts>) and _pending=true.
+        // Replace it in place instead of appending a second copy. Without
+        // this, the creator sees their party twice (one temp, one real)
+        // until the next reload.
+        const pendingIdx = state.parties.findIndex(
+          x => x._pending && x.promotor === fresh.promotor && x.name === fresh.name
+        );
+        if (pendingIdx !== -1) {
+          const replaced = [...state.parties];
+          replaced[pendingIdx] = fresh;
+          store.setState({ parties: replaced });
+          return;
+        }
+
+        store.setState({ parties: [fresh, ...state.parties] });
       })
     // Any new chat message anywhere → flip the unread flag so the wall's
     // chat icon shows the green dot. We deliberately listen across ALL

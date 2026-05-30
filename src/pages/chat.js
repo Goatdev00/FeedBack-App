@@ -246,6 +246,19 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
     unsubscribeRealtime();
     router.navigate(backRoute);
   });
+
+  // Tap an author's avatar or name inside any message → open their profile.
+  // Delegated on the messages list so it works for every message past and
+  // future without re-binding on each paint().
+  messagesEl.addEventListener('click', (e) => {
+    const trigger = e.target.closest('[data-action="view-profile"]');
+    if (!trigger) return;
+    const userId = trigger.dataset.userId;
+    if (!userId) return;
+    unsubscribeRealtime();
+    store.setState({ viewingUserId: userId });
+    router.navigate('profile-other', { userId });
+  });
 }
 
 function optimisticKey(msg) {
@@ -300,11 +313,14 @@ function renderMessage(m, prev, currentUserId, userCache) {
 
   return `
     <div class="chat-msg ${isMine ? 'chat-msg-mine' : ''} ${sameAsPrev ? 'chat-msg-stacked' : ''}">
-      ${sameAsPrev ? '<div class="chat-msg-avatar-slot"></div>' : avatarHTML(author, 'avatar-sm chat-msg-avatar-slot')}
+      ${sameAsPrev
+        ? '<div class="chat-msg-avatar-slot"></div>'
+        : `<span data-action="view-profile" data-user-id="${m.userId}" style="cursor:pointer;display:inline-flex;">${avatarHTML(author, 'avatar-sm chat-msg-avatar-slot')}</span>`
+      }
       <div class="chat-msg-body">
         ${sameAsPrev ? '' : `
           <div class="chat-msg-meta">
-            <span class="chat-msg-author">${sanitize(author.name)}</span>
+            <span class="chat-msg-author" data-action="view-profile" data-user-id="${m.userId}" style="cursor:pointer;">${sanitize(author.name)}</span>
             <span class="badge ${roleBadgeClass(author.role)} chat-msg-role">${roleTitle(author.role)}</span>
             <span class="chat-msg-time">${formatRelative(m.createdAt)}</span>
           </div>

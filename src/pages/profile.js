@@ -179,6 +179,19 @@ function renderProfileView(container, user, isOwn) {
         </div>
       </div>
 
+      ${isOwn ? `
+        <!-- Search Profiles — between the edit-profile action and the
+             Publicaciones/Preguntas/Puntos tabs. Symmetric vertical
+             margin so it sits exactly in the middle of the gap. -->
+        <div style="margin-top:var(--space-md);margin-bottom:var(--space-md);">
+          <div class="search-bar">
+            ${ICONS.search}
+            <input type="text" id="profile-search" placeholder="Buscar perfiles..." autocomplete="off" />
+          </div>
+          <div id="search-results"></div>
+        </div>
+      ` : ''}
+
       <!-- Tabs -->
       <div class="tab-bar" id="profile-tabs">
         <button class="tab-item active" data-tab="posts">Publicaciones</button>
@@ -190,18 +203,6 @@ function renderProfileView(container, user, isOwn) {
       <div id="profile-tab-content">
         ${renderPostsTab(userPosts)}
       </div>
-
-      ${isOwn ? `
-        <!-- Search Profiles -->
-        <div style="margin-top:var(--space-xl);">
-          <h3 style="font-size:var(--text-sm);font-weight:600;color:var(--text-secondary);margin-bottom:var(--space-md);">🔍 Buscar perfiles</h3>
-          <div class="search-bar">
-            ${ICONS.search}
-            <input type="text" id="profile-search" placeholder="Nombre, @username, ciudad..." autocomplete="off" />
-          </div>
-          <div id="search-results"></div>
-        </div>
-      ` : ''}
     </div>
 
     ${renderBottomNav(isOwn ? 'profile' : '')}
@@ -243,11 +244,24 @@ function renderQuestionsTab(questions, isOwn, userId) {
   const answeredQ = questions.filter(q => q.answer);
   const unansweredQ = questions.filter(q => !q.answer);
 
-  let html = '';
+  // Ask box ALWAYS goes at the top for non-own profiles, so the visitor's
+  // intent ("ask something") doesn't get buried under a long list of
+  // previous Q&A. Followed by the existing questions below.
+  const askBox = !isOwn ? `
+    <div style="margin-bottom:var(--space-lg);">
+      <h4 style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-md);">Haz una pregunta anónima</h4>
+      <div style="display:flex;gap:var(--space-sm);">
+        <input type="text" class="input" id="inline-question-input" placeholder="Tu pregunta..." style="flex:1;font-size:var(--text-sm);" maxlength="200" />
+        <button class="btn btn-primary btn-sm" id="inline-question-send" data-user-id="${userId}">${ICONS.send}</button>
+      </div>
+    </div>
+  ` : '';
+
+  let listHtml = '';
 
   if (isOwn && unansweredQ.length > 0) {
-    html += `<h4 style="font-size:var(--text-sm);color:var(--orange);margin-bottom:var(--space-md);">📩 Pendientes (${unansweredQ.length})</h4>`;
-    html += unansweredQ.map(q => `
+    listHtml += `<h4 style="font-size:var(--text-sm);color:var(--orange);margin-bottom:var(--space-md);">📩 Pendientes (${unansweredQ.length})</h4>`;
+    listHtml += unansweredQ.map(q => `
       <div class="question-card">
         <div class="question-anonymous">Anónimo · ${formatRelative(new Date(q.createdAt))}</div>
         <div class="question-text">${sanitize(q.question)}</div>
@@ -260,8 +274,8 @@ function renderQuestionsTab(questions, isOwn, userId) {
   }
 
   if (answeredQ.length > 0) {
-    if (html) html += `<div style="height:1px;background:var(--border-subtle);margin:var(--space-lg) 0;"></div>`;
-    html += answeredQ.map(q => `
+    if (listHtml) listHtml += `<div style="height:1px;background:var(--border-subtle);margin:var(--space-lg) 0;"></div>`;
+    listHtml += answeredQ.map(q => `
       <div class="question-card">
         <div class="question-anonymous">Anónimo · ${formatRelative(new Date(q.createdAt))}</div>
         <div class="question-text">${sanitize(q.question)}</div>
@@ -271,7 +285,7 @@ function renderQuestionsTab(questions, isOwn, userId) {
   }
 
   if (questions.length === 0) {
-    html = `
+    listHtml = `
       <div class="empty-state" style="padding:var(--space-xl);">
         <div style="font-size:2rem;margin-bottom:var(--space-sm);">💬</div>
         <h3 class="empty-state-title">Sin preguntas aún</h3>
@@ -280,20 +294,7 @@ function renderQuestionsTab(questions, isOwn, userId) {
     `;
   }
 
-  // Ask box for non-own profiles
-  if (!isOwn) {
-    html += `
-      <div style="margin-top:var(--space-lg);padding-top:var(--space-lg);border-top:1px solid var(--border-subtle);">
-        <h4 style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-md);">Haz una pregunta anónima</h4>
-        <div style="display:flex;gap:var(--space-sm);">
-          <input type="text" class="input" id="inline-question-input" placeholder="Tu pregunta..." style="flex:1;font-size:var(--text-sm);" maxlength="200" />
-          <button class="btn btn-primary btn-sm" id="inline-question-send" data-user-id="${userId}">${ICONS.send}</button>
-        </div>
-      </div>
-    `;
-  }
-
-  return html;
+  return askBox + listHtml;
 }
 
 function renderPointsTab(user) {

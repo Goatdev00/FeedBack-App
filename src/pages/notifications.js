@@ -13,6 +13,7 @@ const KIND_META = {
   comment:  { icon: '💬', accent: 'comment'  },
   like:     { icon: '❤️', accent: 'like'     },
   question: { icon: '❓', accent: 'question' },
+  blocked:  { icon: '🚫', accent: 'blocked'  },
 };
 
 export function renderNotifications(container) {
@@ -82,10 +83,23 @@ function renderItem(n, lastViewed) {
   const meta = KIND_META[n.kind] || { icon: '🔔', accent: '' };
   const isNew = n.time && n.time.getTime() > lastViewed;
   const timeLabel = n.time ? formatRelative(n.time) : '';
-  const actorBlock = n.anonymous
-    ? `<div class="notif-anon">${ICONS.question}</div>`
-    : avatarHTML(n.actor, 'avatar-sm');
-  const actorName = n.anonymous ? 'Alguien' : sanitize(n.actor.name);
+  // Wrap the actor avatar (and the name) so a tap on either jumps directly
+  // to that person's profile, overriding the notification's own default
+  // destination. For anonymous senders (questions) there's no profile to
+  // open, so skip the wrap and leave the question-mark icon plain. For
+  // system notifications (e.g. "your post was hidden by reports") there's
+  // no actor at all — render a system emoji and skip the actor-name prefix.
+  let actorBlock;
+  let actorName = '';
+  if (n.system) {
+    actorBlock = `<div class="notif-anon">${n.systemIcon || '🔔'}</div>`;
+  } else if (n.anonymous) {
+    actorBlock = `<div class="notif-anon">${ICONS.question}</div>`;
+    actorName = 'Alguien';
+  } else {
+    actorBlock = `<span data-action="view-profile" data-user-id="${n.actor.id}" style="cursor:pointer;display:inline-flex;">${avatarHTML(n.actor, 'avatar-sm')}</span>`;
+    actorName = `<span data-action="view-profile" data-user-id="${n.actor.id}" style="cursor:pointer;">${sanitize(n.actor.name)}</span>`;
+  }
 
   return `
     <button class="notification-item ${isNew ? 'is-new' : ''}"
@@ -95,8 +109,8 @@ function renderItem(n, lastViewed) {
       ${actorBlock}
       <div class="notification-content">
         <div class="notification-text">
-          <span class="notification-actor-name">${actorName}</span>
-          <span> ${sanitize(n.text)}</span>
+          ${actorName ? `<span class="notification-actor-name">${actorName}</span><span> </span>` : ''}
+          <span>${sanitize(n.text)}</span>
         </div>
         <div class="notification-meta">
           <span class="notification-kind">${meta.icon}</span>
@@ -111,7 +125,17 @@ function bindEvents(container, notifications) {
   container.querySelector('#back-btn')?.addEventListener('click', () => router.navigate('wall'));
 
   container.querySelectorAll('.notification-item').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
+      // Tap on the actor avatar or name → jump to that person's profile,
+      // regardless of where the notification itself would have gone.
+      const profileTap = e.target.closest('[data-action="view-profile"]');
+      if (profileTap?.dataset.userId) {
+        const uid = profileTap.dataset.userId;
+        store.setState({ viewingUserId: uid });
+        router.navigate('profile-other', { userId: uid });
+        return;
+      }
+
       const id = btn.dataset.id;
       const n = notifications.find(x => x.id === id);
       if (!n) return;

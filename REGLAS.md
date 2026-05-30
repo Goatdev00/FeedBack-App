@@ -17,7 +17,7 @@ Este documento describe el sistema de gamificación de la plataforma: cómo se g
 | Conexión mutua (los dos se siguen)                  | +10    | 1 por par     | ✅           |
 | Responder pregunta en perfil                        | +5     | 10            | ✅           |
 | Publicación destacada (featured)                    | +10    | 1             | ⏳ Inferido  |
-| Reporte validado por usuarios                       | +10    | 3             | ⏳ Inferido  |
+| Reporte validado por usuarios                       | +10    | (sin tope)    | ✅ — ver §11 |
 | Cancelar asistencia confirmada                      | −20    | —             | ⏳ Inferido  |
 | Publicación duplicada / spam                        | 0      | —             | ✅ (no suma) |
 | Publicación reportada como abuso                    | −10    | —             | ⏳ Inferido  |
@@ -121,9 +121,12 @@ export const POINTS_RULES = {
 - Marcado en el catálogo pero **no disparado** en código.
 - Propuesta: un job periódico (o trigger por umbral de likes) que marque `post.featured = true` y emita un evento `featuredPost`.
 
-### 3.8 Reporte validado — +10 pts (Inferido)
+### 3.8 Reporte validado — +10 pts
 
-- En las publicaciones existe la categoría `REPORT_CATEGORIES` (ambiente, seguridad, música, aforo, energía, filas, problemas, highlights). Si N usuarios concuerdan en el mismo reporte sobre la misma fiesta dentro de una ventana, los reportantes deberían recibir +10.
+- **Implementado** vía la función `report_post()` (Postgres, `SECURITY DEFINER`).
+- Cuando una publicación acumula **10 reportes** de usuarios distintos, se oculta automáticamente y los **10 reportantes reciben +10 pts cada uno** en la misma transacción.
+- El detalle completo del flujo (categorías, esquema, RLS, banner del autor, notificación, realtime, safeguards y limitaciones conocidas) está documentado en **§11**.
+- **Nota:** la columna "Límite diario" del catálogo (`POINTS_RULES.validatedReport.dailyLimit = 3`) todavía **no se aplica** del lado del servidor. Está documentado como pendiente en §11.11.
 
 ---
 
@@ -317,6 +320,185 @@ La economía de puntos debe vivir en servidor — el cliente sólo refleja. Suge
 - [ ] Anti‑abuso básico: throttle de eventos repetidos.
 - [ ] Reglas configurables por entorno (mock vs producción).
 - [ ] Persistir `lastDailyResetAt` para limpiar contadores al cambiar de día sin reload.
+
+---
+
+## 11. Sistema de reportes a publicaciones (abuso / moderación)
+
+Antes de la migración `0014` el botón de bandera en cada publicación era **placebo**: hacía un `showToast('Publicación reportada')` y nada más — sin tabla, sin contador, sin acción. Esta sección describe el sistema real implementado a partir de esa migración.
+
+### 11.1 Resumen del flujo en una frase
+
+> Cualquier usuario autenticado puede reportar una publicación ajena eligiendo un motivo de una lista cerrada; cuando **10 reportes** distintos se acumulan sobre el mismo post, el post se **oculta automáticamente** para todos los demás usuarios, el autor recibe una **notificación** y los **10 reportantes ganan +10 pts** cada uno.
+
+### 11.2 Categorías de reporte
+
+Definidas como enum Postgres `public.report_reason`. Son fijas (no se aceptan strings libres):
+
+| ID enum            | Etiqueta visible            | Emoji |
+|--------------------|-----------------------------|:-----:|
+| `spam`             | Spam                        | 🚫    |
+| `offensive`        | Ofensivo o discurso de odio | 😡    |
+| `misinformation`   | Información falsa           | ❌    |
+| `self_promotion`   | Autopromoción               | 📢    |
+| `harassment`       | Acoso o intimidación        | ⚠️    |
+| `other`            | Otro                        | 📁    |
+
+Añadir más opciones en el futuro = `ALTER TYPE public.report_reason ADD VALUE 'nuevo_motivo'`.
+
+### 11.3 Esquema de datos
+
+**Tabla `public.post_reports`** — un registro por (publicación, reportante):
+
+```sql
+post_reports (
+  post_id     uuid not null references posts(id) on delete cascade,
+  reporter_id uuid not null references profiles(id) on delete cascade,
+  reason      report_reason not null,
+  created_at  timestamptz not null default now(),
+  primary key (post_id, reporter_id)
+)
+```
+
+La **PK compuesta `(post_id, reporter_id)`** es la garantía de "un reporte por usuario por post": un segundo reporte del mismo usuario sobre el mismo post se descarta vía `ON CONFLICT DO NOTHING` (idempotente, no es error).
+
+**Columnas nuevas en `public.posts`:**
+
+| Columna         | Tipo          | Significado |
+|-----------------|---------------|-------------|
+| `hidden_at`     | `timestamptz` | `NULL` = visible. Cuando se cruza el umbral, queda con el timestamp del momento del bloqueo. |
+| `hidden_reason` | `text`        | Identificador semántico del por qué fue ocultado. Hoy solo `'reports_threshold'`; en el futuro puede haber `'admin_manual'`, `'spam_filter'`, etc. |
+
+### 11.4 La función `report_post()` — único punto de escritura
+
+Toda la lógica vive en `public.report_post(p_post_id, p_reason)` (`SECURITY DEFINER`). El cliente **no puede** escribir directamente en `post_reports` ni tocar `posts.hidden_at`: no hay políticas RLS de INSERT/UPDATE para esas operaciones desde el rol `authenticated`. La función:
+
+1. Verifica que `auth.uid()` existe → si no, `raise exception 'not_authenticated'`.
+2. Lee `posts.user_id` del post objetivo:
+   - Si el post no existe → `raise exception 'post_not_found'`.
+   - Si el autor es el propio reportante → `raise exception 'cannot_report_own_post'`.
+3. Inserta `(post_id, reporter_id, reason)` con `ON CONFLICT DO NOTHING`.
+4. Recuenta `count(*)` de reportes para ese post.
+5. Si `count >= 10` **y** `posts.hidden_at IS NULL`:
+   - Actualiza `posts SET hidden_at = now(), hidden_reason = 'reports_threshold'`.
+   - El `IF FOUND` garantiza que la concesión de puntos ocurre **una sola vez**, aunque después lleguen más reportes.
+   - Suma `+10` a `points` de **cada uno** de los reporters de ese post (los 10).
+6. Devuelve `jsonb` `{ count, hidden, threshold }` para que el cliente muestre feedback al reportante.
+
+```sql
+return jsonb_build_object(
+  'count', v_count,
+  'hidden', v_was_hidden,
+  'threshold', v_threshold
+);
+```
+
+`grant execute … to authenticated`. Cualquier intento de escribir directamente en `post_reports` desde un cliente con JWT de `authenticated` es rechazado por la ausencia de política `INSERT`.
+
+### 11.5 Umbral y consecuencias
+
+| Métrica                   | Valor actual | Cambiarlo |
+|---------------------------|:------------:|-----------|
+| Reportes para auto-ocultar | **10**       | Variable `v_threshold` en `report_post()`. Cambiarlo en migración futura. |
+| Puntos por reporte validado | **+10**     | `update profiles set points = points + 10` dentro de la función. Cambiarlo en migración futura. |
+| Puntos al autor del post   | 0 (no hay penalización) | Pendiente — ver §11.11. |
+
+Cuando un post se oculta:
+- `posts.hidden_at = now()`.
+- `posts.hidden_reason = 'reports_threshold'`.
+- Cada reportante recibe `+10` en `profiles.points` en la misma transacción.
+
+### 11.6 Privacidad y permisos (RLS)
+
+| Tabla / acción                              | Política                                                                 |
+|---------------------------------------------|--------------------------------------------------------------------------|
+| `post_reports` SELECT                       | Solo el reportante ve **sus propias** filas (`reporter_id = auth.uid()`). |
+| `post_reports` INSERT/UPDATE/DELETE          | **Sin política directa** — solo accesible vía `report_post()`.           |
+| `posts` SELECT                              | `expires_at > now() AND (hidden_at IS NULL OR user_id = auth.uid())`.    |
+| `posts.hidden_at` / `posts.hidden_reason` UPDATE | Solo `service_role` y la función `SECURITY DEFINER`.                  |
+
+Consecuencia clave: **nadie puede saber quién reportó qué**. El conteo (10/10) se expone solo agregado, vía el `jsonb` que devuelve el RPC al propio reportante.
+
+### 11.7 Experiencia del autor del post oculto
+
+1. **En el muro** ([`src/pages/wall.js`](src/pages/wall.js) → `renderPostCard`): si `post.hiddenAt` está set **y** `userId === currentUser.id`, el card se renderiza con la clase `.post-card-hidden`. En lugar del contenido y acciones aparece el banner:
+
+   ```
+   🚫  Publicación oculta por reportes
+       Tu publicación recibió 10 o más reportes y ya no es visible para otros usuarios.
+   ```
+
+2. **En notificaciones** ([`src/data/mock-data.js`](src/data/mock-data.js) → `getNotifications()`): se genera una notificación **derivada** del propio estado — iterar `state.posts`, filtrar las propias con `hiddenAt`, y emitir:
+
+   ```js
+   {
+     id: `blocked:<postId>`,
+     kind: 'blocked',
+     system: true,
+     systemIcon: '🚫',
+     actor: null,
+     time: hiddenAt,
+     text: 'tu publicación fue ocultada por múltiples reportes: "<preview>"',
+     navigate: { route: 'profile' }
+   }
+   ```
+
+   No hay tabla `notifications` separada: la "señal" es `posts.hidden_at` y el cliente la presenta como notificación cada vez que entra a la página.
+
+3. **En realtime**: la suscripción `UPDATE` sobre `public.posts` ([`src/data/api.js`](src/data/api.js)) detecta el cambio de `hidden_at` y refresca el muro en vivo si el autor está mirándolo cuando se cruza el umbral.
+
+### 11.8 Experiencia del reportante
+
+1. En el muro, el botón de bandera (`data-action="report-post"`) solo se muestra para posts **ajenos**. Posts propios no tienen botón (defensa cosmética; la función igual rechazaría con `cannot_report_own_post`).
+2. Al pulsarlo se abre un modal con las 6 categorías (`showReportModal` en wall.js).
+3. Al elegir una, el modal se cierra y se llama al RPC. El usuario ve un toast con el resultado:
+   - **Aún no se alcanzó el umbral:** `Reporte registrado (3/10).`
+   - **Se alcanzó con este reporte:** `Reporte registrado. La publicación fue ocultada (10 reportes).`
+   - **Reporte sobre post propio:** `No puedes reportar tu propia publicación.`
+   - **Post ya borrado:** `La publicación ya no existe.`
+4. Si el reporte fue el décimo, en la misma transacción se suman `+10 pts` al reportante (y a los otros 9). El refresh de puntos se ve en la siguiente carga del perfil/encabezado.
+
+### 11.9 Realtime
+
+| Evento de Postgres                    | Quién lo escucha                | Qué hace                                                              |
+|---------------------------------------|---------------------------------|-----------------------------------------------------------------------|
+| `INSERT` en `post_reports`             | Realtime publicado (futuro dashboard de moderación). | Hoy no se consume del lado del usuario final. |
+| `UPDATE` en `posts` (cambio de `hidden_at`) | `subscribeRealtime` en api.js. | Si el autor está en `/wall` cuando cruza el umbral, se hace `router.refreshCurrentRoute()` y el banner aparece sin reload. |
+
+Para usuarios distintos del autor, el `UPDATE` ni siquiera les llega: RLS de SELECT filtra ya el row entero porque su nuevo estado (`hidden_at NOT NULL` AND `user_id != auth.uid()`) no satisface la política.
+
+### 11.10 Validaciones y safeguards
+
+| Riesgo                                          | Mitigación                                                                                 |
+|-------------------------------------------------|--------------------------------------------------------------------------------------------|
+| Reportes múltiples del mismo usuario sobre el mismo post | PK `(post_id, reporter_id)` + `ON CONFLICT DO NOTHING`.                                  |
+| Reportarse a uno mismo                          | Chequeo `v_author = auth.uid()` antes del INSERT → `raise exception`.                       |
+| Tampering con `hidden_at` desde el cliente      | Sin política `UPDATE` para `authenticated` sobre esa columna; solo la función la toca.     |
+| Pago doble de puntos por reportes adicionales después del 10º | `UPDATE posts SET hidden_at = now() WHERE … AND hidden_at IS NULL` + `IF FOUND` — el pago ocurre **una sola vez**, en la transacción que cruza el umbral. |
+| Revelar identidad de reportantes                | `post_reports_read_self`: cada reportante solo ve sus propias filas.                       |
+| Cuentas anónimas reportando                     | RPC rechaza si `auth.uid()` es NULL.                                                       |
+
+### 11.11 Limitaciones conocidas / pendientes
+
+Lo que **no** está implementado y se podría añadir:
+
+1. **Cap diario de puntos por reportes validados.** El catálogo dice `validatedReport.dailyLimit = 3`. Hoy no se enforce: si un usuario reporta 30 posts y los 30 cruzan el umbral el mismo día, recibe `30 × 10 = 300` puntos. Para limitarlo: añadir columna `awarded boolean default false` a `post_reports`, contar awards del día por reportante antes de pagar, marcar la fila como `awarded = true` al sumar.
+2. **Penalización al autor del post bloqueado.** §4 sugiere `-10 pts`. Implementación: dentro del bloque `IF FOUND` del `report_post()`, `UPDATE profiles SET points = greatest(points - 10, 0) WHERE id = v_author`.
+3. **Dashboard de moderación.** No hay vista para admins de ver posts más reportados, desbloquear manualmente, ni revisar reportes pendientes. Sería migración 0015 + página `/moderation` filtrada por rol.
+4. **Apelación / desbloqueo por el autor.** Un autor cuyo post fue bloqueado no tiene forma de pedir revisión. Hoy es definitivo.
+5. **Cooldown entre reportes del mismo usuario.** Un usuario puede reportar 100 posts en un minuto. Para evitar abuso de masa: `cooldownSec` en la función, validando contra el `created_at` más reciente del mismo `reporter_id`.
+6. **Métricas anti-abuso de reporters.** Si un usuario reporta sistemáticamente posts que nunca llegan al umbral, podría estar usando el sistema para acosar. Detectarlo requiere un job que mire la relación reportes-emitidos / reportes-validados por reporter.
+
+### 11.12 Archivos involucrados
+
+| Archivo                                          | Rol                                                                  |
+|--------------------------------------------------|----------------------------------------------------------------------|
+| [`supabase/migrations/0014_post_reports.sql`](supabase/migrations/0014_post_reports.sql) | Esquema, RLS, función `report_post()`.                                |
+| [`src/data/api.js`](src/data/api.js)             | `reportPost()` (wrapper del RPC), `postFromRow` (mapea `hiddenAt`/`hiddenReason`), realtime UPDATE en `posts`. |
+| [`src/pages/wall.js`](src/pages/wall.js)         | Modal de categorías (`showReportModal`), banner de "oculto" en `renderPostCard`, ocultar botón de bandera en posts propios. |
+| [`src/data/mock-data.js`](src/data/mock-data.js) | `getNotifications()` deriva notificación `kind: 'blocked'` cuando hay posts propios con `hiddenAt`. |
+| [`src/pages/notifications.js`](src/pages/notifications.js) | `KIND_META.blocked` y soporte para notificaciones `system: true` sin actor. |
+| [`src/styles/main.css`](src/styles/main.css)     | Clases `.post-card-hidden`, `.post-hidden-banner`, `.report-reason-btn`. |
 
 ---
 
