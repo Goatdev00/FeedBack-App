@@ -109,7 +109,7 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-initLavaLamp('lava-bg');
+initLavaLamp();
 
 // Instagram-style pull-to-refresh: drag down from the top of any feed
 // page to re-fetch the world from Supabase. Skips chat rooms / forms.
