@@ -28,11 +28,17 @@ const BLOB_COUNT = 12;
 const EXPAND_DURATION = 3000; // ms — logo-center → orbit transition
 const BLOB_COLOR = [1.0, 0.4, 0.0]; // #ff6600 in linear-ish RGB
 
-// Field threshold and edge sharpness. Higher threshold → tighter blob
-// silhouettes (less merging). Higher sharpness denominator → wider AA
-// band (softer edge). Set to match the previous SVG visual at "30 -13".
-const FIELD_THRESHOLD = 1.0;
-const FIELD_SOFTNESS  = 0.18;
+// Field threshold for the compact-support metaball formula below.
+//   * THRESHOLD ~0.1  → visible blob radius ≈ 73% of configured size.
+//                       Raise (toward 0.5) to shrink blobs and weaken
+//                       merging; lower (toward 0.02) to grow them and
+//                       glue them together harder.
+// Edge anti-aliasing is computed per-pixel from fwidth() in the shader
+// — no static softness knob, because any fixed value is wrong at some
+// DPR/zoom level and produces visible stairsteps. The fwidth approach
+// adapts the smoothstep band to the actual screen-space gradient of
+// the field, giving pixel-perfect edges on any device.
+const FIELD_THRESHOLD = 0.10;
 
 // Same configs as the old SVG version. oX/oY: orbit center (% of canvas),
 // rX/rY: orbit radius (%), spd: angular speed (rad/s), size in pixels.
@@ -60,35 +66,50 @@ void main() {
 }
 `;
 
-// Fragment shader: metaball field.
-// We compute, for each pixel, the sum over all blobs of r²/d² (the
-// classic Blinn metaball potential — finite at d=0 thanks to the +1
-// epsilon, falls off as 1/d² so distant blobs contribute almost nothing
-// but nearby blobs blend smoothly). Compare against u_threshold via a
-// narrow smoothstep band to get a hard but anti-aliased silhouette.
-const FS = `
-precision mediump float;
+// Fragment shader: COMPACT-SUPPORT metaball field with derivative AA.
+//
+// Field: each blob contributes v = max(0, 1 - d²/r²)³ — Wyvill cubic
+// falloff that's exactly zero at and beyond distance r. This is what
+// keeps blobs visually defined: a blob 500px away contributes EXACTLY
+// 0 to the current pixel, so summing 12 blobs never floods empty space.
+// The cubic is C2-smooth across the support boundary, so merging blobs
+// form natural curved bridges with no seam.
+//
+// Anti-aliasing: instead of a fixed smoothstep softness (which is too
+// narrow on hi-DPI → stairstep edges, too wide on low-DPI → mushy
+// edges), we read the screen-space gradient of the field via fwidth()
+// and use that as the smoothstep band. The result is exactly one pixel
+// of AA at every zoom level and every DPR — bordes pixel-perfect.
+//
+// highp on field: derivatives at mediump are noisy and produce visible
+// banding artefacts on iOS Adreno/PowerVR GPUs. The whole shader hot
+// path runs on it, so we explicitly bump precision.
+const FS = `#extension GL_OES_standard_derivatives : enable
+precision highp float;
 uniform vec2  u_resolution;
-uniform vec3  u_blobs[${BLOB_COUNT}];   // (x, y, radius) per blob, in CSS pixels
+uniform vec3  u_blobs[${BLOB_COUNT}];   // (x, y, radius) per blob, in canvas pixels
 uniform vec3  u_color;
 uniform float u_threshold;
-uniform float u_softness;
 
 void main() {
-  // gl_FragCoord origin is bottom-left in WebGL. The JS side stores blob
-  // positions with top-left origin (matches the old SVG), so flip Y here.
+  // gl_FragCoord origin is bottom-left in WebGL. JS stores blob positions
+  // with top-left origin (matches CSS/SVG), so flip Y here.
   vec2 px = vec2(gl_FragCoord.x, u_resolution.y - gl_FragCoord.y);
 
   float field = 0.0;
   for (int i = 0; i < ${BLOB_COUNT}; i++) {
     vec2  d = px - u_blobs[i].xy;
     float r = u_blobs[i].z;
-    // +1.0 epsilon avoids singularity at d=0 (would otherwise blow out
-    // the centre of every blob to infinity, killing the alpha test).
-    field += (r * r) / (dot(d, d) + 1.0);
+    float k = max(0.0, 1.0 - dot(d, d) / (r * r));
+    field += k * k * k;
   }
 
-  float alpha = smoothstep(u_threshold - u_softness, u_threshold + u_softness, field);
+  // Derivative-based AA. fwidth = |dF/dx| + |dF/dy|, the field's screen-
+  // space rate of change in pixels. A smoothstep band exactly that wide
+  // gives one pixel of transition. Multiply by 0.7 for a slightly
+  // sharper-than-default look that still antialiases cleanly.
+  float aa = fwidth(field) * 0.7;
+  float alpha = smoothstep(u_threshold - aa, u_threshold + aa, field);
   gl_FragColor = vec4(u_color, alpha);
 }
 `;
@@ -148,6 +169,12 @@ export function initLavaLamp(canvasId = 'lava-canvas') {
     return;
   }
 
+  // Enable the derivatives extension that the fragment shader's fwidth()
+  // depends on. Universally supported in any browser that has WebGL1
+  // (it's part of WebGL2 core, and every WebGL1 implementation ships it),
+  // but the explicit enableExtension call is required for WebGL1.
+  gl.getExtension('OES_standard_derivatives');
+
   const prog = buildProgram(gl);
   if (!prog) return;
   gl.useProgram(prog);
@@ -168,11 +195,9 @@ export function initLavaLamp(canvasId = 'lava-canvas') {
   const loc_u_blobs      = gl.getUniformLocation(prog, 'u_blobs');
   const loc_u_color      = gl.getUniformLocation(prog, 'u_color');
   const loc_u_threshold  = gl.getUniformLocation(prog, 'u_threshold');
-  const loc_u_softness   = gl.getUniformLocation(prog, 'u_softness');
 
   gl.uniform3fv(loc_u_color, BLOB_COLOR);
   gl.uniform1f(loc_u_threshold, FIELD_THRESHOLD);
-  gl.uniform1f(loc_u_softness,  FIELD_SOFTNESS);
 
   // Enable alpha blending so the goo composits over whatever's behind the
   // canvas. With premultipliedAlpha:false the standard sf/(1-sa) blend is
@@ -180,14 +205,17 @@ export function initLavaLamp(canvasId = 'lava-canvas') {
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-  // CSS-pixel dimensions and the GL drawing-buffer resolution. We render
-  // at min(devicePixelRatio, 2) to keep fill rate reasonable on retina —
-  // 3x DPR full-screen = 9x pixel work vs 1x, which is gratuitous for a
-  // soft background.
+  // CSS-pixel dimensions and the GL drawing-buffer resolution. Render at
+  // the full devicePixelRatio (capped at 3 for sanity on weird VR setups):
+  // the shader is cheap enough that 3x is well within budget on every
+  // iPhone, and DPR-capping was causing the canvas to be CSS-upscaled by
+  // the browser → blurry edges + amplified aliasing on retina screens.
+  // The fwidth() AA below adapts to whatever resolution we pick, so we
+  // can give the GPU the native pixel count and get crisp edges for free.
   let cssW = 0, cssH = 0;
   let bufW = 0, bufH = 0;
   function resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
     const rect = canvas.getBoundingClientRect();
     cssW = Math.max(1, rect.width);
     cssH = Math.max(1, rect.height);
