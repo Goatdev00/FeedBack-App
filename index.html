@@ -55,6 +55,14 @@
 <body>
   <div id="app"></div>
 
+  <!-- Persistent bottom navigation. Lives OUTSIDE #app so router page
+       swaps (innerHTML rewrites) don't recreate it on every render —
+       previously each refresh wiped + rebuilt the nav, visible as a
+       full-bar flicker. mountBottomNav() in main.js fills this on boot
+       and setBottomNav(tab) updates only the active state from then on.
+       Starts `hidden` so login / onboarding don't show it accidentally. -->
+  <nav class="bottom-nav" id="bottom-nav" hidden aria-label="Navegación principal"></nav>
+
   <!-- =====================================================================
        Lava Lamp / Metaballs Background — WebGL canvas
        =====================================================================

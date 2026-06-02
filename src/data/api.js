@@ -98,6 +98,54 @@ export async function createParty(input) {
   return partyFromRow(data);
 }
 
+// Update / delete are guarded server-side by parties_update_owner /
+// parties_delete_owner (RLS in 0003): only `promoter_id = auth.uid()`
+// rows are affected. The extra `.eq('promoter_id', user.id)` below is
+// belt-and-suspenders so a UI bug can't accidentally send a
+// PATCH/DELETE to someone else's row.
+export async function updateParty(partyId, patch) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
+  if (!user) throw new Error('not_authenticated');
+
+  // Frontend keys → DB columns. Only fields actually present in the
+  // patch get mapped — partial updates leave other columns untouched.
+  const row = {};
+  if (patch.name        !== undefined) row.name         = patch.name;
+  if (patch.venue       !== undefined) row.venue        = patch.venue;
+  if (patch.city        !== undefined) row.city         = patch.city;
+  if (patch.date        !== undefined) row.party_date   = patch.date;
+  if (patch.startTime   !== undefined) row.start_time   = patch.startTime;
+  if (patch.endTime     !== undefined) row.end_time     = patch.endTime;
+  if (patch.genres      !== undefined) row.genres       = patch.genres;
+  if (patch.flyer       !== undefined) row.flyer_url    = patch.flyer;
+  if (patch.description !== undefined) row.description  = patch.description;
+
+  const { data, error } = await supabase
+    .from('parties')
+    .update(row)
+    .eq('id', partyId)
+    .eq('promoter_id', user.id)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return partyFromRow(data);
+}
+
+export async function deleteParty(partyId) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
+  if (!user) throw new Error('not_authenticated');
+  const { error } = await supabase
+    .from('parties')
+    .delete()
+    .eq('id', partyId)
+    .eq('promoter_id', user.id);
+  if (error) throw error;
+}
+
 // =====================================================================
 // POSTS
 // =====================================================================
@@ -573,6 +621,8 @@ registerApi({
   toggleFollow,
   toggleAttendance,
   createParty,
+  updateParty,
+  deleteParty,
   patchProfileTheme,
   reportPost,
   createQuestion,
@@ -750,6 +800,46 @@ export function subscribeRealtime(store) {
         }
 
         store.setState({ parties: [fresh, ...state.parties] });
+      })
+    // Party edits (creator changed name/venue/time/etc) → replace the
+    // row in place. We preserve attendees because that join lives in a
+    // separate table and isn't part of the parties row.
+    .on('postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'parties' },
+      (payload) => {
+        const p = payload.new;
+        if (!p) return;
+        const state = store.getState();
+        const idx = state.parties.findIndex(x => x.id === p.id);
+        if (idx === -1) return;
+        const fresh = partyFromRow(p);
+        const merged = { ...fresh, attendees: state.parties[idx].attendees || [] };
+        const next = [...state.parties];
+        next[idx] = merged;
+        store.setState({ parties: next });
+        const route = router.getCurrentRoute();
+        if (route === 'parties' || route === 'party-detail' || route === 'wall') {
+          router.refreshCurrentRoute();
+        }
+      })
+    // Party deletes (creator removed the event) → drop from the local
+    // list and bounce back to /parties if the user was viewing the
+    // detail page of the deleted party.
+    .on('postgres_changes',
+      { event: 'DELETE', schema: 'public', table: 'parties' },
+      (payload) => {
+        const p = payload.old;
+        if (!p) return;
+        const state = store.getState();
+        if (!state.parties.some(x => x.id === p.id)) return;
+        store.setState({ parties: state.parties.filter(x => x.id !== p.id) });
+        if (router.getCurrentRoute() === 'party-detail'
+            && state.viewingPartyId === p.id) {
+          router.navigate('parties');
+        } else {
+          const route = router.getCurrentRoute();
+          if (route === 'parties' || route === 'wall') router.refreshCurrentRoute();
+        }
       })
     // Any new chat message anywhere → flip the unread flag for its room
     // TYPE (general or party). The wall lights up if either is set; the

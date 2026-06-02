@@ -47,3 +47,9 @@ update public.posts
 --    NOT NULL without forcing every insert path to set it explicitly.
 alter table public.posts
   alter column expires_at set default '9999-12-31'::timestamptz;
+
+-- 4) Force PostgREST to flush its policy cache. RLS predicate changes
+--    don't always propagate without a NOTIFY, and a stale cache would
+--    keep evaluating `expires_at > now()` against the freshly-relaxed
+--    policy — looking exactly like the migration never ran.
+notify pgrst, 'reload schema';

@@ -1103,6 +1103,65 @@ class Store {
     return newParty;
   }
 
+  // Edit / delete a party. Creator-only is enforced server-side by RLS
+  // (parties_update_owner / parties_delete_owner in migration 0003);
+  // the UI also gates the buttons behind a creator check, so these
+  // helpers can assume the caller is authorized.
+  updateParty(partyId, patch) {
+    const idx = this.state.parties.findIndex(p => p.id === partyId);
+    if (idx === -1) return;
+    const prev = this.state.parties[idx];
+    // Optimistic merge — keep attendees/_pending/etc that aren't in patch.
+    this.state.parties[idx] = { ...prev, ...patch };
+    this.saveState();
+    this.notify();
+
+    if (_api?.updateParty) {
+      _api.updateParty(partyId, patch)
+        .then((real) => {
+          const i = this.state.parties.findIndex(p => p.id === partyId);
+          if (i !== -1) {
+            // Server may have normalized values (trimmed strings, etc);
+            // adopt them but keep the local attendees list intact.
+            this.state.parties[i] = { ...real, attendees: prev.attendees };
+            this.saveState();
+            this.notify();
+          }
+        })
+        .catch((err) => {
+          console.warn('[store] updateParty failed', err);
+          const i = this.state.parties.findIndex(p => p.id === partyId);
+          if (i !== -1) {
+            this.state.parties[i] = prev;
+            this.saveState();
+            this.notify();
+          }
+          _surfaceError?.('No se pudo actualizar el evento. ' + describeApiError(err));
+        });
+    }
+  }
+
+  deleteParty(partyId) {
+    const removed = this.state.parties.find(p => p.id === partyId);
+    if (!removed) return;
+    this.state.parties = this.state.parties.filter(p => p.id !== partyId);
+    this.saveState();
+    this.notify();
+
+    if (_api?.deleteParty) {
+      _api.deleteParty(partyId).catch((err) => {
+        console.warn('[store] deleteParty failed', err);
+        // Rollback — restore at its original index isn't worth tracking;
+        // prepending is good enough for UX and the next hydration will
+        // reorder by party_date anyway.
+        this.state.parties = [removed, ...this.state.parties];
+        this.saveState();
+        this.notify();
+        _surfaceError?.('No se pudo eliminar el evento. ' + describeApiError(err));
+      });
+    }
+  }
+
   toggleAttendance(partyId) {
     if (!this.state.currentUser) return;
     const party = this.state.parties.find(p => p.id === partyId);

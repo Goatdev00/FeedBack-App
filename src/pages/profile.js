@@ -10,8 +10,9 @@ import { createModal } from '../utils/dom.js';
 import { renderBottomNav, bindNavEvents } from '../components/nav.js';
 import { isSupabaseConfigured } from '../data/supabase.js';
 import { signOut } from '../data/auth.js';
-import { clearLocalSession, requireCurrentUser } from '../data/profile-sync.js';
+import { clearLocalSession, requireCurrentUser, patchProfile } from '../data/profile-sync.js';
 import { flushCloudSave } from '../data/cloud-state.js';
+import { fileToResizedDataURL } from '../utils/image.js';
 
 const CITY_OPTIONS = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena', 'Otra'];
 
@@ -114,7 +115,16 @@ function renderProfileView(container, user, isOwn, initialTab) {
       <!-- Profile Header -->
       <div class="profile-header">
         <div class="profile-info">
-          ${avatarHTML(user, 'avatar-2xl', 'avatar-orange')}
+          ${isOwn ? `
+            <div class="avatar-edit-wrapper">
+              ${avatarHTML(user, 'avatar-2xl', 'avatar-orange')}
+              <button class="avatar-edit-btn" id="avatar-edit-btn" type="button"
+                      aria-label="Cambiar foto de perfil" title="Cambiar foto">
+                ${ICONS.edit}
+              </button>
+              <input type="file" id="avatar-edit-input" accept="image/*" hidden />
+            </div>
+          ` : avatarHTML(user, 'avatar-2xl', 'avatar-orange')}
           
           <div style="display:flex;align-items:center;gap:var(--space-sm);margin-top:var(--space-md);">
             <h1 class="profile-name">${sanitize(user.name)}</h1>
@@ -383,6 +393,35 @@ function bindProfileEvents(container, user, isOwn) {
   const backBtn = container.querySelector('#back-btn');
   if (backBtn) {
     backBtn.addEventListener('click', () => router.navigate('wall'));
+  }
+
+  // Avatar pencil — only present on the user's own profile. Tapping the
+  // pencil opens the OS file picker; on selection we resize to ~256px,
+  // patch the profiles row (`avatar_url`) and re-render so the new image
+  // shows up everywhere it's read from currentUser/users[].
+  const avatarBtn = container.querySelector('#avatar-edit-btn');
+  const avatarInput = container.querySelector('#avatar-edit-input');
+  if (avatarBtn && avatarInput) {
+    avatarBtn.addEventListener('click', () => avatarInput.click());
+    avatarInput.addEventListener('change', async () => {
+      const file = avatarInput.files?.[0];
+      if (!file) return;
+      // Disable while uploading so a double-tap doesn't fire two patches.
+      avatarBtn.disabled = true;
+      try {
+        const dataURL = await fileToResizedDataURL(file, 256, 0.82);
+        await patchProfile({ avatar_url: dataURL });
+        showToast('Foto actualizada ✨', 'success');
+        renderProfile(container);
+      } catch (err) {
+        console.warn('[profile] avatar upload failed', err);
+        showToast('No se pudo actualizar la foto', 'error');
+        avatarBtn.disabled = false;
+      } finally {
+        // Clear so picking the same file again still fires `change`.
+        avatarInput.value = '';
+      }
+    });
   }
 
   // Theme toggle

@@ -6,8 +6,16 @@ import { ICONS } from '../data/mock-data.js';
 import { showToast } from '../utils/toast.js';
 import { signInWithGoogle } from '../data/auth.js';
 import { isSupabaseConfigured } from '../data/supabase.js';
+import { showInstallPrompt } from '../utils/install-prompt.js';
 
 export function renderLogin(container) {
+  // Before drawing the Google button, push the PWA install instructions
+  // if the user is on mobile (iOS/Android) and not already in standalone
+  // mode. The helper self-filters: standalone or desktop → no-op. Login
+  // is the only place that calls this — by the time we hit renderLogin
+  // we know the user isn't signed in.
+  showInstallPrompt();
+
   container.innerHTML = `
     <div class="splash-screen" id="login-page">
       <div class="splash-bg"></div>

@@ -6,7 +6,16 @@ import { store, ICONS, formatRelative } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { showToast } from '../utils/toast.js';
 import { avatarHTML, sanitize } from '../utils/helpers.js';
-import { hashStr } from '../utils/dom.js';
+import { createModal, hashStr } from '../utils/dom.js';
+import { fileToResizedDataURL } from '../utils/image.js';
+
+const PARTY_CITIES = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena'];
+const PARTY_GENRES = [
+  'Techno', 'Hardtechno', 'House', 'Deep House', 'Tech House', 'Melodic Techno',
+  'Dark Techno', 'Acid Techno', 'Schranz', 'Gabber', 'Hardcore', 'Hardstyle',
+  'Minimal', 'Drum & Bass', 'Jungle', 'Breakbeat', 'Trance', 'Psytrance',
+  'Disco', 'Electro', 'Progressive', 'Ambient', 'Reggaeton', 'Guaracha',
+];
 
 export function renderPartyDetail(container, params = {}) {
   const state = store.getState();
@@ -19,7 +28,22 @@ export function renderPartyDetail(container, params = {}) {
   const promotor = party.promotor ? store.getUserById(party.promotor) : null;
   const djs = party.djs.map(id => store.getUserById(id)).filter(Boolean);
   const partyPosts = state.posts.filter(p => p.partyId === partyId);
-  const isPromotor = user && user.role === 'promotor' && party.promotor === user.id;
+  // Only the actual creator can edit/delete. All four conditions are
+  // checked explicitly: both ids must be present AND equal. Without the
+  // `user.id` and `party.promotor` truthy guards a brief window during
+  // boot (before currentUser hydrates, or for a legacy cached row whose
+  // `promotor` field is null) would let `undefined === undefined` slip
+  // through and show the panel to non-creators.
+  // RLS on the server still enforces ownership independently
+  // (parties_update_owner / parties_delete_owner check
+  //  promoter_id = auth.uid()), so even if this UI gate were tampered
+  // with via DevTools, the PATCH/DELETE would be rejected.
+  const isCreator = !!(
+    user
+    && user.id
+    && party.promotor
+    && party.promotor === user.id
+  );
 
   container.innerHTML = `
     <div class="page" id="party-detail-page">
@@ -150,7 +174,7 @@ export function renderPartyDetail(container, params = {}) {
         }
       </div>
 
-      ${isPromotor ? renderPromotorPanel(party) : ''}
+      ${isCreator ? renderCreatorPanel(party) : ''}
     </div>
   `;
 
@@ -177,6 +201,207 @@ export function renderPartyDetail(container, params = {}) {
       store.setState({ viewingUserId: userId });
       router.navigate('profile-other', { userId });
     });
+  });
+
+  // Creator-only: edit + delete buttons. Both buttons only exist in the
+  // DOM if isCreator was true at render time (renderCreatorPanel gates
+  // it), so we don't need to re-check here — but RLS will also reject
+  // any patch/delete from someone who isn't promoter_id.
+  const editBtn = container.querySelector('#edit-event-btn');
+  if (editBtn) {
+    editBtn.addEventListener('click', () => showEditPartyModal(container, party, params));
+  }
+  const deleteBtn = container.querySelector('#delete-event-btn');
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', () => showDeletePartyConfirm(container, party));
+  }
+}
+
+// =====================================================================
+// Edit modal
+// =====================================================================
+function showEditPartyModal(container, party, params) {
+  // Snapshot the original flyer so the "remove flyer" + "pick new flyer"
+  // flows can both round-trip without losing the existing image when
+  // the user cancels.
+  let flyerData = party.flyer || null;
+  let selectedGenres = [...(party.genres || [])];
+
+  const overlay = createModal(`
+    <div class="modal" style="max-height:92dvh;overflow-y:auto;">
+      <div class="modal-handle"></div>
+      <div class="modal-title">Editar evento</div>
+
+      <!-- Flyer -->
+      <div class="form-section">
+        <div class="form-section-title">Flyer</div>
+        <div id="edit-flyer-preview" style="${flyerData ? '' : 'display:none;'}position:relative;margin-bottom:var(--space-sm);">
+          <img id="edit-flyer-img" src="${flyerData || ''}" style="width:100%;border-radius:var(--radius-md);max-height:240px;object-fit:cover;" />
+          <button type="button" class="btn btn-icon btn-secondary" id="edit-flyer-remove" style="position:absolute;top:8px;right:8px;width:32px;height:32px;">${ICONS.x}</button>
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" id="edit-flyer-pick" style="width:100%;">
+          ${ICONS.image} ${flyerData ? 'Cambiar flyer' : 'Subir flyer'}
+        </button>
+        <input type="file" id="edit-flyer-file" accept="image/*" hidden />
+      </div>
+
+      <div class="form-section">
+        <div class="input-group mb-md">
+          <label class="input-label">Nombre del evento *</label>
+          <input type="text" class="input" id="edit-name" maxlength="50" value="${sanitize(party.name || '')}" />
+        </div>
+
+        <div class="input-group mb-md">
+          <label class="input-label">Descripción</label>
+          <textarea class="input textarea" id="edit-description" maxlength="300" style="min-height:80px;">${sanitize(party.description || '')}</textarea>
+        </div>
+
+        <div class="input-group mb-md">
+          <label class="input-label">Venue / Lugar *</label>
+          <input type="text" class="input" id="edit-venue" value="${sanitize(party.venue || '')}" />
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-md);">
+          <div class="input-group mb-md">
+            <label class="input-label">Ciudad *</label>
+            <select class="input" id="edit-city">
+              ${PARTY_CITIES.map(c => `<option value="${c}" ${c === party.city ? 'selected' : ''}>${c}</option>`).join('')}
+            </select>
+          </div>
+          <div class="input-group mb-md">
+            <label class="input-label">Fecha *</label>
+            <input type="date" class="input" id="edit-date" value="${party.date || ''}" />
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-md);">
+          <div class="input-group mb-md">
+            <label class="input-label">Inicio</label>
+            <input type="time" class="input" id="edit-start" value="${party.startTime || ''}" />
+          </div>
+          <div class="input-group mb-md">
+            <label class="input-label">Fin</label>
+            <input type="time" class="input" id="edit-end" value="${party.endTime || ''}" />
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">Géneros</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;" id="edit-genres">
+          ${PARTY_GENRES.map(g => `
+            <button type="button" class="tag ${selectedGenres.includes(g) ? 'active' : ''}" data-genre="${g}">${g}</button>
+          `).join('')}
+        </div>
+      </div>
+
+      <div style="display:flex;gap:var(--space-sm);margin-top:var(--space-lg);">
+        <button type="button" class="btn btn-secondary" id="edit-cancel" style="flex:1;">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="edit-save" style="flex:1;">Guardar cambios</button>
+      </div>
+    </div>
+  `);
+
+  // Flyer pick + remove
+  const flyerInput   = overlay.querySelector('#edit-flyer-file');
+  const flyerPick    = overlay.querySelector('#edit-flyer-pick');
+  const flyerPreview = overlay.querySelector('#edit-flyer-preview');
+  const flyerImg     = overlay.querySelector('#edit-flyer-img');
+  const flyerRemove  = overlay.querySelector('#edit-flyer-remove');
+
+  flyerPick.addEventListener('click', () => flyerInput.click());
+  flyerInput.addEventListener('change', async () => {
+    const file = flyerInput.files?.[0];
+    if (!file) return;
+    try {
+      flyerData = await fileToResizedDataURL(file, 1280, 0.82);
+      flyerImg.src = flyerData;
+      flyerPreview.style.display = '';
+      flyerPick.textContent = '';
+      flyerPick.innerHTML = `${ICONS.image} Cambiar flyer`;
+    } catch {
+      showToast('No se pudo procesar la imagen', 'error');
+    }
+    flyerInput.value = '';
+  });
+  flyerRemove.addEventListener('click', () => {
+    flyerData = null;
+    flyerPreview.style.display = 'none';
+    flyerPick.innerHTML = `${ICONS.image} Subir flyer`;
+  });
+
+  // Genre toggles
+  overlay.querySelectorAll('[data-genre]').forEach(tag => {
+    tag.addEventListener('click', () => {
+      const g = tag.dataset.genre;
+      tag.classList.toggle('active');
+      if (selectedGenres.includes(g)) {
+        selectedGenres = selectedGenres.filter(x => x !== g);
+      } else {
+        selectedGenres.push(g);
+      }
+    });
+  });
+
+  overlay.querySelector('#edit-cancel').addEventListener('click', () => overlay.close());
+  overlay.querySelector('#edit-save').addEventListener('click', () => {
+    const name        = overlay.querySelector('#edit-name').value.trim();
+    const venue       = overlay.querySelector('#edit-venue').value.trim();
+    const city        = overlay.querySelector('#edit-city').value;
+    const date        = overlay.querySelector('#edit-date').value;
+    const startTime   = overlay.querySelector('#edit-start').value;
+    const endTime     = overlay.querySelector('#edit-end').value;
+    const description = overlay.querySelector('#edit-description').value.trim();
+
+    if (!name)  { showToast('El nombre es obligatorio', 'error'); return; }
+    if (!venue) { showToast('El lugar es obligatorio', 'error'); return; }
+
+    store.updateParty(party.id, {
+      name, venue, city, date,
+      startTime, endTime,
+      genres: selectedGenres,
+      flyer: flyerData,
+      description,
+    });
+
+    overlay.close();
+    showToast('Evento actualizado ✨', 'success');
+    renderPartyDetail(container, params);
+  });
+}
+
+// =====================================================================
+// Delete confirmation
+// =====================================================================
+function showDeletePartyConfirm(container, party) {
+  const overlay = createModal(`
+    <div class="modal" style="max-width:400px;">
+      <div class="modal-handle"></div>
+      <div style="text-align:center;padding:var(--space-md) 0;">
+        <div style="font-size:2.5rem;margin-bottom:var(--space-sm);">🗑️</div>
+        <h2 style="font-family:var(--font-display);font-size:var(--text-lg);font-weight:700;margin-bottom:var(--space-sm);">
+          ¿Eliminar evento?
+        </h2>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);line-height:1.5;margin-bottom:var(--space-lg);">
+          "<strong>${sanitize(party.name)}</strong>" se eliminará para todos los usuarios.
+          Esta acción no se puede deshacer.
+        </p>
+      </div>
+      <div style="display:flex;gap:var(--space-sm);">
+        <button type="button" class="btn btn-secondary" id="del-cancel" style="flex:1;">Cancelar</button>
+        <button type="button" class="btn" id="del-confirm" style="flex:1;background:#dc2626;color:white;border:none;">
+          Eliminar
+        </button>
+      </div>
+    </div>
+  `);
+
+  overlay.querySelector('#del-cancel').addEventListener('click', () => overlay.close());
+  overlay.querySelector('#del-confirm').addEventListener('click', () => {
+    store.deleteParty(party.id);
+    overlay.close();
+    showToast('Evento eliminado', 'success');
+    router.navigate('parties');
   });
 }
 
@@ -210,7 +435,11 @@ function renderThermometer(party) {
   `;
 }
 
-function renderPromotorPanel(party) {
+// Panel only rendered when the viewing user is the party's creator —
+// the gating happens at the call site (`${isCreator ? renderCreatorPanel
+// : ''}`). The buttons here are the ONLY surface that exposes edit /
+// delete; RLS would reject either action from anyone else regardless.
+function renderCreatorPanel(party) {
   return `
     <div style="margin-top:var(--space-xl);padding-top:var(--space-xl);border-top:2px solid var(--border-orange);">
       <h3 style="font-family:var(--font-display);font-size:var(--text-base);font-weight:700;color:var(--orange);margin-bottom:var(--space-md);">
@@ -228,6 +457,10 @@ function renderPromotorPanel(party) {
       </div>
       <button class="btn btn-outline btn-full btn-sm mt-md" id="edit-event-btn">
         ${ICONS.edit} Editar evento
+      </button>
+      <button class="btn btn-full btn-sm mt-sm" id="delete-event-btn"
+              style="background:transparent;border:1px solid rgba(220,38,38,0.4);color:#dc2626;">
+        🗑️ Eliminar evento
       </button>
     </div>
   `;

@@ -94,13 +94,19 @@
   --duration-slow: 400ms;
 
   /* Z-index */
+  /* Stack: base < dropdown < sticky < navbar < modal/overlay < toast.
+     Modal/overlay MUST be above the bottom nav so dialog footers
+     (Cancel/Save, chat input modals, etc.) never sit hidden behind it.
+     Toast is highest so error feedback always reaches the user even
+     when a modal is open. The bottom nav uses --z-navbar everywhere
+     instead of a hardcoded 1000 it used to carry. */
   --z-base: 1;
   --z-dropdown: 100;
   --z-sticky: 200;
-  --z-modal: 500;
-  --z-overlay: 600;
-  --z-toast: 700;
   --z-navbar: 800;
+  --z-modal: 1100;
+  --z-overlay: 1100;
+  --z-toast: 1500;
 
   /* Layout */
   --navbar-height: 64px;
@@ -276,8 +282,18 @@ span > svg {
   display: flex;
   align-items: center;
   justify-content: space-around;
-  z-index: 1000;
+  z-index: var(--z-navbar);
   box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.5);
+}
+
+/* Make the HTML `hidden` attribute actually hide the nav. Without this,
+   `.bottom-nav { display: flex }` has equal specificity to the browser-
+   default `[hidden] { display: none }` rule but loads later, so
+   `nav.hidden = true` did nothing — the bar stayed up and covered the
+   chat composer (and any other bottom-anchored UI on routes that hide
+   the nav: create-post, create-party, party-detail, chat-*, etc.). */
+.bottom-nav[hidden] {
+  display: none !important;
 }
 
 .nav-item {
@@ -533,6 +549,56 @@ span > svg {
 .avatar-orange { border-color: var(--orange); }
 .avatar-purple { border-color: var(--purple-light); }
 
+/* Editable avatar (own profile only): wraps the <img>/<div> avatar and
+   floats a pencil button at the bottom-right corner that opens the OS
+   file picker. The hidden <input type="file"> sits inside the wrapper
+   so it tabs in the right order if the user uses a keyboard. */
+.avatar-edit-wrapper {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+}
+
+.avatar-edit-btn {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--orange);
+  color: #fff;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transition: transform 0.15s var(--ease-out), box-shadow 0.15s var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+  padding: 0;
+}
+
+.avatar-edit-btn:hover,
+.avatar-edit-btn:focus-visible {
+  transform: scale(1.08);
+  box-shadow: var(--shadow-lg);
+  outline: none;
+}
+
+.avatar-edit-btn:active { transform: scale(0.95); }
+
+.avatar-edit-btn[disabled] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.avatar-edit-btn svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
 .avatar-placeholder {
   display: flex;
   align-items: center;
@@ -684,6 +750,12 @@ span > svg {
   background: var(--bg-secondary);
   border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
   padding: var(--space-lg);
+  /* Extra breathing room at the bottom so footer buttons (Cancel/Save,
+     Eliminar, etc.) never touch the screen edge or sit under iPhone's
+     home indicator. The modal z-index is now above the bottom nav so
+     overlap with that bar is no longer the concern — the issue here is
+     pure safe-area clearance on devices with bottom system UI. */
+  padding-bottom: calc(var(--space-lg) + var(--safe-bottom));
   animation: slideUp 0.35s var(--ease-spring);
   overflow-y: auto;
 }

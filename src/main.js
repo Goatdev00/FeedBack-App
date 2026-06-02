@@ -20,7 +20,7 @@ import { showToast } from './utils/toast.js';
 // rejection (FK violation, RLS denial, network) would just be a console
 // warning the user never sees — they'd think "my post disappeared".
 registerErrorSurface((msg) => showToast(msg, 'error', 4500));
-import { bindNavEvents } from './components/nav.js';
+import { bindNavEvents, mountBottomNav, setBottomNav } from './components/nav.js';
 import { initLavaLamp } from './utils/lava-lamp.js';
 import { createModal } from './utils/dom.js';
 import { isSupabaseConfigured } from './data/supabase.js';
@@ -49,22 +49,28 @@ import { renderChatParties } from './pages/chat-parties.js';
 import { renderChatGeneral, renderChatParty } from './pages/chat.js';
 
 // --- Register Routes ---
-router.register('login', renderLogin);
-router.register('onboarding', renderOnboarding);
-router.register('wall', (container) => { renderWall(container); bindNavEvents(); });
-router.register('profile', (container, params) => { renderProfile(container, params); bindNavEvents(); });
-router.register('profile-other', (container, params) => { renderProfileOther(container, params); bindNavEvents(); });
-router.register('parties', (container) => { renderParties(container); bindNavEvents(); });
-router.register('party-detail', renderPartyDetail);
-router.register('select-party', renderSelectParty);
-router.register('create-post', renderCreatePost);
-router.register('create-party', renderCreateParty);
-router.register('sunday-rating', renderSundayRating);
-router.register('notifications', (container) => { renderNotifications(container); bindNavEvents(); });
-router.register('chat-hub', (container) => { renderChatHub(container); bindNavEvents(); });
-router.register('chat-parties', (container) => { renderChatParties(container); bindNavEvents(); });
-router.register('chat-general', renderChatGeneral);
-router.register('chat-party', renderChatParty);
+// setBottomNav() runs after every page render to flip the active tab on
+// the persistent bottom nav (mounted once in index.html). Pages no
+// longer embed the nav in their innerHTML, so they don't paint over it
+// on each refresh — the result is a flicker-free nav across hydration
+// repaints, navigations, and realtime updates. `null` hides it
+// (auth/onboarding/create flows / single-purpose detail pages).
+router.register('login',         (c, p) => { renderLogin(c, p);          setBottomNav(null);     });
+router.register('onboarding',    (c, p) => { renderOnboarding(c, p);     setBottomNav(null);     });
+router.register('wall',          (c, p) => { renderWall(c, p);           setBottomNav('wall');   });
+router.register('profile',       (c, p) => { renderProfile(c, p);        setBottomNav('profile');});
+router.register('profile-other', (c, p) => { renderProfileOther(c, p);   setBottomNav('');       });
+router.register('parties',       (c, p) => { renderParties(c, p);        setBottomNav('parties');});
+router.register('party-detail',  (c, p) => { renderPartyDetail(c, p);    setBottomNav(null);     });
+router.register('select-party',  (c, p) => { renderSelectParty(c, p);    setBottomNav(null);     });
+router.register('create-post',   (c, p) => { renderCreatePost(c, p);     setBottomNav(null);     });
+router.register('create-party',  (c, p) => { renderCreateParty(c, p);    setBottomNav(null);     });
+router.register('sunday-rating', (c, p) => { renderSundayRating(c, p);   setBottomNav(null);     });
+router.register('notifications', (c, p) => { renderNotifications(c, p);  setBottomNav('');       });
+router.register('chat-hub',      (c, p) => { renderChatHub(c, p);        setBottomNav('');       });
+router.register('chat-parties',  (c, p) => { renderChatParties(c, p);    setBottomNav('');       });
+router.register('chat-general',  (c, p) => { renderChatGeneral(c, p);    setBottomNav(null);     });
+router.register('chat-party',    (c, p) => { renderChatParty(c, p);      setBottomNav(null);     });
 
 // =====================================================================
 // Initialization
@@ -114,6 +120,11 @@ if ('serviceWorker' in navigator) {
 // <canvas id="lava-canvas"> in index.html; don't pass anything unless
 // you've also renamed the element and updated main.css accordingly.
 initLavaLamp();
+
+// Persistent bottom nav — populate the <nav id="bottom-nav"> element in
+// index.html once. From here on each route's setBottomNav(tab) only
+// toggles the active class, so the bar stops flickering on page swaps.
+mountBottomNav();
 
 // Instagram-style pull-to-refresh: drag down from the top of any feed
 // page to re-fetch the world from Supabase. Skips chat rooms / forms.
