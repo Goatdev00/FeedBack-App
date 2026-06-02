@@ -14,11 +14,11 @@ max_rows = 1000
 [db]
 port = 54322
 shadow_port = 54320
-major_version = 16
+major_version = 15
 
 [realtime]
 enabled = true
-ip_version = "ipv4"
+ip_version = "IPv4"
 max_header_length = 4096
 
 [studio]
@@ -43,9 +43,14 @@ enable_signup = true
 double_confirm_changes = true
 enable_confirmations = false
 
-[functions]
-verify_jwt = false  # webhooks come from Bold (no JWT). create-bold-checkout
-                    # verifies the JWT manually using the Authorization header.
+[functions.bold-webhook]
+verify_jwt = false
+
+[functions.create-bold-checkout]
+verify_jwt = false
+
+[functions.send-push]
+verify_jwt = false
 
 [storage]
 enabled = true
