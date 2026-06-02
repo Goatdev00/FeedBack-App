@@ -133,3 +133,15 @@ begin
     alter publication supabase_realtime add table public.questions;
   end if;
 end $$;
+
+-- ---------------------------------------------------------------------
+-- Force PostgREST to drop its in-memory schema cache and re-read the
+-- column list. Without this, the first attempt to INSERT into the
+-- recreated `questions` table fails with:
+--   "Could not find the 'target_id' column of 'questions' in the
+--    schema cache"
+-- because PostgREST still has the legacy schema cached (target_user_id).
+-- The NOTIFY is harmless on re-runs and is a no-op if PostgREST already
+-- has the fresh schema.
+-- ---------------------------------------------------------------------
+notify pgrst, 'reload schema';
