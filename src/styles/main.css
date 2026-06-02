@@ -156,12 +156,30 @@ body {
   z-index: 1;
 }
 
-/* --- Lava Lamp / Metaballs Background ---
-   WebGL canvas. The fragment shader computes the metaball field per
-   pixel (see src/utils/lava-lamp.js). All we do here is pin the canvas
-   to the visible app column. The drawing buffer is sized in the JS via
-   canvas.width/.height — do NOT set them via CSS dimensions or you'll
-   get blurry low-res rendering. */
+/* =====================================================================
+   Lava Lamp / Metaballs Background — LOCKED
+   =====================================================================
+   These rules pair with the WebGL renderer in src/utils/lava-lamp.js.
+   The full design + history is at the top of that file — read it before
+   touching anything here. Specifically:
+
+     * `position: fixed` + `top:0` + `height: 100vh` ⟶ the canvas covers
+       the visible viewport regardless of scroll. Do NOT switch to
+       `position: absolute` or `height: 100%`; both broke iOS Safari
+       sizing once the URL bar collapsed.
+     * `left: 50%` + `transform: translateX(-50%)` + `max-width: var(--max-width)`
+       ⟶ canvas stays inside the centred app column on desktop, so the
+       goo doesn't bleed into the side margins. If you want a true
+       full-bleed background, drop the max-width AND ALSO update the
+       app column's transparent background in `.app-container`.
+     * `z-index: 0` ⟶ behind every page chrome layer. The cards above
+       (.card, .post-card, etc.) need their own backgrounds so the goo
+       doesn't show through them.
+     * `pointer-events: none` ⟶ taps go through to the page. Required.
+     * Do NOT set width/height ATTRIBUTES on the canvas; the renderer
+       resizes the drawing buffer to the CSS box on every layout. CSS
+       width/height stays at the rules below.
+   ===================================================================== */
 #lava-canvas {
   position: fixed;
   top: 0;
@@ -2333,6 +2351,27 @@ span > svg {
   transition: transform var(--duration-fast);
 }
 
+/* Unread indicator on a chat-hub card. Identical visual to the
+   .chat-trigger .chat-dot on the wall — same green, same 10px size,
+   same pulse — so users learn one symbol. Sits between the card body
+   and the arrow as an inline flex item. */
+.chat-option-card .chat-option-dot {
+  position: static;
+  width: 10px;
+  height: 10px;
+  background: var(--live-green);
+  border-radius: 50%;
+  border: 2px solid var(--bg-primary);
+  flex-shrink: 0;
+  margin-right: var(--space-xs);
+  animation: pulse 2s infinite;
+  box-shadow: 0 0 8px var(--live-green-glow);
+}
+
+[data-theme="light"] .chat-option-card .chat-option-dot {
+  border-color: #F0F0F5;
+}
+
 .chat-option-card:hover .chat-option-arrow {
   color: var(--orange);
   transform: translateX(4px);
@@ -2734,6 +2773,8 @@ span > svg {
   border-right: 1px solid rgba(0, 0, 0, 0.06);
 }
 
+/* Light-theme override for the locked #lava-canvas above. Only opacity
+   is safe to tune here — positioning/sizing stays in the main rule. */
 [data-theme="light"] #lava-canvas {
   opacity: 1;
 }

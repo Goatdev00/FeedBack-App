@@ -48,9 +48,14 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
   const state = store.getState();
   const user = state.currentUser;
 
-  // Entering a live room — user is now seeing chat activity directly, so
-  // the wall's unread dot should reset.
-  if (state.hasUnreadChat) store.setState({ hasUnreadChat: false });
+  // Entering a live room — user is now seeing this specific chat type
+  // directly, so clear ONLY its unread flag. The other type's dot
+  // remains so the user can see they still have pending messages in
+  // the other place. The wall lights up if either is set, so it only
+  // goes off when both are clear.
+  const isGeneral = roomKey === GENERAL_ROOM_KEY;
+  const flagKey = isGeneral ? 'hasUnreadChatGeneral' : 'hasUnreadChatParty';
+  if (state[flagKey]) store.setState({ [flagKey]: false });
 
   container.innerHTML = `
     <div class="page chat-page" id="chat-room-page">

@@ -34,13 +34,16 @@ const EXCLUDED_FROM_CLOUD = new Set([
   'viewingUserId',
   'viewingPartyId',
   // Bucket 2: normalized in Supabase tables — the source of truth is
-  // public.posts / public.parties / public.follows / public.profiles.
-  // If we round-trip them through the cloud blob, User B will see their
-  // own old localStorage state instead of the shared feed.
+  // public.posts / public.parties / public.follows / public.profiles /
+  // public.questions. If we round-trip them through the cloud blob,
+  // User B sees their own old localStorage state instead of the shared
+  // feed. `questions` joined this bucket in migration 0017 (was local-
+  // only before).
   'posts',
   'parties',
   'follows',
   'users',
+  'questions',
 ]);
 
 const DEBOUNCE_MS = 1500;     // wait this long after the last change

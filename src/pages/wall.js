@@ -37,11 +37,18 @@ export function renderWall(container) {
     <div class="page" id="wall-page">
       <!-- Top action row: chat (left) — notifications (right) -->
       <div class="wall-top-row">
-        <button class="chat-trigger ${state.hasUnreadChat ? 'has-unread' : ''}"
+        ${(() => {
+          // Single dot on the wall icon if EITHER chat type has unread —
+          // the breakdown (which type) is shown inside chat-hub on its
+          // per-card dots.
+          const anyUnread = state.hasUnreadChatGeneral || state.hasUnreadChatParty;
+          return `
+        <button class="chat-trigger ${anyUnread ? 'has-unread' : ''}"
                 id="chat-btn" title="Chats en vivo" aria-label="Abrir chats">
           ${ICONS.reply}
-          ${state.hasUnreadChat ? `<span class="chat-dot"></span>` : ''}
-        </button>
+          ${anyUnread ? `<span class="chat-dot"></span>` : ''}
+        </button>`;
+        })()}
         <button class="notifications-trigger ${unreadNotifs > 0 ? 'has-unread' : ''}"
                 id="notifications-btn" title="Notificaciones" aria-label="Ver notificaciones">
           ${ICONS.heart}

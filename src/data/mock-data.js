@@ -449,11 +449,15 @@ const defaultState = {
   // ISO timestamp of the last time the user opened /notifications.
   // Anything newer than this counts as unread in the heart dot.
   lastNotificationsViewed: null,
-  // Flips true the moment a chat_messages INSERT arrives via realtime
-  // from someone other than the current user. The wall reads this to
-  // paint a green dot on the chat icon. Cleared when the user opens any
-  // chat route (chat-hub / chat-parties / chat-general / chat-party).
-  hasUnreadChat: false,
+  // Split unread flag — each flips true when a chat_messages INSERT
+  // arrives from somebody else in the corresponding room type. The wall
+  // shows a single green dot if EITHER is set; chat-hub shows a dot on
+  // the specific card (general / parties) that has unread. Each flag is
+  // cleared independently when the user enters that exact chat — not on
+  // visiting the chat-hub landing or the parties list, which are just
+  // navigation.
+  hasUnreadChatGeneral: false,
+  hasUnreadChatParty: false,
   // Has the first Supabase hydration completed since this session?
   // Lets pages distinguish "no data yet because still loading" from
   // "no data because the table is genuinely empty" so we can render a
@@ -475,7 +479,11 @@ class Store {
     this.listeners = [];
     this.purgeStaleStorage();   // free quota before we try to read/write
     this.state = this.loadState();
-    this.cleanExpiredPosts();
+    // cleanExpiredPosts() used to filter cached state.posts by
+    // expiresAt > now() at every boot, in tandem with the RLS filter
+    // on posts_read. Both were removed in migration 0018 (posts no
+    // longer expire from the wall), so calling it here would only
+    // hide legacy posts that the server is now happy to return.
   }
 
   // Earlier builds persisted to 'feedback_app_state' (no _v2 suffix). When
@@ -705,10 +713,8 @@ class Store {
   }
 
   // --- Post helpers ---
-  cleanExpiredPosts() {
-    const now = new Date();
-    this.state.posts = this.state.posts.filter(p => new Date(p.expiresAt) > now);
-  }
+  // (cleanExpiredPosts removed in migration 0018 — posts no longer
+  // expire from the wall, so there's nothing to clean.)
 
   getUserPostsToday(userId) {
     const todayStr = new Date().toISOString().split('T')[0];
@@ -1128,28 +1134,78 @@ class Store {
   }
 
   // --- Questions ---
+  // Persisted to Supabase via _api (see api.js / migration 0017). The
+  // local optimistic row carries `_pending: true` and gets swapped for
+  // the real row when the API call returns, exactly like addPost.
   addQuestion(targetUserId, questionText) {
-    const q = {
-      id: 'q_' + Date.now(),
+    if (!this.state.currentUser) return null;
+    const tempId = 'pending_q_' + Date.now();
+    const tempQ = {
+      id: tempId,
       targetUserId,
+      askerId: this.state.currentUser.id,
       question: questionText,
       answer: null,
       anonymous: true,
-      createdAt: new Date()
+      createdAt: new Date(),
+      answeredAt: null,
+      _pending: true,
     };
-    this.state.questions = [q, ...this.state.questions];
+    this.state.questions = [tempQ, ...this.state.questions];
     this.saveState();
     this.notify();
-    return q;
+
+    if (_api?.createQuestion) {
+      _api.createQuestion(targetUserId, questionText)
+        .then(real => this._replaceQuestion(tempId, real))
+        .catch(err => {
+          console.error('[store] createQuestion failed', err);
+          // Drop the temp row — without a server id the question can't
+          // ever surface on the target's device, so keeping it locally
+          // would lie to the asker.
+          this.state.questions = this.state.questions.filter(q => q.id !== tempId);
+          this.saveState();
+          this.notify();
+          _surfaceError?.('No se pudo enviar la pregunta. ' + describeApiError(err));
+        });
+    }
+    return tempQ;
+  }
+
+  _replaceQuestion(tempId, real) {
+    const idx = this.state.questions.findIndex(q => q.id === tempId);
+    if (idx === -1) return;
+    this.state.questions[idx] = real;
+    this.saveState();
+    this.notify();
+    repaintIfNeeded();
   }
 
   answerQuestion(questionId, answerText) {
     const q = this.state.questions.find(q => q.id === questionId);
     if (!q) return;
+    // Optimistic answer + points (kept even if API fails, then reverted).
+    const prevAnswer = q.answer;
+    const prevAnsweredAt = q.answeredAt;
     q.answer = answerText;
+    q.answeredAt = new Date();
     this.addPoints(5, 'Responder pregunta');
     this.saveState();
     this.notify();
+
+    if (_api?.answerQuestion) {
+      _api.answerQuestion(questionId, answerText)
+        .catch(err => {
+          console.error('[store] answerQuestion failed', err);
+          // Revert the optimistic update + the points.
+          q.answer = prevAnswer;
+          q.answeredAt = prevAnsweredAt;
+          this.addPoints(-5, 'Reversión respuesta');
+          this.saveState();
+          this.notify();
+          _surfaceError?.('No se pudo guardar la respuesta. ' + describeApiError(err));
+        });
+    }
   }
 
   getQuestionsForUser(userId) {
@@ -1280,7 +1336,10 @@ class Store {
         text: q.answer
           ? `pregunta anónima respondida: "${preview}"`
           : `te hizo una pregunta anónima: "${preview}"`,
-        navigate: { route: 'profile' },
+        // Land directly on the Questions tab of the user's own profile
+        // so they can answer in one tap. The profile route reads
+        // params.tab to decide which tab to activate on render.
+        navigate: { route: 'profile', params: { tab: 'questions' } },
       });
     }
 

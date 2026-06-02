@@ -27,11 +27,11 @@ const POINTS_EARN_GUIDE = [
   { key: 'validatedReport', emoji: '🛡️' },
 ];
 
-export function renderProfile(container) {
+export function renderProfile(container, params = {}) {
   if (!requireCurrentUser(container)) return;
   const user = store.getState().currentUser;
   store.applyTheme(user.theme || 'dark');
-  renderProfileView(container, user, true);
+  renderProfileView(container, user, true, params.tab);
 }
 
 export function renderProfileOther(container, params = {}) {
@@ -82,7 +82,7 @@ function renderSocialLinks(user) {
   `;
 }
 
-function renderProfileView(container, user, isOwn) {
+function renderProfileView(container, user, isOwn, initialTab) {
   const state = store.getState();
   const currentUser = state.currentUser;
   const followers = store.getFollowerCount(user.id);
@@ -192,16 +192,24 @@ function renderProfileView(container, user, isOwn) {
         </div>
       ` : ''}
 
-      <!-- Tabs -->
+      <!-- Tabs. initialTab (defaulting to 'posts') decides which one
+           starts active — this is what makes the "tap notification →
+           land on Preguntas" deep-link work. -->
       <div class="tab-bar" id="profile-tabs">
-        <button class="tab-item active" data-tab="posts">Publicaciones</button>
-        <button class="tab-item" data-tab="questions">Preguntas</button>
-        <button class="tab-item" data-tab="puntos">Puntos</button>
+        <button class="tab-item ${(initialTab || 'posts') === 'posts' ? 'active' : ''}" data-tab="posts">Publicaciones</button>
+        <button class="tab-item ${initialTab === 'questions' ? 'active' : ''}" data-tab="questions">Preguntas</button>
+        <button class="tab-item ${initialTab === 'puntos' ? 'active' : ''}" data-tab="puntos">Puntos</button>
       </div>
 
       <!-- Tab Content -->
       <div id="profile-tab-content">
-        ${renderPostsTab(userPosts)}
+        ${
+          initialTab === 'questions'
+            ? renderQuestionsTab(store.getQuestionsForUser(user.id), isOwn, user.id)
+            : initialTab === 'puntos'
+              ? renderPointsTab(user)
+              : renderPostsTab(userPosts)
+        }
       </div>
     </div>
 
@@ -209,6 +217,10 @@ function renderProfileView(container, user, isOwn) {
   `;
 
   bindProfileEvents(container, user, isOwn);
+  // If the page opened straight onto the Questions tab (e.g. from a
+  // notification), bind the answer-submit + ask-input handlers now —
+  // otherwise they only get wired when the user clicks the tab.
+  if (initialTab === 'questions') bindQuestionEvents(container, user.id);
 }
 
 function renderPostsTab(posts) {
@@ -244,9 +256,8 @@ function renderQuestionsTab(questions, isOwn, userId) {
   const answeredQ = questions.filter(q => q.answer);
   const unansweredQ = questions.filter(q => !q.answer);
 
-  // Ask box ALWAYS goes at the top for non-own profiles, so the visitor's
-  // intent ("ask something") doesn't get buried under a long list of
-  // previous Q&A. Followed by the existing questions below.
+  // Ask box ALWAYS at the top for non-own profiles so the visitor's
+  // intent ("ask something") never gets buried under previous Q&A.
   const askBox = !isOwn ? `
     <div style="margin-bottom:var(--space-lg);">
       <h4 style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-md);">Haz una pregunta anónima</h4>
@@ -257,10 +268,36 @@ function renderQuestionsTab(questions, isOwn, userId) {
     </div>
   ` : '';
 
+  // Section heading helper — both sections share the same look (small
+  // caps, accent colour, counter) so visually they form a clear "top
+  // half / bottom half" split per the requested layout.
+  const sectionTitle = (label, count, color = 'var(--orange)') => `
+    <h4 style="
+      display:flex;align-items:center;gap:var(--space-xs);
+      font-size:var(--text-sm);font-weight:700;letter-spacing:0.04em;
+      text-transform:uppercase;color:${color};
+      margin-bottom:var(--space-md);
+    ">
+      <span>${label}</span>
+      <span style="
+        font-size:var(--text-xs);font-weight:600;
+        background:rgba(255,106,0,0.12);color:${color};
+        padding:2px 8px;border-radius:999px;
+      ">${count}</span>
+    </h4>
+  `;
+
+  // Divider between the two sections.
+  const divider = `<div style="height:1px;background:var(--border-subtle);margin:var(--space-xl) 0;"></div>`;
+
   let listHtml = '';
 
+  // ===== TOP: questions made to this user =====
+  // Owner sees pending (unanswered) here. Visitors only ever see
+  // answered Q&A (RLS hides unanswered from them anyway), so the top
+  // section is only meaningful on the owner's view.
   if (isOwn && unansweredQ.length > 0) {
-    listHtml += `<h4 style="font-size:var(--text-sm);color:var(--orange);margin-bottom:var(--space-md);">📩 Pendientes (${unansweredQ.length})</h4>`;
+    listHtml += sectionTitle('📩 Te han hecho', unansweredQ.length);
     listHtml += unansweredQ.map(q => `
       <div class="question-card">
         <div class="question-anonymous">Anónimo · ${formatRelative(new Date(q.createdAt))}</div>
@@ -273,8 +310,14 @@ function renderQuestionsTab(questions, isOwn, userId) {
     `).join('');
   }
 
+  // ===== BOTTOM: questions this user has answered =====
   if (answeredQ.length > 0) {
-    if (listHtml) listHtml += `<div style="height:1px;background:var(--border-subtle);margin:var(--space-lg) 0;"></div>`;
+    if (listHtml) listHtml += divider;
+    listHtml += sectionTitle(
+      isOwn ? '💬 Has respondido' : '💬 Respondidas',
+      answeredQ.length,
+      'var(--text-secondary)'
+    );
     listHtml += answeredQ.map(q => `
       <div class="question-card">
         <div class="question-anonymous">Anónimo · ${formatRelative(new Date(q.createdAt))}</div>
@@ -284,7 +327,9 @@ function renderQuestionsTab(questions, isOwn, userId) {
     `).join('');
   }
 
-  if (questions.length === 0) {
+  if (questions.length === 0 || (!isOwn && answeredQ.length === 0)) {
+    // Hide pending-only state on foreign profiles (those rows are
+    // invisible to the visitor anyway under RLS).
     listHtml = `
       <div class="empty-state" style="padding:var(--space-xl);">
         <div style="font-size:2rem;margin-bottom:var(--space-sm);">💬</div>

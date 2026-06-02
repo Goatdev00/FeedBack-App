@@ -55,14 +55,24 @@
 <body>
   <div id="app"></div>
 
-  <!-- Lava Lamp / Metaballs Background — WebGL renderer.
-       The metaball field is computed entirely in the fragment shader
-       (1/d² potential per blob, summed, smoothstepped against a
-       threshold). The JS side only pushes 12 vec3s of (x, y, radius)
-       per frame as a uniform array — microseconds of work. Result:
-       buttery 60fps on every device, including iOS Safari where the
-       SVG goo-filter approach was bottlenecked on CPU. See
-       src/utils/lava-lamp.js for shader sources + setup. -->
+  <!-- =====================================================================
+       Lava Lamp / Metaballs Background — WebGL canvas
+       =====================================================================
+       LOCKED. Do not replace with <div>s, <svg>s, foreignObject, an iframe,
+       or anything else. The full design rationale (incl. four previous
+       rejected architectures and the iOS/WebKit bugs that killed them)
+       lives at the top of src/utils/lava-lamp.js — read it before
+       editing any of:
+         * this <canvas> element
+         * #lava-canvas in src/styles/main.css
+         * the initLavaLamp() call in src/main.js
+       Changing one without the others will break the goo on at least
+       one device class.
+       The canvas MUST be a direct child of <body> (sibling of #app), MUST
+       have id="lava-canvas", and MUST NOT set width/height attributes
+       here — the renderer sizes the drawing buffer to the actual CSS box
+       on every resize. The aria-hidden tag is intentional: this is
+       decorative, not content. -->
   <canvas id="lava-canvas" aria-hidden="true"></canvas>
 
   <script type="module" src="/src/main.js"></script>

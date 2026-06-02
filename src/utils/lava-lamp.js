@@ -1,27 +1,93 @@
 /**
- * Lava Lamp / Metaballs Background — WebGL renderer.
+ * =====================================================================
+ * Lava Lamp / Metaballs Background — WebGL renderer
+ * =====================================================================
  *
- * Why WebGL and not SVG/Canvas2D:
- *   * SVG <filter url="#gooey">: filter pass runs in CPU/iGPU on iOS, can't
- *     hit 60fps full-screen.
- *   * Canvas2D w/ blur + threshold: same story — the blur step is the
- *     killer.
- *   * WebGL: the metaball field is a tiny per-pixel formula in the
- *     fragment shader. All N blobs collapse into one parallel GPU pass,
- *     bottleneck is fill rate. iOS A12+ renders this full-screen at 60fps
- *     without breaking a sweat.
+ * ⚠️  LOCKED DESIGN — READ BEFORE EDITING  ⚠️
  *
- * Architecture:
- *   * One full-screen triangle (cheaper than a quad — no overdraw at the
- *     edge, single primitive).
- *   * Fragment shader sums a 1/d² potential field from BLOB_COUNT
- *     metaballs, smoothsteps it through a threshold band to produce the
- *     goo silhouette in #ff6600.
- *   * JS owns blob physics (same orbit math as the old SVG version) and
- *     pushes positions+radii as a vec3 uniform array per frame.
+ * This file is the result of a long iteration over four renderers and
+ * many WebKit/iOS bugs. Each architectural choice below was validated
+ * AGAINST a specific failure mode that has already been observed in
+ * production. Changing any of the items in the INVARIANTS section will
+ * regress at least one device class. The companion files locked to
+ * this design are:
+ *   * index.html        — the <canvas id="lava-canvas">
+ *   * src/styles/main.css — the #lava-canvas position rules
+ *   * src/main.js       — the initLavaLamp() call
+ * Touch ONE without touching the others and the lava breaks.
  *
- * Tuning knobs are at the top so visual tweaks don't require re-reading
- * the shader.
+ * ---- DEAD APPROACHES (do not revisit) -------------------------------
+ *
+ *   (a) <div> blobs + CSS `filter: url(#gooey)` on a container.
+ *       Failed on iOS Safari: SVG goo filter cache-on-first-paint bug
+ *       made the filter resolve to `none` permanently. Even with the
+ *       fix in (b), perf was ~20fps on iPhone — filter pass is CPU on
+ *       WebKit.
+ *
+ *   (b) <circle>s inside the same <svg> as <filter id="gooey">, filter
+ *       applied via SVG attribute on a <g>. Fixed the goo-not-rendering
+ *       bug from (a) but the filter pipeline still runs in CPU on iOS,
+ *       and the SVG `transform="translate(...)"` attribute on circles
+ *       falls back to CPU layout per frame (CSS transform on the same
+ *       elements doesn't help once a filter is upstream). Jank stayed.
+ *
+ *   (c) Same as (b) but moving the blobs via CSS transform instead of
+ *       the SVG attribute. Marginal improvement on iOS, still janky.
+ *
+ *   (d) Infinite-support metaball field (r²/d²) in WebGL. Worked but
+ *       flooded the canvas: every blob contributed to every pixel,
+ *       sum > threshold everywhere, screen turned solid orange. See
+ *       the FIELD note below for the compact-support replacement.
+ *
+ * Current architecture (WebGL + compact-support Wyvill cubic + fwidth
+ * AA) hits 60fps on every device including iPhone 8.
+ *
+ * ---- INVARIANTS (do not change without measuring on iOS Safari) -----
+ *
+ *   1. RENDERER = WebGL1 fragment shader. Canvas2D blur is CPU on iOS;
+ *      WebGL2 isn't universally available on older iOS. WebGL1 +
+ *      OES_standard_derivatives is the floor.
+ *
+ *   2. FIELD = compact-support Wyvill cubic: k = max(0, 1 - d²/r²),
+ *      contribution = k³. Each blob contributes EXACTLY 0 beyond its
+ *      radius. Do NOT swap for r²/d², 1/d, gaussian, or any
+ *      infinite-support kernel — they all flood the canvas (see (d)
+ *      above).
+ *
+ *   3. AA = fwidth(field) — derivative-based, one pixel of transition
+ *      at any DPR/zoom. Do NOT replace with a static u_softness; it's
+ *      either too narrow (stairsteps on retina) or too wide (mushy on
+ *      desktop), never right everywhere.
+ *
+ *   4. PRECISION = highp on the fragment shader. mediump derivatives
+ *      are noisy on iOS PowerVR → visible banding.
+ *
+ *   5. DPR cap = 3. Do NOT lower; capping at 2 forces the browser to
+ *      CSS-upscale on 3x retina → blurry edges + amplified aliasing.
+ *
+ *   6. GEOMETRY = one fullscreen triangle, vertices (-1,-1) (3,-1)
+ *      (-1,3). NOT a quad — a quad has overdraw at the diagonal
+ *      ~7% extra fill on no upside.
+ *
+ *   7. EXTENSION = explicit gl.getExtension('OES_standard_derivatives')
+ *      before program build. WebGL1 won't compile fwidth() without it.
+ *
+ *   8. BLEND mode = SRC_ALPHA, ONE_MINUS_SRC_ALPHA with
+ *      premultipliedAlpha:false. The dark page background shows through
+ *      where the goo is transparent; the cards/inputs carry their own
+ *      backgrounds on top. Changing premultipliedAlpha breaks colour.
+ *
+ * ---- SAFE KNOBS (visual tuning only) --------------------------------
+ *
+ *   * FIELD_THRESHOLD — blob size & merge strength.
+ *   * BLOB_COLOR — RGB triplet, 0–1. Brand orange is #ff6600.
+ *   * BLOB_COUNT / BLOB_CONFIGS — physics layout. Bumping count above
+ *     ~24 starts to bite fill-rate on iPhone 8; stay ≤16 for safety.
+ *   * EXPAND_DURATION — intro animation length only.
+ *   * The fwidth multiplier (0.7) in the shader — sharper vs softer
+ *     edges. Don't go below 0.5 (re-introduces aliasing).
+ *
+ * =====================================================================
  */
 
 const BLOB_COUNT = 12;

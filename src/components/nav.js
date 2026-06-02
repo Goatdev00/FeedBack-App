@@ -8,15 +8,15 @@ import { router } from '../router.js';
 export function renderBottomNav(activeTab = 'wall') {
   return `
     <nav class="bottom-nav" id="bottom-nav">
-      <button class="nav-item ${activeTab === 'profile' ? 'active' : ''}" data-nav="profile" id="nav-profile" aria-label="Perfil" title="Perfil">
-        <span class="nav-item-icon nav-item-icon-profile" aria-hidden="true"></span>
+      <button class="nav-item ${activeTab === 'parties' ? 'active' : ''}" data-nav="parties" id="nav-parties" aria-label="Fiestas" title="Fiestas">
+        <span class="nav-item-icon nav-item-icon-parties" aria-hidden="true"></span>
+        ${isSunday ? '<span class="notification-dot"></span>' : ''}
       </button>
       <button class="nav-item ${activeTab === 'wall' ? 'active' : ''}" data-nav="wall" id="nav-wall" aria-label="Muro" title="Muro">
         <span class="nav-item-icon nav-item-icon-wall" aria-hidden="true"></span>
       </button>
-      <button class="nav-item ${activeTab === 'parties' ? 'active' : ''}" data-nav="parties" id="nav-parties" aria-label="Fiestas" title="Fiestas">
-        <span class="nav-item-icon nav-item-icon-parties" aria-hidden="true"></span>
-        ${isSunday ? '<span class="notification-dot"></span>' : ''}
+      <button class="nav-item ${activeTab === 'profile' ? 'active' : ''}" data-nav="profile" id="nav-profile" aria-label="Perfil" title="Perfil">
+        <span class="nav-item-icon nav-item-icon-profile" aria-hidden="true"></span>
       </button>
     </nav>
   `;

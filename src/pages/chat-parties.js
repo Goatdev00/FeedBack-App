@@ -13,7 +13,9 @@ export function renderChatParties(container) {
   const state = store.getState();
   const user = state.currentUser;
 
-  if (state.hasUnreadChat) store.setState({ hasUnreadChat: false });
+  // Don't clear hasUnreadChatParty here — this page is the chooser, not
+  // the chat itself. The flag clears only when the user enters a
+  // concrete chat-party room (handled in chat.js).
 
   const todayStr = new Date().toISOString().split('T')[0];
   const todayParties = state.parties.filter(p => p.date === todayStr);

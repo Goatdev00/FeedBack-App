@@ -13,9 +13,11 @@ export function renderChatHub(container) {
   const state = store.getState();
   const user = state.currentUser;
 
-  // The user just opened the chat section — drop the unread flag so the
-  // green dot on /wall's chat icon disappears next time they go back.
-  if (state.hasUnreadChat) store.setState({ hasUnreadChat: false });
+  // Do NOT clear the unread flags here — chat-hub is a chooser, not a
+  // read receipt. Each flag clears only when the user enters its own
+  // chat room (chat-general for `hasUnreadChatGeneral`, chat-party for
+  // `hasUnreadChatParty`). Keeping the dots visible here is the whole
+  // point of breaking them down per type.
 
   // Today's parties count → shown on the per-party card as social proof.
   const todayParties = store.getTodayParties(state.selectedCity);
@@ -38,6 +40,7 @@ export function renderChatHub(container) {
           <div class="chat-option-title">Chat general</div>
           <p class="chat-option-subtitle">Conversa con toda la escena en tiempo real</p>
         </div>
+        ${state.hasUnreadChatGeneral ? `<span class="chat-dot chat-option-dot"></span>` : ''}
         <span class="chat-option-arrow">→</span>
       </button>
 
@@ -51,6 +54,7 @@ export function renderChatHub(container) {
               : 'Únete al chat de un evento'}
           </p>
         </div>
+        ${state.hasUnreadChatParty ? `<span class="chat-dot chat-option-dot"></span>` : ''}
         <span class="chat-option-arrow">→</span>
       </button>
     </div>

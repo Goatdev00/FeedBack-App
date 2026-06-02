@@ -37,6 +37,7 @@ import {
   listFollows,
   listAttendees,
   listProfiles,
+  listQuestions,
   subscribeRealtime,
 } from './api.js';
 import { loadCloudState, stripCloudExclusions } from './cloud-state.js';
@@ -140,6 +141,19 @@ export function refreshFromSupabaseInBackground(knownSession) {
     })
     .catch((e) => console.warn('[hydrate] follows failed', e));
 
+  // --- QUESTIONS (anonymous Q&A) ---
+  // RLS returns: questions targeted at the current user (any state),
+  // questions the current user asked (any state), and any answered
+  // question (public Q&A on profile pages). The notifications feed
+  // and the profile Questions tab both consume state.questions.
+  const pQuestions = listQuestions()
+    .then((questions) => {
+      store.setState({ questions });
+      maybeRefreshRoute();
+      mark(`questions (${questions.length})`);
+    })
+    .catch((e) => console.warn('[hydrate] questions failed', e));
+
   // --- PROFILES (users[] for lookups) — DEFERRED, not wall-critical ---
   const pProfiles = listProfiles()
     .then((profiles) => {
@@ -165,7 +179,7 @@ export function refreshFromSupabaseInBackground(knownSession) {
     })
     .catch((e) => console.warn('[hydrate] cloud-state load failed', e));
 
-  Promise.allSettled([pProfile, pPosts, pParties, pFollows, pProfiles, pCloud]).finally(() => {
+  Promise.allSettled([pProfile, pPosts, pParties, pFollows, pProfiles, pQuestions, pCloud]).finally(() => {
     _inFlight = false;
     flipHydrated();
     mark('ALL DONE');

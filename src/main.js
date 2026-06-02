@@ -52,7 +52,7 @@ import { renderChatGeneral, renderChatParty } from './pages/chat.js';
 router.register('login', renderLogin);
 router.register('onboarding', renderOnboarding);
 router.register('wall', (container) => { renderWall(container); bindNavEvents(); });
-router.register('profile', (container) => { renderProfile(container); bindNavEvents(); });
+router.register('profile', (container, params) => { renderProfile(container, params); bindNavEvents(); });
 router.register('profile-other', (container, params) => { renderProfileOther(container, params); bindNavEvents(); });
 router.register('parties', (container) => { renderParties(container); bindNavEvents(); });
 router.register('party-detail', renderPartyDetail);
@@ -109,6 +109,10 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+// Lava lamp background — LOCKED design. Full rationale + invariants at
+// the top of src/utils/lava-lamp.js. The default args target the
+// <canvas id="lava-canvas"> in index.html; don't pass anything unless
+// you've also renamed the element and updated main.css accordingly.
 initLavaLamp();
 
 // Instagram-style pull-to-refresh: drag down from the top of any feed

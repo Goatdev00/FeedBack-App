@@ -346,6 +346,14 @@ export async function toggleAttendance(partyId) {
 // =====================================================================
 const _roomIdCache = new Map();
 
+// Reverse lookup: room uuid → 'general' | 'party'. Used by the global
+// chat-messages realtime listener to decide which unread flag to flip
+// (hasUnreadChatGeneral vs hasUnreadChatParty) so chat-hub can paint a
+// green dot on the correct card. Filled lazily — by resolveChatRoomId()
+// whenever a page reads a known room, and by an on-demand fetch in the
+// realtime handler for rooms the user hasn't entered yet.
+const _roomTypeById = new Map();
+
 export async function resolveChatRoomId(roomKey) {
   if (_roomIdCache.has(roomKey)) return _roomIdCache.get(roomKey);
 
@@ -374,7 +382,25 @@ export async function resolveChatRoomId(roomKey) {
   const { data, error } = await query;
   if (error || !data) return null;
   _roomIdCache.set(roomKey, data.id);
+  _roomTypeById.set(data.id, roomKey === 'general' ? 'general' : 'party');
   return data.id;
+}
+
+// Resolve room type by uuid (used by the realtime listener). Returns
+// 'general' | 'party' | null. Falls back to a single-row chat_rooms
+// query when the cache misses (first message in a room the user hasn't
+// visited).
+async function resolveRoomTypeById(roomId) {
+  if (_roomTypeById.has(roomId)) return _roomTypeById.get(roomId);
+  const { data, error } = await supabase
+    .from('chat_rooms')
+    .select('party_id')
+    .eq('id', roomId)
+    .maybeSingle();
+  if (error || !data) return null;
+  const type = data.party_id == null ? 'general' : 'party';
+  _roomTypeById.set(roomId, type);
+  return type;
 }
 
 export async function listChatMessages(roomKey, limit = 100) {
@@ -456,6 +482,74 @@ export function subscribeChatRoom(roomKey, onMessage) {
 }
 
 // =====================================================================
+// QUESTIONS (anonymous Q&A) — see migration 0017
+// =====================================================================
+// Asker identity stays in the DB (asker_id) so the asker can find their
+// own questions back; the UI on every other surface treats the question
+// as anonymous. RLS prevents non-askers from learning asker_id.
+// =====================================================================
+
+function questionFromRow(q) {
+  return {
+    id: q.id,
+    targetUserId: q.target_id,
+    askerId: q.asker_id,
+    question: q.question,
+    answer: q.answer || null,
+    anonymous: true,
+    createdAt: new Date(q.created_at),
+    answeredAt: q.answered_at ? new Date(q.answered_at) : null,
+  };
+}
+
+export async function listQuestions() {
+  if (!isSupabaseConfigured()) return [];
+  const { data, error } = await supabase
+    .from('questions')
+    .select('id, target_id, asker_id, question, answer, created_at, answered_at')
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map(questionFromRow);
+}
+
+export async function createQuestion(targetUserId, questionText) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
+  if (!user) throw new Error('not_authenticated');
+  const { data, error } = await supabase
+    .from('questions')
+    .insert({
+      target_id: targetUserId,
+      asker_id: user.id,
+      question: questionText,
+    })
+    .select('id, target_id, asker_id, question, answer, created_at, answered_at')
+    .single();
+  if (error) throw error;
+  return questionFromRow(data);
+}
+
+export async function answerQuestion(questionId, answerText) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
+  if (!user) throw new Error('not_authenticated');
+  const { data, error } = await supabase
+    .from('questions')
+    .update({
+      answer: answerText,
+      answered_at: new Date().toISOString(),
+    })
+    .eq('id', questionId)
+    .eq('target_id', user.id)        // belt + suspenders next to RLS
+    .select('id, target_id, asker_id, question, answer, created_at, answered_at')
+    .single();
+  if (error) throw error;
+  return questionFromRow(data);
+}
+
+// =====================================================================
 // PROFILE PATCH (theme, etc) — small partial updates
 // =====================================================================
 export async function patchProfileTheme(theme) {
@@ -481,6 +575,8 @@ registerApi({
   createParty,
   patchProfileTheme,
   reportPost,
+  createQuestion,
+  answerQuestion,
 });
 
 // =====================================================================
@@ -655,28 +751,89 @@ export function subscribeRealtime(store) {
 
         store.setState({ parties: [fresh, ...state.parties] });
       })
-    // Any new chat message anywhere → flip the unread flag so the wall's
-    // chat icon shows the green dot. We deliberately listen across ALL
-    // rooms here (no filter) so a message in any party room OR the
-    // general room triggers the indicator. The per-room subscription in
-    // chat.js still handles the in-room paint; this is purely the
-    // "you have unread chats" signal for users on /wall.
+    // Any new chat message anywhere → flip the unread flag for its room
+    // TYPE (general or party). The wall lights up if either is set; the
+    // chat-hub page shows a dot on the specific card. We listen across
+    // ALL rooms here (no filter) so messages in either side trigger the
+    // indicator; the per-room subscription in chat.js still handles the
+    // in-room paint. Room type is resolved from the cache populated by
+    // resolveChatRoomId(), falling back to a one-shot chat_rooms query
+    // for rooms the user hasn't entered yet (so the dot still appears).
     .on('postgres_changes',
       { event: 'INSERT', schema: 'public', table: 'chat_messages' },
-      (payload) => {
+      async (payload) => {
         const m = payload.new;
         if (!m) return;
         const state = store.getState();
         // Skip our own messages.
         if (state.currentUser && m.user_id === state.currentUser.id) return;
+        const type = await resolveRoomTypeById(m.room_id);
+        if (!type) return;
+        const flagKey = type === 'general' ? 'hasUnreadChatGeneral' : 'hasUnreadChatParty';
         // Already flagged — don't churn setState.
-        if (state.hasUnreadChat) return;
-        store.setState({ hasUnreadChat: true });
-        // The wall isn't a long-lived component (no store.subscribe), so
-        // setState alone won't repaint the chat-trigger. Force a refresh
-        // ONLY when /wall is the visible route — other pages don't show
-        // this icon and don't need to re-render on chat activity.
-        if (router.getCurrentRoute() === 'wall') router.refreshCurrentRoute();
+        if (store.getState()[flagKey]) return;
+        store.setState({ [flagKey]: true });
+        // The wall/chat-hub aren't store-subscribed, so setState alone
+        // won't repaint the dots. Refresh on the two routes that consume
+        // these flags — other pages don't show the indicator.
+        const route = router.getCurrentRoute();
+        if (route === 'wall' || route === 'chat-hub') router.refreshCurrentRoute();
+      })
+    // Questions: new INSERTs mean someone asked the target a question →
+    // surface as a notification on the target's device. UPDATEs are the
+    // answer landing → asker's view of their own question (and any other
+    // visitor on the profile) refreshes to show the answer.
+    .on('postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'questions' },
+      (payload) => {
+        const q = payload.new;
+        if (!q) return;
+        const state = store.getState();
+        // Already in the list (e.g. realtime echo of our own optimistic
+        // ask, or a duplicate event). The asker also receives the event
+        // for their own row — we don't drop it; we just dedupe by id.
+        if (state.questions.some(x => x.id === q.id)) return;
+        // Replace any pending optimistic row from the same asker with the
+        // same text — happens when the asker is the local user.
+        const fresh = questionFromRow(q);
+        const pendingIdx = state.questions.findIndex(
+          x => x._pending && x.askerId === fresh.askerId && x.question === fresh.question && x.targetUserId === fresh.targetUserId
+        );
+        if (pendingIdx !== -1) {
+          const next = [...state.questions];
+          next[pendingIdx] = fresh;
+          store.setState({ questions: next });
+        } else {
+          store.setState({ questions: [fresh, ...state.questions] });
+        }
+        // Repaint the wall (notification dot) + notifications/profile if
+        // visible.
+        const route = router.getCurrentRoute();
+        if (route === 'wall' || route === 'notifications' || route === 'profile' || route === 'profile-other') {
+          router.refreshCurrentRoute();
+        }
+      })
+    .on('postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'questions' },
+      (payload) => {
+        const q = payload.new;
+        if (!q) return;
+        const state = store.getState();
+        const idx = state.questions.findIndex(x => x.id === q.id);
+        if (idx === -1) {
+          // The asker's local copy might be missing if RLS only just
+          // started letting them see this row (answered ⇒ public). Just
+          // append.
+          store.setState({ questions: [questionFromRow(q), ...state.questions] });
+        } else {
+          const next = [...state.questions];
+          next[idx] = questionFromRow(q);
+          store.setState({ questions: next });
+        }
+        const route = router.getCurrentRoute();
+        if (route === 'profile' || route === 'profile-other' || route === 'notifications') {
+          router.refreshCurrentRoute();
+        }
       })
     .subscribe();
 
