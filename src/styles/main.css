@@ -75,26 +75,15 @@
   --radius-2xl: 24px;
   --radius-full: 9999px;
 
-  /* Typography — Arial family for the entire app.
-     `--font-primary`: body text. Arial regular at weight 500/600 for
-       a heavier "luxury" base than the usual 400.
-     `--font-display`: titles + names. Arial Black is its own font (not
-       a synthesized weight), giving real glyph density that font-weight
-       on plain Arial can't match. Falls to Helvetica Neue / Helvetica
-       on macOS/iOS where Arial Black may not be installed by default
-       but Helvetica is.
-     `--font-narrow`: optional condensed face used by tags/badges where
-       horizontal space is tight. Falls back to regular Arial.
-     `-apple-system` / `BlinkMacSystemFont` lead the chain on Apple
-     devices so the SF Pro / SF Compact substitutes pick up — these
-     are the OS defaults and read as more refined than Arial on iOS. */
-  /* Single family — Poppins — across the whole app. The "luxury"
-     character comes from the contrast between WEIGHTS, not from
-     mixing two different families. Body sits on the light end
-     (300/400), titles on the heavy end (800/900). Same letterforms,
-     different presence. */
-  --font-primary: 'Poppins', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Helvetica, Arial, sans-serif;
-  --font-display: 'Poppins', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  /* Typography — Poppins for the entire app.
+     Body uses light weights (400), display tier uses heavy (800).
+     The contrast between thin and thick within the same family is
+     what gives the look its luxury character — no second family is
+     mixed in. `system-ui` is the generic system-stack fallback that
+     resolves to the OS default sans-serif on any device while Poppins
+     is loading; `sans-serif` is the ultimate fallback. */
+  --font-primary: 'Poppins', system-ui, sans-serif;
+  --font-display: 'Poppins', system-ui, sans-serif;
 
   --text-xs: 0.6875rem;
   --text-sm: 0.8125rem;
@@ -163,9 +152,9 @@ body {
      and labels override locally to 600/700 where they need more
      presence. */
   font-weight: 400;
-  /* Poppins is slightly wider than Inter/Arial; a tiny negative
-     tracking keeps reading rhythm tight at body sizes without
-     squashing the round glyphs. */
+  /* Poppins is a fairly wide face; a tiny negative tracking keeps
+     reading rhythm tight at body sizes without squashing the round
+     glyphs. */
   letter-spacing: -0.005em;
   background-color: #050505;
   color: var(--text-primary);
@@ -1514,24 +1503,30 @@ span > svg {
 }
 
 .fab::before {
+  /* The ::before stays geometrically PUT at inset:0 (matches the
+     parent exactly) and we slide the GRADIENT inside it via
+     background-position. Previously we animated `transform: translateX`
+     which moved the whole ::before out of the parent's bounds — the
+     shine then bled past the parent's border-radius because the
+     clip-path moved with the transform and stopped aligning with the
+     parent's curve. Animating background-position keeps the ::before
+     in place, so the parent's overflow:hidden + border-radius clips
+     reliably. No mix-blend-mode either (it created the same stacking-
+     context escape issue); a plain translucent white gradient over
+     the orange reads as the same "specular catching" effect. */
   content: '';
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: linear-gradient(115deg,
-    transparent 35%,
-    rgba(255,255,255,0.55) 50%,
-    transparent 65%);
-  transform: translateX(-110%);
-  animation: btn-shine-sweep 2.6s linear infinite;
-  mix-blend-mode: screen;
+  background-image: linear-gradient(115deg,
+    transparent 40%,
+    rgba(255,255,255,0.6) 50%,
+    transparent 60%);
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  background-position: 200% 0;
+  animation: btn-shine-pos 2.6s linear infinite;
   pointer-events: none;
-  /* clip the shine to a circle (the FAB's shape) on the ::before
-     itself, not the parent — putting clip-path on .fab would also
-     clip the halo box-shadow pulse and kill that effect. Clipping the
-     pseudo keeps the shine inside the round shape; the halo stays
-     intact because it lives on .fab's own box-shadow. */
-  clip-path: circle(50%);
 }
 
 .fab:hover {
@@ -1575,29 +1570,30 @@ span > svg {
 }
 
 .btn-shine::before {
+  /* Same fix as .fab::before: don't translate, animate
+     background-position. The ::before stays at inset:0 so the
+     parent's overflow:hidden + border-radius reliably clip the shine
+     to the pill shape — no leak past the rounded corners. */
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(115deg,
-    transparent 35%,
-    rgba(255,255,255,0.5) 50%,
-    transparent 65%);
-  transform: translateX(-110%);
-  animation: btn-shine-sweep 2.4s linear infinite;
-  mix-blend-mode: screen;
+  background-image: linear-gradient(115deg,
+    transparent 40%,
+    rgba(255,255,255,0.55) 50%,
+    transparent 60%);
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  background-position: 200% 0;
+  animation: btn-shine-pos 2.4s linear infinite;
   pointer-events: none;
-  /* Same trick as the medals: clip the ::before to the parent's pill
-     shape so the blended shine can't escape the rounded corners.
-     `inset(0 round X)` is equivalent to a border-radius-shaped clip
-     but, unlike overflow:hidden + border-radius on the parent, it
-     contains mix-blend-mode output reliably across WebKit/Blink.
-     `var(--radius-full)` matches the pill radius .btn uses. */
-  clip-path: inset(0 round var(--radius-full));
 }
 
-@keyframes btn-shine-sweep {
-  0%   { transform: translateX(-110%); }
-  100% { transform: translateX(110%); }
+@keyframes btn-shine-pos {
+  /* 200% → -100%: slides the 2x-wide gradient image from completely
+     off-right to completely off-left. The visible window (the
+     parent's box) sees the bright band cross once per cycle. */
+  0%   { background-position: 200% 0; }
+  100% { background-position: -100% 0; }
 }
 
 @media (max-width: 480px) {
@@ -3263,10 +3259,10 @@ span > svg {
   box-shadow: 0 4px 20px rgba(0,0,0,0.1);
 }
 
-[data-theme="light"] .points-display {
-  background: linear-gradient(135deg, rgba(255,106,0,0.08), rgba(63,10,116,0.08));
-  border-color: rgba(255,106,0,0.12);
-}
+/* No light-theme override for .points-display: gold stays gold under
+   both themes — a medal doesn't change color under different ambient
+   lighting. The previous translucent orange-purple override read as
+   transparent on light backgrounds, breaking the badge entirely. */
 
 [data-theme="light"] .post-actions {
   border-top-color: rgba(0, 0, 0, 0.06);
