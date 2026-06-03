@@ -1,11 +1,14 @@
 // =====================================================================
 // FEEDBACK — PWA install prompt (pre-login)
 // =====================================================================
-// Hard "ALERTA" modal shown on the login screen ONLY when both:
+// Friendly "¡Bienvenidx!" modal shown on the login screen ONLY when:
 //   1. The user is not signed in (login is the only caller — that's
 //      where it gets fired from).
 //   2. The page is NOT already running as an installed PWA
 //      (display-mode: standalone, or iOS's navigator.standalone).
+// Tone is warm + orange-brand (not a red alert) because this is the
+// first visual contact with a new user — needs to build trust, not
+// scare them off.
 //
 // Plus a third implicit filter: we don't fire on desktop. The user
 // explicitly asked for "en el celular", so showing iOS/Android
@@ -39,7 +42,7 @@ function isStandalone() {
 // content is hardcoded here, never user input.
 const IOS_STEPS = [
   { icon: '⋯',  text: 'Toca los <strong>tres puntos (•••)</strong> abajo a la derecha de Safari.' },
-  { icon: '🔗', text: 'Toca el botón <strong>Compartir</strong> (ícono de cuadrado con flecha hacia arriba).' },
+  { icon: '🔗', text: 'Toca el botón <strong>Compartir</strong> y luego dale en <strong>"Ver más"</strong>.' },
   { icon: '📲', text: 'Desplázate y selecciona <strong>"Añadir a pantalla de inicio"</strong>.' },
   { icon: '✅', text: 'Toca <strong>"Añadir"</strong> en la esquina superior derecha.' },
   { icon: '🎉', text: 'Cierra Safari y abre la app desde el nuevo ícono en tu pantalla de inicio.' },
@@ -83,35 +86,33 @@ export function showInstallPrompt() {
          style="
            max-width: 420px; width: 100%;
            background: var(--bg-card);
-           border: 2px solid #dc2626;
+           border: 1px solid var(--border-orange);
            border-radius: var(--radius-lg);
            padding: var(--space-xl);
-           box-shadow: 0 0 40px rgba(220, 38, 38, 0.55);
+           box-shadow: 0 8px 40px rgba(255, 106, 0, 0.18);
            max-height: 90dvh;
            overflow-y: auto;
          ">
       <div style="text-align: center; margin-bottom: var(--space-lg);">
-        <div style="font-size: 3rem; line-height: 1; margin-bottom: var(--space-sm);">⚠️</div>
+        <div style="font-size: 2.6rem; line-height: 1; margin-bottom: var(--space-sm);">👋</div>
         <h2 id="install-modal-title" style="
-          color: #dc2626;
+          color: var(--orange);
           font-family: var(--font-display);
-          font-size: 2.75rem;
-          font-weight: 900;
-          letter-spacing: 0.06em;
-          margin: 0 0 var(--space-md) 0;
-          line-height: 1;
-        ">ALERTA</h2>
+          font-size: 2rem;
+          font-weight: 800;
+          letter-spacing: -0.02em;
+          margin: 0 0 var(--space-sm) 0;
+          line-height: 1.1;
+        ">¡Bienvenidx!</h2>
         <p style="
           color: var(--text-primary);
           font-size: 1rem;
-          font-weight: 600;
+          font-weight: 500;
           line-height: 1.5;
           margin: 0;
         ">
-          Antes de iniciar sesión, instala FEEDBACK como app en tu ${deviceTag}.<br>
-          <span style="color: var(--text-secondary); font-weight: 400; font-size: 0.9rem;">
-            Sigue estos pasos:
-          </span>
+          Antes de continuar, sigue estos pasos para instalar FEEDBACK
+          en tu ${deviceTag} y vivirlo como una app de verdad ✨
         </p>
       </div>
 
@@ -170,7 +171,7 @@ export function showInstallPrompt() {
         transition: transform 0.1s, box-shadow 0.2s;
         box-shadow: 0 4px 16px rgba(255, 106, 0, 0.3);
       ">
-        Ya terminé, continuar →
+        ¡Listo, continuar! →
       </button>
 
       <p style="
@@ -180,8 +181,8 @@ export function showInstallPrompt() {
         color: var(--text-tertiary);
         line-height: 1.5;
       ">
-        Si ya la instalaste, ciérrala y ábrela desde el ícono — este aviso
-        no volverá a aparecer.
+        Si ya la tienes instalada, ábrela desde tu pantalla principal
+        y este aviso desaparece solo. 🧡
       </p>
     </div>
   `;
