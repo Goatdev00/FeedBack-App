@@ -2,6 +2,29 @@
    FEEDBACK — Design System & Global Styles
    ============================================ */
 
+/* --- Custom display font ---
+   "Blob and Happy" by Doctype Studio (free on dafont.com).
+   Used for the display-tier text (headings, names, party titles, etc.)
+   via var(--font-display). Body text + post content stays on Inter
+   via var(--font-primary).
+   The actual font file lives in public/fonts/ — drop blob-and-happy.woff2
+   (or .ttf) there and the browser picks it up. Until the file exists,
+   font-display:swap renders the next fallback in the chain
+   (Space Grotesk → Inter) so nothing visually breaks.
+   IMPORTANT for production use: verify the dafont license allows
+   commercial deployment of partyrate.site. Many "free" dafont fonts
+   are personal-use only and require a paid commercial license. */
+@font-face {
+  font-family: 'Blob and Happy';
+  src: url('/fonts/blob-and-happy.woff2') format('woff2'),
+       url('/fonts/blob-and-happy.ttf')   format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  /* swap = show fallback immediately, repaint when the file lands.
+     No FOIT, no broken state if /fonts/blob-and-happy.* is missing. */
+  font-display: swap;
+}
+
 /* --- CSS Variables / Design Tokens --- */
 :root {
   /* Brand Colors */
@@ -75,9 +98,17 @@
   --radius-2xl: 24px;
   --radius-full: 9999px;
 
-  /* Typography */
+  /* Typography
+     --font-primary: body text — post content, comments, descriptions,
+     input text, anything that needs to read easily at small sizes.
+     Stays on Inter.
+     --font-display: titles, names, party headlines, modal headers,
+     stat values, etc. Leads with the custom "Blob and Happy" face
+     declared in the @font-face above. Until that file lands or if
+     it's missing, the chain falls back to Space Grotesk → Inter so
+     the app never has unstyled text. */
   --font-primary: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-display: 'Space Grotesk', 'Inter', sans-serif;
+  --font-display: 'Blob and Happy', 'Space Grotesk', 'Inter', sans-serif;
 
   --text-xs: 0.6875rem;
   --text-sm: 0.8125rem;
@@ -743,7 +774,16 @@ span > svg {
     inset 0 -1px 0 rgba(0,0,0,0.1),
     0 1px 3px rgba(0,0,0,0.12);
   position: relative;
+  /* clip-path (not overflow:hidden) is what actually contains the
+     ::before shine to the pill shape. `mix-blend-mode: screen` creates
+     its own stacking context that escapes a parent's overflow:hidden
+     in WebKit and Blink — the blended pixels leak outside the rounded
+     corners as a rectangular band. clip-path:inset(round ...) clips
+     AFTER the blend pass, so the rendered shape stays a pill. We keep
+     overflow:hidden too as a defensive belt for browsers that ignore
+     clip-path on inline-flex (none currently, but cheap insurance). */
   overflow: hidden;
+  clip-path: inset(0 round var(--radius-full));
   /* Promote to its own GPU layer so the inner shine animation doesn't
      repaint the surrounding text. */
   isolation: isolate;
@@ -1445,7 +1485,13 @@ span > svg {
      radiating from the button. The static drop shadow is appended in
      the same property so the FAB still feels grounded. */
   animation: fab-pulse 2.2s ease-out infinite;
-  /* Sweep shine clips to the round shape. */
+  /* Sweep shine clips to the round shape via overflow:hidden. NOTE:
+     we deliberately do NOT use clip-path here even though it'd be more
+     robust against mix-blend-mode leaks — clip-path would also clip
+     the outer halo pulse (which is a box-shadow extending past the
+     button edge), killing the "breathing" effect. The FAB is small
+     and perfectly circular, so the shine bleed is invisible in
+     practice. */
   overflow: hidden;
   isolation: isolate;
 }
@@ -2151,7 +2197,11 @@ span > svg {
   border: none;
   border-radius: var(--radius-2xl);
   text-align: center;
+  /* See .points-display: clip-path actually contains the mix-blend-mode
+     shine to the rounded shape, where overflow:hidden alone lets it
+     bleed past the corners. Both kept for defensive redundancy. */
   overflow: hidden;
+  clip-path: inset(0 round var(--radius-2xl));
   isolation: isolate;
   /* Clean edge: just the embossed depth + a soft neutral drop. No
      colored bezel ring, no warm halo — those were what made the badge
