@@ -82,34 +82,28 @@ export function refreshFromSupabaseInBackground(knownSession) {
   // changes stream in while the initial fetch is still running.
   try { subscribeRealtime(store); } catch (e) { console.warn('[hydrate] realtime failed', e); }
 
-  // --- profile sync (auth-dependent, independent of the feed) ---
-  // Refresh the current route once the profile lands: without this, pPosts
-  // can win the race, paint the wall while state.users is still empty,
-  // and the user's own posts silently disappear (renderPostCard falls back
-  // to post.author, but comments and other users[] lookups also wake up
-  // here). Foreign users' posts render fine in the meantime because their
-  // authors arrived inline with the posts query.
+  // --- BOOT-PAINT POLICY ---
+  // Each phase writes its slice into the store but does NOT trigger a
+  // route refresh of its own. With seven parallel fetches landing
+  // across hundreds of ms, individual refreshes produced 4–6 visible
+  // flickers (the whole #app.innerHTML gets wiped and re-built each
+  // time, including images, lava layer, etc). We coalesce into ONE
+  // paint at the end of allSettled — the user sees the cached state
+  // first, then a single clean swap to the fully-hydrated state.
+  // Realtime updates after boot still refresh as they arrive — that's
+  // an isolated event, not a burst.
+
   const pProfile = syncProfileIntoStore(knownSession)
-    .then(() => { maybeRefreshRoute(); mark('profile'); })
+    .then(() => mark('profile'))
     .catch((e) => console.warn('[hydrate] profile sync failed', e));
 
-  // --- POSTS: the main wall content; paint the instant it lands ---
-  // Posts carry their author inline (postFromRow → author), so the feed
-  // renders fully WITHOUT waiting on listProfiles(). This is what flips
-  // state.hydrated and swaps skeletons for real cards.
   const pPosts = listPosts()
     .then((posts) => {
-      store.setState({ posts, hydrated: true });
-      maybeRefreshRoute();
+      store.setState({ posts });
       mark(`posts (${posts.length})`);
     })
-    .catch((e) => {
-      console.warn('[hydrate] posts failed', e);
-      flipHydrated();
-      maybeRefreshRoute();
-    });
+    .catch((e) => console.warn('[hydrate] posts failed', e));
 
-  // --- PARTIES (+ attendees folded in) ---
   const pParties = Promise.all([listParties(), listAttendees()])
     .then(([parties, attendees]) => {
       const byParty = new Map(parties.map((p) => [p.id, p]));
@@ -128,12 +122,10 @@ export function refreshFromSupabaseInBackground(knownSession) {
       }
       log.sort((a, b) => (b.attendedAt?.getTime() || 0) - (a.attendedAt?.getTime() || 0));
       store.setState({ parties, attendanceLog: log });
-      maybeRefreshRoute();
       mark(`parties (${parties.length})`);
     })
     .catch((e) => console.warn('[hydrate] parties failed', e));
 
-  // --- FOLLOWS (social graph) ---
   const pFollows = listFollows()
     .then((follows) => {
       store.setState({ follows });
@@ -149,7 +141,6 @@ export function refreshFromSupabaseInBackground(knownSession) {
   const pQuestions = listQuestions()
     .then((questions) => {
       store.setState({ questions });
-      maybeRefreshRoute();
       mark(`questions (${questions.length})`);
     })
     .catch((e) => console.warn('[hydrate] questions failed', e));
@@ -163,7 +154,6 @@ export function refreshFromSupabaseInBackground(knownSession) {
       // the fetched profile set.
       const extras = state.users.filter((u) => !profilesById.has(u.id));
       store.setState({ users: [...profiles, ...extras] });
-      maybeRefreshRoute();
       mark(`profiles (${profiles.length})`);
     })
     .catch((e) => console.warn('[hydrate] profiles failed', e));
@@ -173,7 +163,6 @@ export function refreshFromSupabaseInBackground(knownSession) {
     .then((cloud) => {
       if (cloud) {
         store.hydrateFromCloud(stripCloudExclusions(cloud));
-        maybeRefreshRoute();
       }
       mark('cloud');
     })
@@ -182,6 +171,8 @@ export function refreshFromSupabaseInBackground(knownSession) {
   Promise.allSettled([pProfile, pPosts, pParties, pFollows, pProfiles, pQuestions, pCloud]).finally(() => {
     _inFlight = false;
     flipHydrated();
+    // SINGLE paint with the full hydrated state. No mid-burst flicker.
+    maybeRefreshRoute();
     mark('ALL DONE');
   });
 }
