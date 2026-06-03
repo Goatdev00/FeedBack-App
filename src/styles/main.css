@@ -1491,15 +1491,19 @@ span > svg {
      radiating from the button. The static drop shadow is appended in
      the same property so the FAB still feels grounded. */
   animation: fab-pulse 2.2s ease-out infinite;
-  /* Sweep shine clips to the round shape via overflow:hidden. NOTE:
-     we deliberately do NOT use clip-path here even though it'd be more
-     robust against mix-blend-mode leaks — clip-path would also clip
-     the outer halo pulse (which is a box-shadow extending past the
-     button edge), killing the "breathing" effect. The FAB is small
-     and perfectly circular, so the shine bleed is invisible in
-     practice. */
   overflow: hidden;
-  isolation: isolate;
+  /* iOS Safari ignores `overflow: hidden + border-radius` for clipping
+     animated descendants unless the parent is promoted to its own
+     GPU compositing layer. We combine two compositing hints:
+       * `will-change: transform`  — declares we'll mutate transform
+         so the browser allocates a layer up front.
+       * `transform: translateZ(0)` baked into the :hover / :active
+         rules so the layer survives state changes.
+     Without this combo, the shine ::before leaked past the round
+     shape on iPhone (every other browser clipped correctly via plain
+     overflow:hidden). */
+  will-change: transform;
+  transform: translateZ(0);
 }
 
 .fab::before {
@@ -1530,11 +1534,13 @@ span > svg {
 }
 
 .fab:hover {
-  transform: scale(1.05);
+  /* Keep translateZ(0) so the compositing layer doesn't get torn down
+     during hover (which would re-trigger the iOS clipping bug). */
+  transform: scale(1.05) translateZ(0);
 }
 
 .fab:active {
-  transform: scale(0.95);
+  transform: scale(0.95) translateZ(0);
 }
 
 .fab svg {
@@ -1566,7 +1572,17 @@ span > svg {
    across every 2.4s — same visual language as the gold medals so the
    "this is important" cue is consistent across the app. */
 .btn-shine {
-  isolation: isolate;
+  /* iOS Safari clipping hack: declare we'll mutate transform so the
+     browser promotes this button to its own GPU compositing layer up
+     front. That layer is what makes overflow:hidden + border-radius
+     (inherited from .btn) actually contain the animated ::before
+     shine on iPhone. We CAN'T also set a baseline transform value
+     here because .btn:hover sets its own translateY/scale on various
+     variants (.btn-primary:hover translates -1px etc), which would
+     override our hint. will-change alone keeps the layer alive
+     across state changes. `isolation:isolate` used to live here for
+     mix-blend-mode containment; that's gone and is no longer needed. */
+  will-change: transform;
 }
 
 .btn-shine::before {
