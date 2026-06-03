@@ -281,6 +281,14 @@ span > svg {
    pair matches the WebKit thumb + track. */
 * { scrollbar-width: thin; scrollbar-color: var(--text-muted) transparent; }
 
+/* Wall horizontal scroller — overrides the default white thumb with
+   the brand orange. Scoped to .wall-live-strip (the "Fiestas en vivo"
+   row in wall.js) so other scrollbars in the app keep their default
+   neutral look. WebKit + Firefox variants in one block. */
+.wall-live-strip { scrollbar-color: var(--orange) transparent; }
+.wall-live-strip::-webkit-scrollbar-thumb { background: var(--orange); }
+.wall-live-strip::-webkit-scrollbar-thumb:hover { background: var(--orange-light); }
+
 /* Global placeholder rule. Firefox / Safari add a default opacity of ~0.5
    to ::placeholder, which reads as grey even when `color` is forced to
    pure white/black. We override both color + opacity here so EVERY

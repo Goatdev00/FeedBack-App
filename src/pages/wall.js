@@ -91,7 +91,7 @@ function renderLiveParties(state) {
   if (todayParties.length === 0) return '';
 
   return `
-    <div style="margin-bottom:var(--space-lg);overflow-x:auto;-webkit-overflow-scrolling:touch;">
+    <div class="wall-live-strip" style="margin-bottom:var(--space-lg);overflow-x:auto;-webkit-overflow-scrolling:touch;">
       <div style="display:flex;gap:var(--space-sm);padding-bottom:var(--space-sm);">
         ${todayParties.map(party => `
           <div class="card" style="min-width:140px;max-width:160px;padding:var(--space-sm) var(--space-md);cursor:pointer;flex-shrink:0;"
