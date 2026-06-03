@@ -137,7 +137,7 @@ function renderPostComments(post) {
   `;
 }
 
-function renderPostCard(post, state) {
+export function renderPostCard(post, state) {
   // Prefer the inline author the listPosts query joins in — it's always
   // present and matches the post's user_id. Fall back to the users[] cache
   // only if the row arrived without an author (e.g. an optimistic temp
@@ -266,47 +266,71 @@ function renderEmptyWall() {
   `;
 }
 
-function submitComment(container, postId) {
+function submitComment(container, postId, refresh) {
   const input = container.querySelector(`.post-comment-input[data-post-id="${postId}"]`);
   const text = input?.value?.trim();
   if (!text) { showToast('Escribe un comentario', 'error'); return; }
   store.addComment(postId, text);
   showToast('Comentario publicado 💬', 'success');
-  renderWall(container);
+  refresh();
 }
 
-const WALL_ACTIONS = {
-  like(container, action) {
-    store.toggleLike(action.dataset.postId);
-    renderWall(container);
-  },
-  'view-profile'(_container, action) {
-    const userId = action.dataset.userId;
-    store.setState({ viewingUserId: userId });
-    router.navigate('profile-other', { userId });
-  },
-  'view-party'(_container, action) {
-    const partyId = action.dataset.partyId;
-    store.setState({ viewingPartyId: partyId });
-    router.navigate('party-detail', { partyId });
-  },
-  'send-comment'(container, action) {
-    submitComment(container, action.dataset.postId);
-  },
-  'toggle-comments'(container, action) {
-    const input = container.querySelector(`.post-comment-input[data-post-id="${action.dataset.postId}"]`);
-    input?.focus();
-  },
-  'view-all-comments'(container, action) {
-    showAllCommentsModal(container, action.dataset.postId);
-  },
-  'question-author'(container, action) {
-    showQuestionModal(container, action.dataset.userId);
-  },
-  'report-post'(_container, action) {
-    showReportModal(action.dataset.postId);
-  },
-};
+/**
+ * Wire the click + Enter delegation for ANY container that renders
+ * post cards (wall, party detail, etc). The `refresh` callback is what
+ * gets called after like / comment so the host page repaints itself —
+ * the wall passes renderWall(container); party-detail passes
+ * renderPartyDetail(container, params). This is the single source of
+ * truth for post-card interaction so the two surfaces stay in sync.
+ */
+export function bindPostCardActions(container, root, refresh) {
+  const actions = {
+    like(action) {
+      store.toggleLike(action.dataset.postId);
+      refresh();
+    },
+    'view-profile'(action) {
+      const userId = action.dataset.userId;
+      store.setState({ viewingUserId: userId });
+      router.navigate('profile-other', { userId });
+    },
+    'view-party'(action) {
+      const partyId = action.dataset.partyId;
+      store.setState({ viewingPartyId: partyId });
+      router.navigate('party-detail', { partyId });
+    },
+    'send-comment'(action) {
+      submitComment(container, action.dataset.postId, refresh);
+    },
+    'toggle-comments'(action) {
+      const input = container.querySelector(`.post-comment-input[data-post-id="${action.dataset.postId}"]`);
+      input?.focus();
+    },
+    'view-all-comments'(action) {
+      showAllCommentsModal(container, action.dataset.postId, refresh);
+    },
+    'question-author'(action) {
+      showQuestionModal(container, action.dataset.userId);
+    },
+    'report-post'(action) {
+      showReportModal(action.dataset.postId);
+    },
+  };
+
+  root.addEventListener('click', (e) => {
+    const action = e.target.closest('[data-action]');
+    if (!action) return;
+    actions[action.dataset.action]?.(action);
+  });
+
+  root.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const input = e.target.closest('.post-comment-input');
+    if (!input) return;
+    e.preventDefault();
+    submitComment(container, input.dataset.postId, refresh);
+  });
+}
 
 const REPORT_REASONS = [
   { id: 'spam',           emoji: '🚫', label: 'Spam' },
@@ -317,7 +341,7 @@ const REPORT_REASONS = [
   { id: 'other',          emoji: '📁', label: 'Otro' },
 ];
 
-function showReportModal(postId) {
+export function showReportModal(postId) {
   const overlay = createModal(`
     <div class="modal" style="max-height:80dvh;">
       <div class="modal-handle"></div>
@@ -392,29 +416,20 @@ function bindWallEvents(container) {
     router.navigate('chat-hub');
   });
 
-  root.addEventListener('click', (e) => {
-    const action = e.target.closest('[data-action]');
-    if (!action) return;
-    WALL_ACTIONS[action.dataset.action]?.(container, action);
-  });
+  // Single delegated handler for post-card interactions, shared with
+  // party-detail. After every action it refreshes by re-rendering the
+  // wall — same as before the extraction.
+  bindPostCardActions(container, root, () => renderWall(container));
 
-  root.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter') return;
-    const input = e.target.closest('.post-comment-input');
-    if (!input) return;
-    e.preventDefault();
-    submitComment(container, input.dataset.postId);
-  });
-
-  // Self-contained nav binding: WALL_ACTIONS handlers can call
-  // renderWall(container) directly (after like / send comment), which
-  // wipes the bottom-nav DOM along with the rest. Re-bind here so the
-  // nav buttons keep working regardless of how we got rendered. The
+  // Self-contained nav binding: the shared action handler can call
+  // renderWall(container) (after like / send comment), which wipes the
+  // bottom-nav DOM along with the rest. Re-bind here so the nav
+  // buttons keep working regardless of how we got rendered. The
   // router wrapper still calls bindNavEvents() too — it's idempotent.
   bindNavEvents();
 }
 
-function showAllCommentsModal(container, postId) {
+function showAllCommentsModal(container, postId, refresh) {
   const post = store.getState().posts.find(p => p.id === postId);
   if (!post) return;
   const comments = post.comments || [];
@@ -455,7 +470,7 @@ function showAllCommentsModal(container, postId) {
     store.addComment(postId, text);
     showToast('Comentario publicado 💬', 'success');
     overlay.close();
-    renderWall(container);
+    refresh();
   };
 
   overlay.querySelector('#modal-comment-send').addEventListener('click', sendModalComment);

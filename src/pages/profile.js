@@ -42,7 +42,10 @@ export function renderProfileOther(container, params = {}) {
   if (!user) { router.navigate('wall'); return; }
   const isOwn = state.currentUser && state.currentUser.id === userId;
   if (isOwn) store.applyTheme(user.theme || 'dark');
-  renderProfileView(container, user, isOwn);
+  // params.tab forwarded so deep-links (e.g. the "your question was
+  // answered" notification) can open this profile straight on the
+  // Questions tab where the answered Q&A lives.
+  renderProfileView(container, user, isOwn, params.tab);
 }
 
 function renderSocialLinks(user) {
@@ -136,8 +139,8 @@ function renderProfileView(container, user, isOwn, initialTab) {
           <span class="badge ${roleBadgeClass(user.role)}">${roleLabel(user.role)}</span>
           
           <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
-            <span style="width:14px;height:14px;display:inline-flex;color:var(--text-secondary);">${ICONS.location}</span>
-            <span style="font-size:var(--text-sm);color:var(--text-secondary);">${user.city}</span>
+            <span style="width:14px;height:14px;display:inline-flex;color:var(--text-primary);">${ICONS.location}</span>
+            <span style="font-size:var(--text-sm);color:var(--text-primary);">${user.city}</span>
           </div>
 
           ${user.bio ? `<p class="profile-bio">${sanitize(user.bio)}</p>` : ''}
@@ -245,8 +248,15 @@ function renderPostsTab(posts) {
   }
   return posts.map(post => {
     const party = store.getPartyById(post.partyId);
+    // Card becomes a navigation affordance ONLY when the parent party
+    // still exists locally — taps would otherwise route to a missing
+    // detail page. The data-action / data-party-id mirror the wall's
+    // view-party contract so the page-level delegate below catches it.
+    const clickAttrs = party
+      ? `data-action="view-party" data-party-id="${party.id}" style="cursor:pointer;animation:fadeInUp 0.3s var(--ease-out);"`
+      : `style="animation:fadeInUp 0.3s var(--ease-out);"`;
     return `
-      <div class="card mb-md" style="animation:fadeInUp 0.3s var(--ease-out);">
+      <div class="card mb-md" ${clickAttrs}>
         ${party ? `
           <div class="post-party-tag" style="margin-bottom:var(--space-sm);">
             ${ICONS.location} ${sanitize(party.name)}
@@ -389,6 +399,22 @@ function renderPointsTab(user) {
 }
 
 function bindProfileEvents(container, user, isOwn) {
+  // Single page-level delegate for `data-action="view-party"` clicks
+  // (currently only on post cards in the Publicaciones tab, but the
+  // delegate works for any future card too). Lives on #profile-tab-content
+  // so swapping the tab content via innerHTML doesn't lose the binding.
+  const tabContent = container.querySelector('#profile-tab-content');
+  if (tabContent) {
+    tabContent.addEventListener('click', (e) => {
+      const trigger = e.target.closest('[data-action="view-party"]');
+      if (!trigger) return;
+      const partyId = trigger.dataset.partyId;
+      if (!partyId) return;
+      store.setState({ viewingPartyId: partyId });
+      router.navigate('party-detail', { partyId });
+    });
+  }
+
   // Back
   const backBtn = container.querySelector('#back-btn');
   if (backBtn) {

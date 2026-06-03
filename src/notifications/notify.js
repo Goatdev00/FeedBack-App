@@ -59,3 +59,19 @@ export function notifyNewFollower(toUserId, _fromUsername) {
 export function notifyNewChatMessage(toUserId, _fromUsername, roomId) {
   return callSendPush({ type: 'chat', toUserId, roomId });
 }
+
+// Fired by the target (= the person answering) toward the asker, so
+// the asker gets a push when their anonymous question is answered.
+// `questionId` is forwarded so the Edge Function can compose a deep
+// link straight to the answer.
+export function notifyQuestionAnswered(toUserId, _fromUsername, questionId) {
+  return callSendPush({ type: 'question-answered', toUserId, questionId });
+}
+
+// Fired by a guest confirming attendance toward the party's promoter,
+// so the promoter sees a real-time push every time someone RSVPs.
+// `partyId` lets the Edge Function build a link straight to the
+// promoter's party detail page.
+export function notifyPartyAttendance(toUserId, _fromUsername, partyId) {
+  return callSendPush({ type: 'party-attendance', toUserId, partyId });
+}

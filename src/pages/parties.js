@@ -31,7 +31,7 @@ export function renderParties(container) {
           <p class="page-subtitle">Descubre lo que hay hoy</p>
         </div>
         ${user?.role === 'promotor' ? `
-          <button class="btn btn-primary btn-sm" id="create-party-btn">
+          <button class="btn btn-primary btn-sm btn-shine" id="create-party-btn">
             ${ICONS.plus} Crear
           </button>
         ` : ''}
@@ -122,8 +122,8 @@ function renderPartyCard(party, state) {
     : `
       <div class="party-flyer-placeholder" style="background:linear-gradient(135deg, hsl(${hashStr(party.name) % 360}, 60%, 25%), hsl(${(hashStr(party.name) + 60) % 360}, 50%, 15%));">
         <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:var(--space-lg);">
-          <span style="font-family:var(--font-display);font-size:var(--text-2xl);font-weight:800;color:rgba(255,255,255,0.9);text-align:center;text-transform:uppercase;letter-spacing:2px;">${sanitize(party.name)}</span>
-          <span style="font-size:var(--text-xs);color:rgba(255,255,255,0.5);margin-top:8px;">${party.startTime} — ${party.endTime}</span>
+          <span style="font-family:var(--font-display);font-size:var(--text-2xl);font-weight:800;color:#fff;text-align:center;text-transform:uppercase;letter-spacing:2px;">${sanitize(party.name)}</span>
+          <span style="font-size:var(--text-xs);color:#fff;margin-top:8px;">${party.startTime} — ${party.endTime}</span>
         </div>
         ${liveBadge}
       </div>

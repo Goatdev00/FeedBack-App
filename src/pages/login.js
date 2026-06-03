@@ -38,8 +38,8 @@ export function renderLogin(container) {
           Al continuar, aceptas los Términos de Servicio y la Política de Privacidad.
         </p>
 
-        <div style="position:fixed;bottom:32px;left:50%;transform:translateX(-50%);display:flex;gap:8px;opacity:0.2;">
-          <span style="font-size:0.625rem;color:var(--text-muted);letter-spacing:2px;text-transform:uppercase;">Bogotá · Medellín · Cali</span>
+        <div style="position:fixed;bottom:32px;left:50%;transform:translateX(-50%);display:flex;gap:8px;">
+          <span style="font-size:0.625rem;color:var(--text-primary);letter-spacing:2px;text-transform:uppercase;">Bogotá · Medellín · Cali</span>
         </div>
       </div>
     </div>

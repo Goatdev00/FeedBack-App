@@ -26,11 +26,15 @@
   --bg-input: #1E1E2A;
   --bg-overlay: rgba(10, 10, 15, 0.85);
 
-  /* Text Colors */
+  /* Text Colors — flat, one tone per theme (no greys).
+     Dark theme: pure white for every text variant.
+     Light theme override below: pure black for every variant.
+     The 4 named tiers stay so existing rules don't need rewriting; they
+     all resolve to the same primary colour via the var() chain. */
   --text-primary: #FFFFFF;
-  --text-secondary: #A0A0B8;
-  --text-tertiary: #6B6B80;
-  --text-muted: #4A4A5A;
+  --text-secondary: var(--text-primary);
+  --text-tertiary:  var(--text-primary);
+  --text-muted:     var(--text-primary);
 
   /* Borders */
   --border-subtle: rgba(255, 255, 255, 0.06);
@@ -226,10 +230,33 @@ span > svg {
   height: 100%;
 }
 
-/* --- Scrollbar --- */
-::-webkit-scrollbar { width: 4px; }
+/* --- Scrollbar ---
+   `width` controls VERTICAL scrollbars, `height` controls HORIZONTAL
+   ones. Setting both keeps the look symmetrical across the app — the
+   horizontal scroller on the "live parties" strip (wall.js) used to
+   inherit the browser default (~14px), about 3x thicker than the
+   vertical 4px and visually heavy on a dark background. Matching them
+   at 4px ties both axes together. */
+::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--text-muted); border-radius: 4px; }
+/* Firefox cousin — fold scrollbars to thin in one stroke. The `color`
+   pair matches the WebKit thumb + track. */
+* { scrollbar-width: thin; scrollbar-color: var(--text-muted) transparent; }
+
+/* Global placeholder rule. Firefox / Safari add a default opacity of ~0.5
+   to ::placeholder, which reads as grey even when `color` is forced to
+   pure white/black. We override both color + opacity here so EVERY
+   input — even ones without a class-specific rule — follows the
+   "no greys" policy. Class-specific rules below can still customise
+   font-size/style, but the colour stays primary. */
+::placeholder,
+::-webkit-input-placeholder,
+::-moz-placeholder,
+:-ms-input-placeholder {
+  color: var(--text-primary);
+  opacity: 1;
+}
 
 /* --- Page Wrapper --- */
 .page {
@@ -517,7 +544,11 @@ span > svg {
 }
 
 .input::placeholder {
-  color: var(--text-muted);
+  color: var(--text-primary);
+  /* Firefox / Safari apply ~0.5 opacity to ::placeholder by default,
+     which reads as grey even when the `color` is pure white/black.
+     Force 1.0 so placeholders match the flat-typography rule. */
+  opacity: 1;
 }
 
 .input:focus {
@@ -670,19 +701,77 @@ span > svg {
   color: var(--white);
 }
 
-/* --- Points Display --- */
+/* --- Points Display (gold medal) ---
+   Solid metallic-gold pill with an embossed feel and a constant shine
+   sweep crossing the surface every ~2.8s. The shine lives on a
+   ::before pseudo-element clipped by overflow:hidden, so it stays
+   inside the pill shape and never bleeds onto neighbouring content.
+   The animation is a single linear translateX cycle — when the
+   highlight reaches the right edge it's offscreen, and the loop wraps
+   from offscreen-right back to offscreen-left invisibly, so the
+   sweep reads as continuous and fluid, not pulsing.
+   Text + icon use #4A2C04 (deep brown) for legibility against gold,
+   which is decorative metal rather than body typography and stays
+   outside the "no greys" flat-colour rule. */
 .points-display {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  background: linear-gradient(135deg, rgba(255,106,0,0.12), rgba(63,10,116,0.12));
-  border: 1px solid rgba(255,106,0,0.15);
+  gap: 8px;
+  padding: 8px 18px;
+  /* Polished luxury gold — cleaner mid-tones, no bronze undertone.
+     The previous palette skewed brown, which read as "dirty" against
+     the rest of the UI. This one stays unambiguously gold but stops
+     short of the cartoonish neon-yellow #FFD700 family. */
+  background: linear-gradient(135deg,
+    #F0D580 0%,
+    #E5C765 28%,
+    #C9A638 62%,
+    #A07F1F 100%);
+  border: none;
   border-radius: var(--radius-full);
   font-family: var(--font-display);
-  font-weight: 700;
+  font-weight: 800;
   font-size: var(--text-sm);
-  color: var(--orange);
+  letter-spacing: 0.5px;
+  color: #3A2400;
+  /* No colored ring + no warm glow — those two were the "dirty border"
+     effect the user disliked. Only the embossed depth (inset top
+     highlight + bottom shadow) and a SUBTLE neutral drop for the
+     floating-card feel. */
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.55),
+    inset 0 -1px 0 rgba(0,0,0,0.1),
+    0 1px 3px rgba(0,0,0,0.12);
+  position: relative;
+  overflow: hidden;
+  /* Promote to its own GPU layer so the inner shine animation doesn't
+     repaint the surrounding text. */
+  isolation: isolate;
+}
+
+.points-display::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* Diagonal narrow highlight band (115deg is about 25° off vertical,
+     reading as a reflection on polished metal under top-front light).
+     The gradient is offset within the element; translateX moves the
+     whole element so the highlight sweeps across. */
+  background: linear-gradient(115deg,
+    transparent 35%,
+    rgba(255,255,255,0.65) 50%,
+    transparent 65%);
+  transform: translateX(-110%);
+  animation: gold-shine 2.8s linear infinite;
+  /* Slight blend so the highlight doesn't punch a flat white; multiplies
+     into the gold underneath for a more authentic specular look. */
+  mix-blend-mode: screen;
+}
+
+@keyframes gold-shine {
+  0%   { transform: translateX(-110%); }
+  100% { transform: translateX(110%); }
 }
 
 .points-display svg {
@@ -833,12 +922,12 @@ span > svg {
 
 .profile-username {
   font-size: var(--text-sm);
-  color: var(--text-secondary);
+  color: var(--text-primary);
 }
 
 .profile-bio {
   font-size: var(--text-sm);
-  color: var(--text-secondary);
+  color: var(--text-primary);
   text-align: center;
   max-width: 300px;
   line-height: 1.5;
@@ -867,7 +956,7 @@ span > svg {
 
 .profile-stat-label {
   font-size: var(--text-xs);
-  color: var(--text-tertiary);
+  color: var(--text-primary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -1012,11 +1101,18 @@ span > svg {
 }
 
 .post-image {
-  width: calc(100% + 32px);
-  margin: 0 -16px;
-  margin-bottom: var(--space-md);
+  /* Sit inside the card's padding (same gutter as the text / actions)
+     so the image visually aligns with the rest of the post content
+     instead of bleeding to the edges. Block + 100% width fills the
+     gutter symmetrically; margin auto keeps it centred under
+     subpixel-rounding edge cases on retina screens. */
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto var(--space-md);
   max-height: 400px;
   object-fit: cover;
+  border-radius: var(--radius-md);
 }
 
 .post-actions {
@@ -1274,7 +1370,8 @@ span > svg {
 }
 
 .search-bar input::placeholder {
-  color: var(--text-muted);
+  color: var(--text-primary);
+  opacity: 1;
 }
 
 /* --- Tab Bar --- */
@@ -1340,13 +1437,36 @@ span > svg {
   justify-content: center;
   box-shadow: var(--shadow-orange);
   z-index: var(--z-sticky);
-  transition: all var(--duration-normal) var(--ease-spring);
+  transition: transform var(--duration-normal) var(--ease-spring);
   -webkit-tap-highlight-color: transparent;
+  /* Continuous "attention" cue: an outward halo ring that grows + fades
+     every 2.2s. The ring lives on a 0-spread box-shadow that animates
+     to a 14px transparent ring — the eye reads it as a soft pulse
+     radiating from the button. The static drop shadow is appended in
+     the same property so the FAB still feels grounded. */
+  animation: fab-pulse 2.2s ease-out infinite;
+  /* Sweep shine clips to the round shape. */
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.fab::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(115deg,
+    transparent 35%,
+    rgba(255,255,255,0.55) 50%,
+    transparent 65%);
+  transform: translateX(-110%);
+  animation: btn-shine-sweep 2.6s linear infinite;
+  mix-blend-mode: screen;
+  pointer-events: none;
 }
 
 .fab:hover {
   transform: scale(1.05);
-  box-shadow: 0 8px 32px rgba(255, 106, 0, 0.5);
 }
 
 .fab:active {
@@ -1356,6 +1476,52 @@ span > svg {
 .fab svg {
   width: 24px;
   height: 24px;
+  /* Keep the icon above the shine sweep regardless of how the browser
+     orders pseudo-element painting. */
+  position: relative;
+  z-index: 1;
+}
+
+@keyframes fab-pulse {
+  0%, 100% {
+    box-shadow:
+      var(--shadow-orange),
+      0 0 0 0 rgba(255, 106, 0, 0.55);
+  }
+  60% {
+    box-shadow:
+      var(--shadow-orange),
+      0 0 0 14px rgba(255, 106, 0, 0);
+  }
+}
+
+/* Reusable shine sweep for any button you want to highlight. Pairs
+   with .btn (which already sets position:relative + overflow:hidden)
+   so adding the class is the only change at the call site. The
+   ::before covers the whole face and slides a diagonal highlight band
+   across every 2.4s — same visual language as the gold medals so the
+   "this is important" cue is consistent across the app. */
+.btn-shine {
+  isolation: isolate;
+}
+
+.btn-shine::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg,
+    transparent 35%,
+    rgba(255,255,255,0.5) 50%,
+    transparent 65%);
+  transform: translateX(-110%);
+  animation: btn-shine-sweep 2.4s linear infinite;
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+
+@keyframes btn-shine-sweep {
+  0%   { transform: translateX(-110%); }
+  100% { transform: translateX(110%); }
 }
 
 @media (max-width: 480px) {
@@ -1476,7 +1642,7 @@ span > svg {
   gap: var(--space-md);
   padding: 14px 28px;
   background: var(--white);
-  color: #333;
+  color: #000;
   border-radius: var(--radius-full);
   font-weight: 600;
   font-size: var(--text-base);
@@ -1942,7 +2108,7 @@ span > svg {
   border-radius: var(--radius-full);
   font-size: 0.625rem;
   font-weight: 700;
-  color: #1A1A25;
+  color: #000;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -1962,6 +2128,12 @@ span > svg {
   animation: fadeInUp 0.3s var(--ease-out);
 }
 
+/* Big gold plaque for the points tab — same metallic treatment as the
+   small .points-display medal, scaled up: thicker border, deeper
+   embossed shadows, slower shine sweep (3.5s) to suit the larger
+   surface. Reuses the @keyframes gold-shine declared above so the two
+   medallions stay in visual lockstep without duplicate animation
+   definitions. */
 .points-hero {
   position: relative;
   display: flex;
@@ -1970,22 +2142,42 @@ span > svg {
   justify-content: center;
   padding: var(--space-2xl) var(--space-lg);
   margin-bottom: var(--space-xl);
-  background: linear-gradient(135deg, rgba(255, 106, 0, 0.12), rgba(63, 10, 116, 0.18));
-  border: 1px solid var(--border-orange);
+  /* Same polished-gold palette as .points-display, scaled up. */
+  background: linear-gradient(135deg,
+    #F0D580 0%,
+    #E5C765 28%,
+    #C9A638 62%,
+    #A07F1F 100%);
+  border: none;
   border-radius: var(--radius-2xl);
   text-align: center;
   overflow: hidden;
+  isolation: isolate;
+  /* Clean edge: just the embossed depth + a soft neutral drop. No
+     colored bezel ring, no warm halo — those were what made the badge
+     read as "dirty" instead of luxury. */
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.6),
+    inset 0 -2px 0 rgba(0,0,0,0.12),
+    0 4px 14px rgba(0,0,0,0.12);
 }
 
 .points-hero::before {
   content: '';
   position: absolute;
-  inset: -1px;
-  background: radial-gradient(ellipse at 50% 0%, rgba(255, 106, 0, 0.25), transparent 60%);
+  inset: 0;
+  background: linear-gradient(115deg,
+    transparent 35%,
+    rgba(255,255,255,0.55) 50%,
+    transparent 65%);
+  transform: translateX(-110%);
+  animation: gold-shine 3.5s linear infinite;
+  mix-blend-mode: screen;
   pointer-events: none;
   z-index: 0;
 }
 
+/* Stacking guarantee: text/icon ride above the shine layer. */
 .points-hero > * {
   position: relative;
   z-index: 1;
@@ -1995,7 +2187,7 @@ span > svg {
   display: inline-flex;
   width: 32px;
   height: 32px;
-  color: var(--orange);
+  color: #3A2400;
   margin-bottom: var(--space-sm);
 }
 
@@ -2010,10 +2202,10 @@ span > svg {
   font-weight: 900;
   line-height: 1;
   letter-spacing: -2px;
-  background: linear-gradient(135deg, var(--orange) 0%, #FF8A33 60%, var(--purple-light) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  /* Solid deep-brown number: the previous orange→purple gradient text
+     read poorly against gold (low contrast, muddy edges). The medal
+     palette wants high-contrast engraved-style text. */
+  color: #3A2400;
 }
 
 .points-hero-label {
@@ -2021,8 +2213,8 @@ span > svg {
   font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 1.5px;
-  color: var(--text-secondary);
-  font-weight: 600;
+  color: #3A2400;
+  font-weight: 700;
 }
 
 .points-section-title {
@@ -2511,6 +2703,47 @@ span > svg {
   justify-content: center;
   font-size: 1.2rem;
   flex-shrink: 0;
+  overflow: visible;        /* let the unread dot bleed outside the box */
+  position: relative;       /* anchor for .chat-party-dot */
+}
+
+/* When there's a flyer the inner <img> is the actual visual surface,
+   and we want THAT (not the parent) to do the rounding + clipping —
+   the parent stays `overflow: visible` so the unread dot can poke
+   above the corner. */
+.chat-party-thumb-image {
+  background: transparent;
+}
+.chat-party-thumb-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: inherit;   /* match parent's radius for clean clip */
+}
+
+/* Per-party unread indicator. Same green / size / pulse as the other
+   chat dots so the user learns one symbol. Lives at the top-right of
+   the 44×44 thumb (a few pixels outside) so it's visible regardless of
+   the flyer's contents. The border matches the page background to read
+   as a tight ring against busy photos. */
+.chat-party-thumb .chat-party-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 12px;
+  height: 12px;
+  background: var(--live-green);
+  border: 2px solid var(--bg-primary);
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: pulse 2s infinite;
+  box-shadow: 0 0 8px var(--live-green-glow);
+  pointer-events: none;
+}
+
+[data-theme="light"] .chat-party-thumb .chat-party-dot {
+  border-color: #F0F0F5;
 }
 
 .chat-party-info {
@@ -2774,7 +3007,8 @@ span > svg {
 }
 
 .chat-input::placeholder {
-  color: var(--text-muted);
+  color: var(--text-primary);
+  opacity: 1;
 }
 
 .chat-send {
@@ -2813,10 +3047,11 @@ span > svg {
   --bg-input: #F0F0F5;
   --bg-overlay: rgba(0, 0, 0, 0.4);
 
-  --text-primary: #1A1A2E;
-  --text-secondary: #555570;
-  --text-tertiary: #8888A0;
-  --text-muted: #AAAABB;
+  /* Light theme: pure black for every text tier (no greys). secondary /
+     tertiary / muted are NOT overridden here — they keep the
+     `var(--text-primary)` mapping from :root, so they resolve to #000
+     automatically inside any [data-theme="light"] subtree. */
+  --text-primary: #000000;
 
   --border-subtle: rgba(0, 0, 0, 0.06);
   --border-light: rgba(0, 0, 0, 0.1);
@@ -2925,10 +3160,9 @@ span > svg {
   border-color: rgba(0, 0, 0, 0.06);
 }
 
-[data-theme="light"] .points-hero {
-  background: linear-gradient(135deg, rgba(255, 106, 0, 0.08), rgba(63, 10, 116, 0.1));
-  border-color: rgba(255, 106, 0, 0.25);
-}
+/* No light-theme override for .points-hero: the gold plaque keeps its
+   metallic palette in both themes — a medal doesn't change colour
+   under different ambient lighting. */
 
 [data-theme="light"] .points-earn-item {
   background: #FFFFFF;
@@ -3246,7 +3480,8 @@ span > svg {
 }
 
 .post-comment-input::placeholder {
-  color: var(--text-muted);
+  color: var(--text-primary);
+  opacity: 1;
 }
 
 .post-comment-input:focus {
@@ -3328,11 +3563,10 @@ span > svg {
   font-family: var(--font-display);
   font-size: var(--text-lg);
   font-weight: 500;
-  color: var(--text-secondary);
+  color: var(--text-primary);
   letter-spacing: 3px;
   text-transform: uppercase;
   margin-bottom: var(--space-xl);
-  opacity: 0.8;
 }
 
 /* Google sign-in button */
@@ -3346,7 +3580,7 @@ span > svg {
   padding: 15px 24px;
   border-radius: var(--radius-full);
   background: var(--white);
-  color: #1a1a1a;
+  color: #000;
   font-size: var(--text-base);
   font-weight: 600;
   font-family: inherit;

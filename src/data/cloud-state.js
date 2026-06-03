@@ -44,6 +44,10 @@ const EXCLUDED_FROM_CLOUD = new Set([
   'follows',
   'users',
   'questions',
+  // Built from public.party_attendees on every hydrate (see
+  // hydration.js). Persisting per-user would let User B's stale RSVPs
+  // overwrite the shared ground truth.
+  'attendanceLog',
 ]);
 
 const DEBOUNCE_MS = 1500;     // wait this long after the last change

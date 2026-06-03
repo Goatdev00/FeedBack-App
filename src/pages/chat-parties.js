@@ -11,7 +11,6 @@ import { requireCurrentUser } from '../data/profile-sync.js';
 export function renderChatParties(container) {
   if (!requireCurrentUser(container)) return;
   const state = store.getState();
-  const user = state.currentUser;
 
   // Don't clear hasUnreadChatParty here — this page is the chooser, not
   // the chat itself. The flag clears only when the user enters a
@@ -68,10 +67,27 @@ export function renderChatParties(container) {
 function renderPartyRow(party, state) {
   const messages = state.chatRooms?.[`party:${party.id}`] || [];
   const attendees = party.attendees.length;
+  // Per-room unread flag — flipped by the realtime listener in api.js
+  // when a message lands in this party's room. Cleared in chat.js when
+  // the user opens the room directly.
+  const hasUnread = !!state.unreadChatRooms?.[party.id];
+  // Thumbnail: prefer the actual flyer the creator uploaded, fall back
+  // to the gradient + music emoji for events without a flyer. `flyer`
+  // may be a data: URL (optimistic, pre-upload) or an http(s) URL once
+  // it's stored in Supabase; both render the same in <img>.
+  const thumbInner = party.flyer
+    ? `<img src="${party.flyer}" alt="" loading="lazy" />`
+    : '🎵';
+  const thumbClasses = ['chat-party-thumb'];
+  if (party.flyer) thumbClasses.push('chat-party-thumb-image');
+  if (hasUnread) thumbClasses.push('has-unread');
 
   return `
     <button class="chat-party-row" data-party-id="${party.id}">
-      <div class="chat-party-thumb">🎵</div>
+      <div class="${thumbClasses.join(' ')}">
+        ${thumbInner}
+        ${hasUnread ? '<span class="chat-dot chat-party-dot"></span>' : ''}
+      </div>
       <div class="chat-party-info">
         <div class="chat-party-name">${sanitize(party.name)}</div>
         <div class="chat-party-meta">

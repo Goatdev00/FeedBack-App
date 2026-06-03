@@ -9,11 +9,13 @@ import { renderBottomNav } from '../components/nav.js';
 import { requireCurrentUser } from '../data/profile-sync.js';
 
 const KIND_META = {
-  follow:   { icon: '🤝', accent: 'follow'   },
-  comment:  { icon: '💬', accent: 'comment'  },
-  like:     { icon: '❤️', accent: 'like'     },
-  question: { icon: '❓', accent: 'question' },
-  blocked:  { icon: '🚫', accent: 'blocked'  },
+  follow:               { icon: '🤝', accent: 'follow'   },
+  comment:              { icon: '💬', accent: 'comment'  },
+  like:                 { icon: '❤️', accent: 'like'     },
+  question:             { icon: '❓', accent: 'question' },
+  'question-answered':  { icon: '✅', accent: 'question' },
+  'party-attendance':   { icon: '🎉', accent: 'follow'   },
+  blocked:              { icon: '🚫', accent: 'blocked'  },
 };
 
 export function renderNotifications(container) {

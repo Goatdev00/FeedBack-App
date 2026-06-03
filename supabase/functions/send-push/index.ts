@@ -38,13 +38,15 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
 };
 
-type PushType = 'like' | 'comment' | 'follow' | 'chat';
+type PushType = 'like' | 'comment' | 'follow' | 'chat' | 'question-answered' | 'party-attendance';
 
 interface RequestBody {
   type: PushType;
   toUserId: string;
   postId?: string;
   roomId?: string;
+  questionId?: string;
+  partyId?: string;
 }
 
 function json(status: number, body: Record<string, unknown>) {
@@ -87,6 +89,22 @@ function buildMessage(
         title: 'Nuevo mensaje',
         body: `${fromUsername} te envió un mensaje`,
         url: `/chat/${body.roomId}`,
+      };
+    case 'question-answered':
+      // The asker chose who to ask, so we can name them openly here —
+      // anonymity only protects the asker, never the answerer.
+      return {
+        title: 'Respondieron tu pregunta',
+        body: `${fromUsername} respondió tu pregunta anónima`,
+        url: `/u/${handle}#questions`,
+      };
+    case 'party-attendance':
+      // Fired toward the promoter when a guest confirms attendance —
+      // social proof + actionable feedback (they can prepare capacity).
+      return {
+        title: 'Nuevo asistente',
+        body: `${fromUsername} confirmó que va a tu fiesta`,
+        url: `/party/${body.partyId}`,
       };
   }
 }
@@ -139,7 +157,7 @@ Deno.serve(async (req: Request) => {
     return json(400, { error: 'invalid_json' });
   }
 
-  const validTypes: PushType[] = ['like', 'comment', 'follow', 'chat'];
+  const validTypes: PushType[] = ['like', 'comment', 'follow', 'chat', 'question-answered', 'party-attendance'];
   if (!body || !validTypes.includes(body.type) || !body.toUserId) {
     return json(400, { error: 'invalid_payload' });
   }
@@ -148,6 +166,12 @@ Deno.serve(async (req: Request) => {
   }
   if (body.type === 'chat' && !body.roomId) {
     return json(400, { error: 'missing_roomId' });
+  }
+  if (body.type === 'question-answered' && !body.questionId) {
+    return json(400, { error: 'missing_questionId' });
+  }
+  if (body.type === 'party-attendance' && !body.partyId) {
+    return json(400, { error: 'missing_partyId' });
   }
 
   // ---------------- Service-role client ----------------

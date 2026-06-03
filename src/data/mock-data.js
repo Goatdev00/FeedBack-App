@@ -7,6 +7,8 @@ import {
   notifyNewLike,
   notifyNewComment,
   notifyNewFollower,
+  notifyQuestionAnswered,
+  notifyPartyAttendance,
 } from '../notifications/notify.js';
 
 // Repaint the visible page when state mutations matter to the UI but no
@@ -458,6 +460,19 @@ const defaultState = {
   // navigation.
   hasUnreadChatGeneral: false,
   hasUnreadChatParty: false,
+  // Per-party unread map: { [partyId]: true } for every party room that
+  // has an unread message. Used by chat-parties to paint a green dot on
+  // the specific row so the user knows WHICH party is buzzing, not just
+  // that "some" party chat is. hasUnreadChatParty stays as the rolled-up
+  // "any?" flag that powers the wall and chat-hub indicators.
+  unreadChatRooms: {},
+  // Flat log of every attendance event we know about. Used by
+  // getNotifications() to surface "X confirmó asistencia" rows on the
+  // promoter's notifications page. The same data is also folded into
+  // each party.attendees[] for the cheap "is this user attending?"
+  // checks elsewhere — keeping both shapes avoids reshaping every
+  // existing `party.attendees.includes(uid)` call.
+  attendanceLog: [],
   // Has the first Supabase hydration completed since this session?
   // Lets pages distinguish "no data yet because still loading" from
   // "no data because the table is genuinely empty" so we can render a
@@ -1171,24 +1186,55 @@ class Store {
 
     if (wasAttending) {
       party.attendees = party.attendees.filter(id => id !== uid);
+      // Drop the matching attendance-log entry so the promoter's
+      // notification list mirrors reality on cancel.
+      this.state.attendanceLog = (this.state.attendanceLog || []).filter(
+        x => !(x.partyId === partyId && x.userId === uid)
+      );
     } else {
       party.attendees.push(uid);
       this.addPoints(20, 'Asistir a fiesta');
+      // Prepend a fresh log entry so it shows on top of the promoter's
+      // notifications. Realtime later overwrites attendedAt with the
+      // server's authoritative timestamp.
+      this.state.attendanceLog = [
+        { partyId, userId: uid, attendedAt: new Date() },
+        ...(this.state.attendanceLog || []),
+      ];
     }
     this.saveState();
     this.notify();
 
     if (_api?.toggleAttendance && !party._pending) {
-      _api.toggleAttendance(partyId).catch((err) => {
-        console.warn('[store] toggleAttendance failed', err);
-        // Rollback optimistic change.
-        const p = this.state.parties.find(x => x.id === partyId);
-        if (!p) return;
-        if (wasAttending) p.attendees.push(uid);
-        else p.attendees = p.attendees.filter(id => id !== uid);
-        this.saveState();
-        this.notify();
-      });
+      _api.toggleAttendance(partyId)
+        .then(() => {
+          // Push only on the BECOMING-attending transition. If the
+          // promoter is the guest themselves (rare but possible during
+          // testing) we skip to avoid self-pinging.
+          if (!wasAttending && party.promotor && party.promotor !== uid) {
+            notifyPartyAttendance(party.promotor, this.state.currentUser?.username, partyId);
+          }
+        })
+        .catch((err) => {
+          console.warn('[store] toggleAttendance failed', err);
+          // Rollback optimistic change in BOTH places.
+          const p = this.state.parties.find(x => x.id === partyId);
+          if (!p) return;
+          if (wasAttending) {
+            p.attendees.push(uid);
+            this.state.attendanceLog = [
+              { partyId, userId: uid, attendedAt: new Date() },
+              ...(this.state.attendanceLog || []),
+            ];
+          } else {
+            p.attendees = p.attendees.filter(id => id !== uid);
+            this.state.attendanceLog = (this.state.attendanceLog || []).filter(
+              x => !(x.partyId === partyId && x.userId === uid)
+            );
+          }
+          this.saveState();
+          this.notify();
+        });
     }
   }
 
@@ -1254,6 +1300,16 @@ class Store {
 
     if (_api?.answerQuestion) {
       _api.answerQuestion(questionId, answerText)
+        .then(() => {
+          // Push notification to the ORIGINAL asker so they hear about
+          // the answer in real time. Fire-and-forget — errors swallowed
+          // inside notify.js; the in-app notification feed (derived
+          // from state.questions) is the durable source of truth and
+          // doesn't depend on the push landing.
+          if (q.askerId && q.askerId !== this.state.currentUser?.id) {
+            notifyQuestionAnswered(q.askerId, this.state.currentUser?.username, questionId);
+          }
+        })
         .catch(err => {
           console.error('[store] answerQuestion failed', err);
           // Revert the optimistic update + the points.
@@ -1399,6 +1455,55 @@ class Store {
         // so they can answer in one tap. The profile route reads
         // params.tab to decide which tab to activate on render.
         navigate: { route: 'profile', params: { tab: 'questions' } },
+      });
+    }
+
+    // Answers to questions YOU asked. The asker knows who they asked
+    // (they picked them), so the target is shown as the actor here —
+    // no anonymity to preserve on this side. Time uses answered_at so
+    // the notification surfaces when the answer landed, not when the
+    // question was originally sent.
+    for (const q of this.state.questions) {
+      if (q.askerId !== uid) continue;
+      if (!q.answer) continue;
+      const target = this.getUserById(q.targetUserId);
+      if (!target) continue;
+      const preview = q.question.length > 60 ? q.question.slice(0, 60) + '…' : q.question;
+      out.push({
+        id: `question-answered:${q.id}`,
+        kind: 'question-answered',
+        actor: target,
+        time: q.answeredAt ? new Date(q.answeredAt) : null,
+        text: `respondió tu pregunta: "${preview}"`,
+        // Land on the answerer's profile, Questions tab, so the asker
+        // sees the full Q&A in context (answered questions are public
+        // there, including their own anonymous one).
+        navigate: {
+          route: 'profile-other',
+          params: { userId: target.id, tab: 'questions' },
+        },
+      });
+    }
+
+    // Guests confirming attendance to parties YOU created. Iterates the
+    // attendanceLog (timestamped, populated by hydration + realtime +
+    // toggleAttendance) and surfaces an item per RSVP. Skips own RSVPs
+    // and rows whose party isn't in state yet (race during hydration).
+    for (const a of (this.state.attendanceLog || [])) {
+      if (a.userId === uid) continue;
+      const party = this.state.parties.find(p => p.id === a.partyId);
+      if (!party || party.promotor !== uid) continue;
+      const actor = this.getUserById(a.userId);
+      if (!actor) continue;
+      out.push({
+        id: `attend:${a.partyId}:${a.userId}`,
+        kind: 'party-attendance',
+        actor,
+        time: a.attendedAt ? new Date(a.attendedAt) : null,
+        text: `confirmó asistencia a "${party.name}"`,
+        // Tap lands on the party detail so the promoter can see the
+        // updated attendee count + the in-context info.
+        navigate: { route: 'party-detail', params: { partyId: a.partyId } },
       });
     }
 

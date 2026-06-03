@@ -4,11 +4,7 @@
 
 import { store, ICONS } from '../data/mock-data.js';
 import { router } from '../router.js';
-import { showToast } from '../utils/toast.js';
 import { debounce, sanitize } from '../utils/helpers.js';
-import { createModal } from '../utils/dom.js';
-
-const SUGGEST_CITIES = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla'];
 
 export function renderSelectParty(container) {
   const state = store.getState();
@@ -45,17 +41,11 @@ export function renderSelectParty(container) {
             <div class="empty-state" style="padding:var(--space-xl);">
               <div style="font-size:2rem;margin-bottom:var(--space-sm);">🎵</div>
               <h3 class="empty-state-title">No hay fiestas hoy</h3>
-              <p class="empty-state-text">No encontramos fiestas en ${state.selectedCity}. ¿Quieres sugerir una?</p>
+              <p class="empty-state-text">No encontramos fiestas activas en ${state.selectedCity}.</p>
             </div>
           `
         }
       </div>
-
-      <!-- Suggest new party -->
-      <button class="btn btn-ghost btn-full mt-lg" id="suggest-party" style="border:1px dashed var(--border-medium);">
-        ${ICONS.plus}
-        <span>Sugerir nueva fiesta</span>
-      </button>
     </div>
   `;
 
@@ -101,11 +91,6 @@ function bindSelectPartyEvents(container) {
 
   // Party selection
   rebindPartyClicks(container);
-
-  // Suggest new
-  container.querySelector('#suggest-party').addEventListener('click', () => {
-    showSuggestModal(container);
-  });
 }
 
 function rebindPartyClicks(container) {
@@ -121,72 +106,5 @@ function rebindPartyClicks(container) {
         router.navigate('create-post', { partyId });
       }, 200);
     });
-  });
-}
-
-function showSuggestModal(container) {
-  const overlay = createModal(`
-    <div class="modal">
-      <div class="modal-handle"></div>
-      <div class="modal-title">Sugerir nueva fiesta</div>
-      <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-lg);">
-        🤖 Nuestro sistema revisará si la fiesta ya existe o es duplicada.
-      </p>
-
-      <div class="input-group mb-md">
-        <label class="input-label">Nombre de la fiesta</label>
-        <input type="text" class="input" id="suggest-name" placeholder="Ej: NEXUS Underground" />
-      </div>
-      <div class="input-group mb-md">
-        <label class="input-label">Lugar / Venue</label>
-        <input type="text" class="input" id="suggest-venue" placeholder="Ej: Warehouse Club" />
-      </div>
-      <div class="input-group mb-lg">
-        <label class="input-label">Ciudad</label>
-        <select class="input" id="suggest-city">
-          ${SUGGEST_CITIES.map(c => `<option value="${c}">${c}</option>`).join('')}
-        </select>
-      </div>
-
-      <div style="display:flex;gap:var(--space-sm);">
-        <button class="btn btn-secondary" id="cancel-suggest" style="flex:1;">Cancelar</button>
-        <button class="btn btn-primary" id="submit-suggest" style="flex:1;">Enviar</button>
-      </div>
-    </div>
-  `);
-
-  overlay.querySelector('#cancel-suggest').addEventListener('click', () => overlay.close());
-
-  overlay.querySelector('#submit-suggest').addEventListener('click', () => {
-    const name = overlay.querySelector('#suggest-name').value.trim();
-    const venue = overlay.querySelector('#suggest-venue').value.trim();
-    const city = overlay.querySelector('#suggest-city').value;
-
-    if (!name) { showToast('Escribe el nombre de la fiesta', 'error'); return; }
-    if (!venue) { showToast('Escribe el lugar', 'error'); return; }
-
-    const duplicate = store.detectDuplicate(name);
-    if (duplicate) {
-      showToast(`⚠️ Ya existe una fiesta similar: "${duplicate.name}"`, 'warning');
-      return;
-    }
-
-    store.addParty({
-      name,
-      venue,
-      city,
-      date: new Date().toISOString().split('T')[0],
-      startTime: '22:00',
-      endTime: '06:00',
-      genres: [],
-      promotor: null,
-      djs: [],
-      flyer: null,
-      description: '',
-    });
-
-    overlay.close();
-    showToast('Fiesta sugerida con éxito ✅', 'success');
-    renderSelectParty(container);
   });
 }

@@ -48,14 +48,29 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
   const state = store.getState();
   const user = state.currentUser;
 
-  // Entering a live room — user is now seeing this specific chat type
-  // directly, so clear ONLY its unread flag. The other type's dot
-  // remains so the user can see they still have pending messages in
-  // the other place. The wall lights up if either is set, so it only
-  // goes off when both are clear.
+  // Entering a live room — user is now seeing this specific chat
+  // directly. Two clear-cases:
+  //   * General room: clear hasUnreadChatGeneral. The party flag stays
+  //     so the wall/chat-hub still warn the user about unread parties.
+  //   * Party room: remove THIS party from unreadChatRooms. The rolled-up
+  //     hasUnreadChatParty stays true if any OTHER party still has
+  //     unread messages, false otherwise — so visiting one buzzing
+  //     party doesn't silently clear the dot for the others.
   const isGeneral = roomKey === GENERAL_ROOM_KEY;
-  const flagKey = isGeneral ? 'hasUnreadChatGeneral' : 'hasUnreadChatParty';
-  if (state[flagKey]) store.setState({ [flagKey]: false });
+  if (isGeneral) {
+    if (state.hasUnreadChatGeneral) store.setState({ hasUnreadChatGeneral: false });
+  } else {
+    const partyId = roomKey.slice('party:'.length);
+    const cur = state.unreadChatRooms || {};
+    if (cur[partyId] || state.hasUnreadChatParty) {
+      const next = { ...cur };
+      delete next[partyId];
+      store.setState({
+        unreadChatRooms: next,
+        hasUnreadChatParty: Object.keys(next).length > 0,
+      });
+    }
+  }
 
   container.innerHTML = `
     <div class="page chat-page" id="chat-room-page">

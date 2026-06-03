@@ -346,7 +346,7 @@ export async function listAttendees() {
   if (!isSupabaseConfigured()) return [];
   const { data, error } = await supabase
     .from('party_attendees')
-    .select('party_id, user_id');
+    .select('party_id, user_id, attended_at');
   if (error) throw error;
   return data || [];
 }
@@ -394,13 +394,16 @@ export async function toggleAttendance(partyId) {
 // =====================================================================
 const _roomIdCache = new Map();
 
-// Reverse lookup: room uuid → 'general' | 'party'. Used by the global
-// chat-messages realtime listener to decide which unread flag to flip
-// (hasUnreadChatGeneral vs hasUnreadChatParty) so chat-hub can paint a
-// green dot on the correct card. Filled lazily — by resolveChatRoomId()
-// whenever a page reads a known room, and by an on-demand fetch in the
-// realtime handler for rooms the user hasn't entered yet.
-const _roomTypeById = new Map();
+// Reverse lookup: room uuid → { type, partyId? } where type is
+// 'general' | 'party' and partyId is set only for party rooms. Used by
+// the global chat-messages realtime listener to decide which unread
+// flag to flip (hasUnreadChatGeneral vs hasUnreadChatParty) AND, for
+// party rooms, which specific partyId to mark in state.unreadChatRooms
+// so chat-parties can paint a dot on that row. Filled lazily — by
+// resolveChatRoomId() whenever a page reads a known room, and by an
+// on-demand fetch in the realtime handler for rooms the user hasn't
+// visited yet.
+const _roomMetaById = new Map();
 
 export async function resolveChatRoomId(roomKey) {
   if (_roomIdCache.has(roomKey)) return _roomIdCache.get(roomKey);
@@ -430,25 +433,31 @@ export async function resolveChatRoomId(roomKey) {
   const { data, error } = await query;
   if (error || !data) return null;
   _roomIdCache.set(roomKey, data.id);
-  _roomTypeById.set(data.id, roomKey === 'general' ? 'general' : 'party');
+  if (roomKey === 'general') {
+    _roomMetaById.set(data.id, { type: 'general' });
+  } else {
+    _roomMetaById.set(data.id, { type: 'party', partyId: roomKey.slice('party:'.length) });
+  }
   return data.id;
 }
 
-// Resolve room type by uuid (used by the realtime listener). Returns
-// 'general' | 'party' | null. Falls back to a single-row chat_rooms
+// Resolve room metadata by uuid (used by the realtime listener). Returns
+// { type, partyId? } or null. Falls back to a single-row chat_rooms
 // query when the cache misses (first message in a room the user hasn't
 // visited).
-async function resolveRoomTypeById(roomId) {
-  if (_roomTypeById.has(roomId)) return _roomTypeById.get(roomId);
+async function resolveRoomMetaById(roomId) {
+  if (_roomMetaById.has(roomId)) return _roomMetaById.get(roomId);
   const { data, error } = await supabase
     .from('chat_rooms')
     .select('party_id')
     .eq('id', roomId)
     .maybeSingle();
   if (error || !data) return null;
-  const type = data.party_id == null ? 'general' : 'party';
-  _roomTypeById.set(roomId, type);
-  return type;
+  const meta = data.party_id == null
+    ? { type: 'general' }
+    : { type: 'party', partyId: data.party_id };
+  _roomMetaById.set(roomId, meta);
+  return meta;
 }
 
 export async function listChatMessages(roomKey, limit = 100) {
@@ -857,17 +866,39 @@ export function subscribeRealtime(store) {
         const state = store.getState();
         // Skip our own messages.
         if (state.currentUser && m.user_id === state.currentUser.id) return;
-        const type = await resolveRoomTypeById(m.room_id);
-        if (!type) return;
-        const flagKey = type === 'general' ? 'hasUnreadChatGeneral' : 'hasUnreadChatParty';
-        // Already flagged — don't churn setState.
-        if (store.getState()[flagKey]) return;
-        store.setState({ [flagKey]: true });
-        // The wall/chat-hub aren't store-subscribed, so setState alone
-        // won't repaint the dots. Refresh on the two routes that consume
-        // these flags — other pages don't show the indicator.
+        const meta = await resolveRoomMetaById(m.room_id);
+        if (!meta) return;
+
+        if (meta.type === 'general') {
+          // Rolled-up flag drives wall + chat-hub general card. Skip if
+          // already on to avoid pointless setState/repaint churn.
+          if (!store.getState().hasUnreadChatGeneral) {
+            store.setState({ hasUnreadChatGeneral: true });
+          }
+        } else {
+          // Party room: set BOTH the rolled-up flag (drives the wall and
+          // the chat-hub "Chat por fiesta" card) AND the per-party
+          // entry in unreadChatRooms (drives the green dot on the
+          // specific row in chat-parties). Bail out early if both are
+          // already on for this party so we don't repaint pointlessly.
+          const cur = store.getState();
+          const partyId = meta.partyId;
+          const alreadyFlagged = cur.hasUnreadChatParty && cur.unreadChatRooms?.[partyId];
+          if (!alreadyFlagged) {
+            store.setState({
+              hasUnreadChatParty: true,
+              unreadChatRooms: { ...(cur.unreadChatRooms || {}), [partyId]: true },
+            });
+          }
+        }
+
+        // Repaint only on the routes that consume these signals.
+        // chat-parties is new in this set — it now shows a per-row
+        // dot driven by state.unreadChatRooms.
         const route = router.getCurrentRoute();
-        if (route === 'wall' || route === 'chat-hub') router.refreshCurrentRoute();
+        if (route === 'wall' || route === 'chat-hub' || route === 'chat-parties') {
+          router.refreshCurrentRoute();
+        }
       })
     // Questions: new INSERTs mean someone asked the target a question →
     // surface as a notification on the target's device. UPDATEs are the
@@ -922,6 +953,60 @@ export function subscribeRealtime(store) {
         }
         const route = router.getCurrentRoute();
         if (route === 'profile' || route === 'profile-other' || route === 'notifications') {
+          router.refreshCurrentRoute();
+        }
+      })
+    // Party attendance: someone confirmed they're going (INSERT) or
+    // cancelled (DELETE). Folded into BOTH party.attendees[] (cheap
+    // lookups) and state.attendanceLog (timestamped feed used by the
+    // promoter's notification derivation). Skip the echo of OUR own
+    // insert since toggleAttendance already updated local state
+    // optimistically — without the skip we'd push the same uid twice.
+    .on('postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'party_attendees' },
+      (payload) => {
+        const a = payload.new;
+        if (!a) return;
+        const state = store.getState();
+        if (state.currentUser && a.user_id === state.currentUser.id) return;
+
+        const parties = state.parties.map(p => {
+          if (p.id !== a.party_id) return p;
+          if (p.attendees.includes(a.user_id)) return p;
+          return { ...p, attendees: [...p.attendees, a.user_id] };
+        });
+        const logKey = `${a.party_id}:${a.user_id}`;
+        const log = (state.attendanceLog || []).some(x => `${x.partyId}:${x.userId}` === logKey)
+          ? state.attendanceLog
+          : [{ partyId: a.party_id, userId: a.user_id, attendedAt: new Date(a.attended_at) },
+             ...(state.attendanceLog || [])];
+        store.setState({ parties, attendanceLog: log });
+
+        const route = router.getCurrentRoute();
+        if (route === 'wall' || route === 'parties' || route === 'party-detail'
+            || route === 'notifications') {
+          router.refreshCurrentRoute();
+        }
+      })
+    .on('postgres_changes',
+      { event: 'DELETE', schema: 'public', table: 'party_attendees' },
+      (payload) => {
+        const a = payload.old;
+        if (!a) return;
+        const state = store.getState();
+        if (state.currentUser && a.user_id === state.currentUser.id) return;
+
+        const parties = state.parties.map(p => {
+          if (p.id !== a.party_id) return p;
+          return { ...p, attendees: p.attendees.filter(u => u !== a.user_id) };
+        });
+        const log = (state.attendanceLog || []).filter(
+          x => !(x.partyId === a.party_id && x.userId === a.user_id)
+        );
+        store.setState({ parties, attendanceLog: log });
+
+        const route = router.getCurrentRoute();
+        if (route === 'parties' || route === 'party-detail' || route === 'notifications') {
           router.refreshCurrentRoute();
         }
       })

@@ -2,12 +2,13 @@
 // FEEDBACK — Party Detail Page
 // ============================================
 
-import { store, ICONS, formatRelative } from '../data/mock-data.js';
+import { store, ICONS } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { showToast } from '../utils/toast.js';
 import { avatarHTML, sanitize } from '../utils/helpers.js';
 import { createModal, hashStr } from '../utils/dom.js';
 import { fileToResizedDataURL } from '../utils/image.js';
+import { renderPostCard, bindPostCardActions } from './wall.js';
 
 const PARTY_CITIES = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena'];
 const PARTY_GENRES = [
@@ -60,8 +61,8 @@ export function renderPartyDetail(container, params = {}) {
       ` : `
         <div class="party-flyer-placeholder" style="border-radius:var(--radius-lg);margin-bottom:var(--space-lg);height:220px;background:linear-gradient(135deg, hsl(${hashStr(party.name) % 360}, 60%, 25%), hsl(${(hashStr(party.name) + 60) % 360}, 50%, 15%));">
           <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:var(--space-lg);">
-            <span style="font-family:var(--font-display);font-size:var(--text-3xl);font-weight:900;color:rgba(255,255,255,0.95);text-align:center;text-transform:uppercase;letter-spacing:3px;">${party.name}</span>
-            <span style="font-size:var(--text-sm);color:rgba(255,255,255,0.6);margin-top:8px;">${party.startTime} — ${party.endTime}</span>
+            <span style="font-family:var(--font-display);font-size:var(--text-3xl);font-weight:900;color:#fff;text-align:center;text-transform:uppercase;letter-spacing:3px;">${party.name}</span>
+            <span style="font-size:var(--text-sm);color:#fff;margin-top:8px;">${party.startTime} — ${party.endTime}</span>
           </div>
         </div>
       `}
@@ -145,31 +146,18 @@ export function renderPartyDetail(container, params = {}) {
       <!-- Thermometer / Live Reports -->
       ${renderThermometer(party)}
 
-      <!-- Posts from this party -->
-      <div style="margin-top:var(--space-xl);">
+      <!-- Posts from this party. Uses the SAME renderPostCard as the
+           wall so the visual (photo, like button, comment input, etc.)
+           is identical and any future card changes propagate to both
+           surfaces. bindPostCardActions below wires like / comment /
+           report / view-profile / view-all-comments. -->
+      <div id="party-posts-section" style="margin-top:var(--space-xl);">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-md);">
           <h3 style="font-size:var(--text-sm);font-weight:600;color:var(--text-secondary);">💬 Lo que dicen (${partyPosts.length})</h3>
           <button class="btn btn-ghost btn-sm" id="post-here-btn">Publicar aquí</button>
         </div>
         ${partyPosts.length > 0
-          ? partyPosts.map(post => {
-              const author = store.getUserById(post.userId);
-              if (!author) return '';
-              return `
-                <div class="card mb-sm">
-                  <div style="display:flex;align-items:center;gap:var(--space-sm);margin-bottom:var(--space-sm);">
-                    ${avatarHTML(author, 'avatar-sm')}
-                    <span style="font-size:var(--text-sm);font-weight:500;">${sanitize(author.name)}</span>
-                    <span style="font-size:var(--text-xs);color:var(--text-tertiary);margin-left:auto;">${formatRelative(new Date(post.createdAt))}</span>
-                  </div>
-                  <p style="font-size:var(--text-sm);color:var(--text-secondary);line-height:1.5;">${sanitize(post.content)}</p>
-                  <div style="display:flex;align-items:center;gap:var(--space-md);margin-top:var(--space-sm);">
-                    <span style="font-size:var(--text-xs);color:var(--text-tertiary);">❤️ ${post.likes}</span>
-                    <span style="font-size:var(--text-xs);color:var(--text-tertiary);">💬 ${post.replies}</span>
-                  </div>
-                </div>
-              `;
-            }).join('')
+          ? partyPosts.map(post => renderPostCard(post, state)).join('')
           : `<div class="empty-state" style="padding:var(--space-lg);"><p class="empty-state-text">Aún no hay publicaciones de esta fiesta</p></div>`
         }
       </div>
@@ -194,8 +182,21 @@ export function renderPartyDetail(container, params = {}) {
     router.navigate('create-post', { partyId });
   });
 
-  // Profile clicks
+  // Post-card actions (like / comment / report / view-profile / etc).
+  // Delegated on the posts section so toggling like or sending a
+  // comment refreshes the party-detail page in place — same handler
+  // wall.js uses, just with a different `refresh` callback.
+  const postsRoot = container.querySelector('#party-posts-section');
+  if (postsRoot) {
+    bindPostCardActions(container, postsRoot, () => renderPartyDetail(container, params));
+  }
+
+  // Profile clicks OUTSIDE the posts section (promotor card, DJs).
+  // The post-card delegate above already handles in-post avatar/name
+  // taps, so we scope this fallback to the non-post UI to avoid
+  // double-binding the same buttons.
   container.querySelectorAll('[data-action="view-profile"]').forEach(el => {
+    if (postsRoot && postsRoot.contains(el)) return;
     el.addEventListener('click', () => {
       const userId = el.dataset.userId;
       store.setState({ viewingUserId: userId });
@@ -213,7 +214,7 @@ export function renderPartyDetail(container, params = {}) {
   }
   const deleteBtn = container.querySelector('#delete-event-btn');
   if (deleteBtn) {
-    deleteBtn.addEventListener('click', () => showDeletePartyConfirm(container, party));
+    deleteBtn.addEventListener('click', () => showDeletePartyConfirm(party));
   }
 }
 
@@ -373,7 +374,7 @@ function showEditPartyModal(container, party, params) {
 // =====================================================================
 // Delete confirmation
 // =====================================================================
-function showDeletePartyConfirm(container, party) {
+function showDeletePartyConfirm(party) {
   const overlay = createModal(`
     <div class="modal" style="max-width:400px;">
       <div class="modal-handle"></div>

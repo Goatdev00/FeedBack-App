@@ -113,11 +113,21 @@ export function refreshFromSupabaseInBackground(knownSession) {
   const pParties = Promise.all([listParties(), listAttendees()])
     .then(([parties, attendees]) => {
       const byParty = new Map(parties.map((p) => [p.id, p]));
+      // Build the timestamped log used by the promoter notifications
+      // derivation in parallel with the per-party attendees array. We
+      // sort newest-first so getNotifications() doesn't have to.
+      const log = [];
       for (const a of attendees) {
         const p = byParty.get(a.party_id);
         if (p) p.attendees.push(a.user_id);
+        log.push({
+          partyId: a.party_id,
+          userId: a.user_id,
+          attendedAt: a.attended_at ? new Date(a.attended_at) : null,
+        });
       }
-      store.setState({ parties });
+      log.sort((a, b) => (b.attendedAt?.getTime() || 0) - (a.attendedAt?.getTime() || 0));
+      store.setState({ parties, attendanceLog: log });
       maybeRefreshRoute();
       mark(`parties (${parties.length})`);
     })
