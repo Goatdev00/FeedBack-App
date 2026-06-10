@@ -968,14 +968,45 @@ class Store {
   }
 
   // --- Points ---
-  // `reason` kept in signature for activity-log forward-compat; not persisted yet.
-  addPoints(amount, _reason) {
+  // Optimistic local bump for instant UI feedback, THEN persist the delta
+  // to Supabase (profiles.points) via the award_points RPC. profiles.points
+  // is what syncProfileIntoStore() reads on every boot, so without the
+  // server write the bump below is wiped on the next reload — that was the
+  // "points never add up" bug. On success we reconcile to the server's
+  // authoritative total (corrects any prior drift); on failure we roll the
+  // optimistic bump back so the UI never shows points that didn't land.
+  addPoints(amount, reason) {
     if (!this.state.currentUser) return;
-    this.state.currentUser.points = (this.state.currentUser.points || 0) + amount;
-    const user = this.state.users.find(u => u.id === this.state.currentUser.id);
-    if (user) user.points = this.state.currentUser.points;
+    const mirror = (val) => {
+      this.state.currentUser.points = val;
+      const u = this.state.users.find(x => x.id === this.state.currentUser.id);
+      if (u) u.points = val;
+    };
+
+    mirror((this.state.currentUser.points || 0) + amount);
     this.saveState();
     this.notify();
+
+    if (_api?.awardPoints) {
+      _api.awardPoints(amount, reason)
+        .then(total => {
+          if (typeof total !== 'number' || !this.state.currentUser) return;
+          // Common case: server total === optimistic value → nothing to
+          // repaint. Only reconcile (and re-render) when they diverge,
+          // e.g. another device awarded points since the last sync.
+          if (total === this.state.currentUser.points) return;
+          mirror(total);
+          this.saveState();
+          this.notify();
+        })
+        .catch(err => {
+          console.warn('[store] awardPoints persist failed', err);
+          if (!this.state.currentUser) return;
+          mirror(Math.max(0, (this.state.currentUser.points || 0) - amount));
+          this.saveState();
+          this.notify();
+        });
+    }
     return amount;
   }
 
@@ -1013,14 +1044,18 @@ class Store {
         if (!this.state.awardedFollows) this.state.awardedFollows = [];
         if (!this.state.awardedFollows.includes(pairKey)) {
           this.state.awardedFollows.push(pairKey);
-          // +10 to current user (mirrored in users[])
-          this.state.currentUser.points = (this.state.currentUser.points || 0) + 10;
-          const me = this.state.users.find(u => u.id === uid);
-          if (me) me.points = this.state.currentUser.points;
-          // +10 to the other party
+          // +10 to the other party — LOCAL ONLY. RLS forbids writing
+          // another user's profiles.points row from the client, so this
+          // bump is cosmetic on this device; their authoritative total is
+          // untouched and will be correct from their own profiles row. A
+          // future follows trigger could award both sides server-side.
           const other = this.state.users.find(u => u.id === targetId);
           if (other) other.points = (other.points || 0) + 10;
           awarded = true;
+          // +10 to the current user — persisted to Supabase like every
+          // other award. addPoints() handles the optimistic bump, the
+          // users[] mirror, saveState/notify and the server write.
+          this.addPoints(10, 'Conexión mutua');
         }
       }
     }

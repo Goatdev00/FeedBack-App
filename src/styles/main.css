@@ -1817,6 +1817,30 @@ span > svg {
   background: rgba(255, 106, 0, 0.05);
 }
 
+/* Locked role (currently Promotor — issued manually by the team).
+   Reduced opacity reads as "available but not for you right now"
+   without removing the card from the layout. The click handler in
+   onboarding.js catches taps and explains via toast; this CSS just
+   sets the visual cue. The :hover override prevents the border-medium
+   flash so the card doesn't suggest interactivity. */
+.role-card.role-locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.role-card.role-locked:hover {
+  border-color: var(--border-light);
+}
+
+/* The lock badge next to the role name. Inline-flex so it sits on the
+   same baseline as the "Promotor" text without breaking the heading. */
+.role-lock {
+  display: inline-flex;
+  margin-left: 6px;
+  font-size: 0.9em;
+  vertical-align: middle;
+  opacity: 0.85;
+}
+
 .role-emoji {
   font-size: 2rem;
 }

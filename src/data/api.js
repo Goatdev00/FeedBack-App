@@ -239,6 +239,26 @@ export async function reportPost(postId, reason) {
 }
 
 // =====================================================================
+// POINTS — atomic, server-side persisted award
+// =====================================================================
+// The store bumps points optimistically in memory; this persists the
+// delta to profiles.points via the award_points() RPC (migration 0020)
+// and returns the NEW total so the store can reconcile. Without this the
+// optimistic bump lived only on currentUser/users[], both excluded from
+// the cloud blob, so syncProfileIntoStore() reset points to the profile
+// default on every reload. Atomic increment server-side means two quick
+// awards can't clobber each other.
+export async function awardPoints(amount, reason) {
+  if (!isSupabaseConfigured()) return null;
+  const { data, error } = await supabase.rpc('award_points', {
+    p_amount: amount,
+    p_reason: reason ?? null,
+  });
+  if (error) throw error;
+  return data; // new total (integer)
+}
+
+// =====================================================================
 // LIKES
 // =====================================================================
 export async function toggleLike(postId) {
@@ -634,6 +654,7 @@ registerApi({
   deleteParty,
   patchProfileTheme,
   reportPost,
+  awardPoints,
   createQuestion,
   answerQuestion,
 });

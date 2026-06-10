@@ -64,11 +64,11 @@ function renderStep(container) {
               <p>Tocas en fiestas, te vinculas a eventos y muestras tu arte.</p>
             </div>
           </div>
-          <div class="role-card ${formData.role === 'promotor' ? 'selected' : ''}" data-role="promotor">
+          <div class="role-card role-locked" data-role="promotor" aria-disabled="true">
             <span class="role-emoji">✨</span>
             <div class="role-info">
-              <h3>Promotor</h3>
-              <p>Creas eventos, subes flyers y gestionas tu comunidad.</p>
+              <h3>Promotor <span class="role-lock" aria-hidden="true">🔒</span></h3>
+              <p>Cuenta verificada por el equipo de FEEDBACK. Contáctanos para habilitar tu perfil.</p>
             </div>
           </div>
         </div>
@@ -182,6 +182,13 @@ function bindStepEvents(container) {
   if (currentStep === 2) {
     container.querySelectorAll('.role-card').forEach(card => {
       card.addEventListener('click', () => {
+        // Locked roles (currently: promotor — issued manually by the
+        // team) silently absorb the click and surface a friendly toast
+        // explaining the gate. No selection state changes.
+        if (card.classList.contains('role-locked')) {
+          showToast('Las cuentas de Promotor las verificamos manualmente. Escríbenos por Instagram para habilitarte.', 'info', 4500);
+          return;
+        }
         container.querySelectorAll('.role-card').forEach(c => c.classList.remove('selected'));
         card.classList.add('selected');
         formData.role = card.dataset.role;
