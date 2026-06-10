@@ -8,7 +8,8 @@ import { showToast, showPointsToast } from '../utils/toast.js';
 import { avatarHTML, roleLabel, roleBadgeClass, roleTitle, sanitize, debounce } from '../utils/helpers.js';
 import { createModal } from '../utils/dom.js';
 import { renderBottomNav, bindNavEvents } from '../components/nav.js';
-import { isSupabaseConfigured } from '../data/supabase.js';
+import { isSupabaseConfigured, supabase } from '../data/supabase.js';
+import { createSupportTicket } from '../data/api.js';
 import { signOut } from '../data/auth.js';
 import { clearLocalSession, requireCurrentUser, patchProfile } from '../data/profile-sync.js';
 import { flushCloudSave } from '../data/cloud-state.js';
@@ -685,11 +686,20 @@ function showEditProfileModal(container, user) {
 
 function showSettingsModal() {
   const overlay = createModal(`
-    <div class="modal" style="max-height:40dvh;">
+    <div class="modal" style="max-height:70dvh;">
       <div class="modal-handle"></div>
       <h2 class="modal-title">Configuración</h2>
 
       <div style="display:flex;flex-direction:column;gap:var(--space-sm);">
+        <button class="btn btn-secondary btn-full" id="btn-support" style="justify-content:flex-start;align-items:flex-start;flex-direction:column;gap:3px;height:auto;padding:12px 16px;text-align:left;">
+          <span style="display:inline-flex;align-items:center;gap:8px;font-weight:600;">
+            <span style="width:18px;height:18px;display:inline-flex;">${ICONS.help}</span>
+            Habla con soporte
+          </span>
+          <span style="font-size:0.78rem;color:var(--text-tertiary);font-weight:400;line-height:1.35;padding-left:26px;">
+            ¿Se te presentó un error o tienes una petición?
+          </span>
+        </button>
         <button class="btn btn-secondary btn-full" id="btn-logout" style="justify-content:flex-start;color:var(--orange);">
           ${ICONS.logout}
           Cerrar sesión
@@ -700,6 +710,11 @@ function showSettingsModal() {
       </div>
     </div>
   `);
+
+  overlay.querySelector('#btn-support').addEventListener('click', () => {
+    overlay.close();
+    showSupportModal(store.getState().currentUser);
+  });
 
   overlay.querySelector('#btn-logout').addEventListener('click', async () => {
     overlay.close();
@@ -720,6 +735,80 @@ function showSettingsModal() {
     overlay.close();
     router.navigate('login');
     showToast('App reiniciada', 'info');
+  });
+}
+
+// Dedicated "Habla con soporte" form: name / email / message → one row in
+// public.support_tickets (the team reads them from the Supabase dashboard).
+// Name is prefilled from the profile; email from the auth session (it's
+// not stored on the profile, so we fill it asynchronously after the modal
+// mounts). Both stay editable.
+function showSupportModal(user) {
+  const overlay = createModal(`
+    <div class="modal" style="max-height:85dvh;overflow-y:auto;">
+      <div class="modal-handle"></div>
+      <h2 class="modal-title">Habla con soporte</h2>
+      <p style="color:var(--text-secondary);font-size:0.9rem;line-height:1.5;margin:0 0 var(--space-lg);">
+        ¿Se te presentó un error o tienes una petición? Cuéntanos y te respondemos lo antes posible.
+      </p>
+
+      <div class="input-group mb-md">
+        <label class="input-label">Nombre</label>
+        <input type="text" class="input" id="support-name" value="${sanitize(user?.name || '')}" maxlength="80" placeholder="Tu nombre" />
+      </div>
+      <div class="input-group mb-md">
+        <label class="input-label">Correo</label>
+        <input type="email" class="input" id="support-email" inputmode="email" autocomplete="email" maxlength="160" placeholder="tucorreo@ejemplo.com" />
+      </div>
+      <div class="input-group mb-md">
+        <label class="input-label">Petición o mejora</label>
+        <textarea class="input textarea" id="support-message" maxlength="2000" style="min-height:120px;" placeholder="Describe el error que viste o la mejora que te gustaría…"></textarea>
+      </div>
+
+      <div style="display:flex;gap:var(--space-sm);">
+        <button class="btn btn-secondary" id="support-cancel" style="flex:1;">Cancelar</button>
+        <button class="btn btn-primary" id="support-send" style="flex:1;">Enviar</button>
+      </div>
+    </div>
+  `);
+
+  // Prefill the email from the auth session (not stored on the profile).
+  // Fired after mount so the modal opens instantly; the value lands a tick
+  // later (usually instant — the session is cached).
+  if (isSupabaseConfigured()) {
+    supabase.auth.getSession()
+      .then(({ data: { session } }) => {
+        const email = session?.user?.email;
+        const input = overlay.querySelector('#support-email');
+        if (email && input && !input.value) input.value = email;
+      })
+      .catch(() => { /* noop — user can type it */ });
+  }
+
+  overlay.querySelector('#support-cancel').addEventListener('click', () => overlay.close());
+
+  overlay.querySelector('#support-send').addEventListener('click', async () => {
+    const name = overlay.querySelector('#support-name').value.trim();
+    const email = overlay.querySelector('#support-email').value.trim();
+    const message = overlay.querySelector('#support-message').value.trim();
+
+    if (!name) { showToast('Escribe tu nombre', 'error'); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showToast('Escribe un correo válido', 'error'); return; }
+    if (!message) { showToast('Cuéntanos tu petición o el error', 'error'); return; }
+
+    const sendBtn = overlay.querySelector('#support-send');
+    sendBtn.disabled = true;
+    sendBtn.textContent = 'Enviando…';
+    try {
+      await createSupportTicket({ name, email, message });
+      overlay.close();
+      showToast('¡Mensaje enviado! Te responderemos pronto 🙌', 'success', 4000);
+    } catch (err) {
+      console.error('[support] send failed', err);
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Enviar';
+      showToast('No se pudo enviar. Intenta de nuevo.', 'error');
+    }
   });
 }
 

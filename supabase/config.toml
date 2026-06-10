@@ -52,6 +52,9 @@ verify_jwt = false
 [functions.send-push]
 verify_jwt = false
 
+[functions.notify-support-ticket]
+verify_jwt = false
+
 [storage]
 enabled = true
 file_size_limit = "10MiB"

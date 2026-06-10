@@ -243,7 +243,21 @@ body {
 a { color: inherit; text-decoration: none; }
 button { font-family: inherit; cursor: pointer; border: none; background: none; }
 input, textarea, select { font-family: inherit; }
-img { max-width: 100%; display: block; }
+img {
+  max-width: 100%;
+  display: block;
+  /* Block the browser's default photo-grab affordances. iOS Safari's
+     long-press "Guardar/Copiar imagen" callout is killed by
+     -webkit-touch-callout; desktop drag-to-save by -webkit-user-drag.
+     Android Chrome + desktop right-click are handled in JS
+     (utils/image-protection.js) since touch-callout is WebKit-only.
+     Deterrence only — screenshots / the raw URL still work. */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
 ul, ol { list-style: none; }
 
 /* Force inline SVGs to respect container */

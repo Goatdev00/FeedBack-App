@@ -259,6 +259,36 @@ export async function awardPoints(amount, reason) {
 }
 
 // =====================================================================
+// SUPPORT — "Habla con soporte"
+// =====================================================================
+// Files one row into support_tickets (migration 0022). Write-only: we do
+// NOT chain .select() because the table has no SELECT policy for
+// authenticated users, so reading the row back would fail RLS. We only
+// need to know the insert landed (error === null).
+export async function createSupportTicket({ name, email, message }) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
+  if (!user) throw new Error('not_authenticated');
+  const { error } = await supabase
+    .from('support_tickets')
+    .insert({ user_id: user.id, name, email, message });
+  if (error) throw error;
+
+  // Best-effort email notification to the support inbox via Resend (edge
+  // function notify-support-ticket). The ticket is already saved, so an
+  // email failure must NOT surface to the user — just log it. If the
+  // function/secrets aren't deployed yet, this quietly no-ops.
+  try {
+    await supabase.functions.invoke('notify-support-ticket', {
+      body: { name, email, message },
+    });
+  } catch (e) {
+    console.warn('[support] email notification failed (ticket still saved)', e);
+  }
+}
+
+// =====================================================================
 // LIKES
 // =====================================================================
 export async function toggleLike(postId) {

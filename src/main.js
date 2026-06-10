@@ -22,6 +22,7 @@ import { showToast } from './utils/toast.js';
 registerErrorSurface((msg) => showToast(msg, 'error', 4500));
 import { bindNavEvents, mountBottomNav, setBottomNav } from './components/nav.js';
 import { initLavaLamp } from './utils/lava-lamp.js';
+import { initImageProtection } from './utils/image-protection.js';
 import { createModal } from './utils/dom.js';
 import { isSupabaseConfigured } from './data/supabase.js';
 import { onAuthChange } from './data/auth.js';
@@ -120,6 +121,11 @@ if ('serviceWorker' in navigator) {
 // <canvas id="lava-canvas"> in index.html; don't pass anything unless
 // you've also renamed the element and updated main.css accordingly.
 initLavaLamp();
+
+// Block long-press "save/copy image" + drag-to-save on all photos.
+// Delegated on document so it also covers images injected by later route
+// re-renders. Pairs with the img CSS rules in main.css (iOS callout).
+initImageProtection();
 
 // Persistent bottom nav — populate the <nav id="bottom-nav"> element in
 // index.html once. From here on each route's setBottomNav(tab) only
