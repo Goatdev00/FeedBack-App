@@ -5,6 +5,7 @@
 import { store, ICONS, SUNDAY_CATEGORIES } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { showToast, showPointsToast } from '../utils/toast.js';
+import { sanitize } from '../utils/helpers.js';
 
 export function renderSundayRating(container) {
   const state = store.getState();
@@ -72,8 +73,8 @@ export function renderSundayRating(container) {
         </div>
 
         <div class="card" style="text-align:center;margin-bottom:var(--space-xl);padding:var(--space-lg);background:linear-gradient(135deg, rgba(255,106,0,0.08), rgba(63,10,116,0.08));border-color:var(--border-orange);">
-          <h3 style="font-family:var(--font-display);font-size:var(--text-xl);font-weight:700;">${party.name}</h3>
-          <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-top:4px;">${party.venue} · ${party.city}</p>
+          <h3 style="font-family:var(--font-display);font-size:var(--text-xl);font-weight:700;">${sanitize(party.name)}</h3>
+          <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-top:4px;">${sanitize(party.venue)} · ${sanitize(party.city)}</p>
         </div>
 
         <!-- Rating Categories -->

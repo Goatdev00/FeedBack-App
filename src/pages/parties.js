@@ -5,7 +5,7 @@
 import { store, ICONS, isSunday } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { showToast } from '../utils/toast.js';
-import { avatarHTML, debounce, sanitize } from '../utils/helpers.js';
+import { avatarHTML, debounce, sanitize, safeImageSrc } from '../utils/helpers.js';
 import { hashStr } from '../utils/dom.js';
 import { renderBottomNav, bindNavEvents } from '../components/nav.js';
 
@@ -112,10 +112,11 @@ function renderPartyCard(party, state) {
     ? `<div style="position:absolute;top:12px;right:12px;padding:4px 10px;background:rgba(255,106,0,0.9);border-radius:var(--radius-full);font-size:0.625rem;font-weight:700;color:white;">🔥 EN VIVO</div>`
     : '';
 
-  const hero = party.flyer
+  const flyerSrc = safeImageSrc(party.flyer);
+  const hero = flyerSrc
     ? `
       <div class="party-flyer-container" style="position:relative;">
-        <img src="${party.flyer}" alt="${sanitize(party.name)}" class="party-flyer" style="width:100%;height:200px;object-fit:cover;" />
+        <img src="${flyerSrc}" alt="${sanitize(party.name)}" class="party-flyer" style="width:100%;height:200px;object-fit:cover;" />
         ${liveBadge}
       </div>
     `
@@ -123,7 +124,7 @@ function renderPartyCard(party, state) {
       <div class="party-flyer-placeholder" style="background:linear-gradient(135deg, hsl(${hashStr(party.name) % 360}, 60%, 25%), hsl(${(hashStr(party.name) + 60) % 360}, 50%, 15%));">
         <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:var(--space-lg);">
           <span style="font-family:var(--font-display);font-size:var(--text-2xl);font-weight:800;color:#fff;text-align:center;text-transform:uppercase;letter-spacing:2px;">${sanitize(party.name)}</span>
-          <span style="font-size:var(--text-xs);color:#fff;margin-top:8px;">${party.startTime} — ${party.endTime}</span>
+          <span style="font-size:var(--text-xs);color:#fff;margin-top:8px;">${sanitize(party.startTime)} — ${sanitize(party.endTime)}</span>
         </div>
         ${liveBadge}
       </div>

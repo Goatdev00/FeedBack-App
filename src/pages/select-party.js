@@ -61,7 +61,7 @@ function renderPartyOption(party) {
           ${party.sponsored ? '⭐ ' : ''}${sanitize(party.name)}
         </div>
         <div class="party-selector-detail">
-          📍 ${sanitize(party.venue)} · ${sanitize(party.city)} · ${party.startTime}
+          📍 ${sanitize(party.venue)} · ${sanitize(party.city)} · ${sanitize(party.startTime)}
         </div>
         <div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;">
           ${party.genres.map(g => `<span class="tag" style="padding:2px 8px;font-size:0.5625rem;">${sanitize(g)}</span>`).join('')}

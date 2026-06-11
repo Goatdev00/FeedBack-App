@@ -52,28 +52,36 @@ export function renderProfileOther(container, params = {}) {
 function renderSocialLinks(user) {
   const social = user.social || {};
   const links = [];
-  
+
+  // Handles are user-controlled input: strip any leading "@", URL-encode
+  // for the href (quotes/slashes can't break the attribute or redirect
+  // off-domain) and escape for the visible text.
+  const handleOf = (raw) => String(raw || '').trim().replace(/^@+/, '');
+
   if (social.instagram) {
+    const h = handleOf(social.instagram);
     links.push(`
-      <a href="https://instagram.com/${social.instagram}" target="_blank" rel="noopener" class="social-link social-instagram" title="Instagram">
+      <a href="https://instagram.com/${encodeURIComponent(h)}" target="_blank" rel="noopener" class="social-link social-instagram" title="Instagram">
         <span class="social-icon">${ICONS.instagram}</span>
-        <span class="social-handle">@${social.instagram}</span>
+        <span class="social-handle">@${sanitize(h)}</span>
       </a>
     `);
   }
   if (social.tiktok) {
+    const h = handleOf(social.tiktok);
     links.push(`
-      <a href="https://tiktok.com/@${social.tiktok}" target="_blank" rel="noopener" class="social-link social-tiktok" title="TikTok">
+      <a href="https://tiktok.com/@${encodeURIComponent(h)}" target="_blank" rel="noopener" class="social-link social-tiktok" title="TikTok">
         <span class="social-icon">${ICONS.tiktok}</span>
-        <span class="social-handle">@${social.tiktok}</span>
+        <span class="social-handle">@${sanitize(h)}</span>
       </a>
     `);
   }
   if (social.twitter) {
+    const h = handleOf(social.twitter);
     links.push(`
-      <a href="https://x.com/${social.twitter}" target="_blank" rel="noopener" class="social-link social-twitter" title="X (Twitter)">
+      <a href="https://x.com/${encodeURIComponent(h)}" target="_blank" rel="noopener" class="social-link social-twitter" title="X (Twitter)">
         <span class="social-icon">${ICONS.twitter}</span>
-        <span class="social-handle">@${social.twitter}</span>
+        <span class="social-handle">@${sanitize(h)}</span>
       </a>
     `);
   }
@@ -141,7 +149,7 @@ function renderProfileView(container, user, isOwn, initialTab) {
           
           <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
             <span style="width:14px;height:14px;display:inline-flex;color:var(--text-primary);">${ICONS.location}</span>
-            <span style="font-size:var(--text-sm);color:var(--text-primary);">${user.city}</span>
+            <span style="font-size:var(--text-sm);color:var(--text-primary);">${sanitize(user.city)}</span>
           </div>
 
           ${user.bio ? `<p class="profile-bio">${sanitize(user.bio)}</p>` : ''}
@@ -317,11 +325,23 @@ function renderQuestionsTab(questions, isOwn, userId) {
   // Owner sees pending (unanswered) here. Visitors only ever see
   // answered Q&A (RLS hides unanswered from them anyway), so the top
   // section is only meaningful on the owner's view.
+  // Owner-only delete affordance. The RLS questions_delete policy (0017)
+  // already allowed the target to remove harassing questions — this is
+  // the UI that was missing for it.
+  const deleteBtn = (q) => `
+    <button class="question-delete-btn" data-question-id="${q.id}"
+            title="Eliminar pregunta" aria-label="Eliminar pregunta"
+            style="background:none;border:none;cursor:pointer;padding:2px 6px;font-size:0.9rem;color:var(--text-tertiary);line-height:1;">🗑</button>
+  `;
+
   if (isOwn && unansweredQ.length > 0) {
     listHtml += sectionTitle('📩 Te han hecho', unansweredQ.length);
     listHtml += unansweredQ.map(q => `
       <div class="question-card">
-        <div class="question-anonymous">Anónimo · ${formatRelative(new Date(q.createdAt))}</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm);">
+          <div class="question-anonymous">Anónimo · ${formatRelative(new Date(q.createdAt))}</div>
+          ${deleteBtn(q)}
+        </div>
         <div class="question-text">${sanitize(q.question)}</div>
         <div style="display:flex;gap:var(--space-sm);">
           <input type="text" class="input" placeholder="Tu respuesta..." data-question-id="${q.id}" style="flex:1;padding:10px 14px;font-size:var(--text-sm);" />
@@ -341,7 +361,10 @@ function renderQuestionsTab(questions, isOwn, userId) {
     );
     listHtml += answeredQ.map(q => `
       <div class="question-card">
-        <div class="question-anonymous">Anónimo · ${formatRelative(new Date(q.createdAt))}</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm);">
+          <div class="question-anonymous">Anónimo · ${formatRelative(new Date(q.createdAt))}</div>
+          ${isOwn ? deleteBtn(q) : ''}
+        </div>
         <div class="question-text">${sanitize(q.question)}</div>
         <div class="question-answer">${sanitize(q.answer)}</div>
       </div>
@@ -549,7 +572,7 @@ function bindProfileEvents(container, user, isOwn) {
             ${avatarHTML(u, 'avatar-sm')}
             <div style="flex:1;">
               <div style="font-size:var(--text-sm);font-weight:600;">${sanitize(u.name)}</div>
-              <div style="font-size:var(--text-xs);color:var(--text-tertiary);">${u.username} · ${u.city}</div>
+              <div style="font-size:var(--text-xs);color:var(--text-tertiary);">${sanitize(u.username)} · ${sanitize(u.city)}</div>
             </div>
             <span class="badge ${roleBadgeClass(u.role)}" style="font-size:0.5625rem;padding:2px 6px;">${roleTitle(u.role)}</span>
           </div>
@@ -584,6 +607,21 @@ function bindQuestionEvents(container, userId) {
       store.answerQuestion(qId, answer);
       showToast('Respuesta enviada +5 pts ⚡', 'points');
       // Re-render questions tab
+      const content = container.querySelector('#profile-tab-content');
+      const questions = store.getQuestionsForUser(userId);
+      const state = store.getState();
+      const isOwn = state.currentUser && state.currentUser.id === userId;
+      content.innerHTML = renderQuestionsTab(questions, isOwn, userId);
+      bindQuestionEvents(container, userId);
+    });
+  });
+
+  // Delete buttons (own profile only — the markup is gated by isOwn and
+  // RLS questions_delete restricts the DELETE to target_id = auth.uid()).
+  container.querySelectorAll('.question-delete-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      store.deleteQuestion(btn.dataset.questionId);
+      showToast('Pregunta eliminada', 'info');
       const content = container.querySelector('#profile-tab-content');
       const questions = store.getQuestionsForUser(userId);
       const state = store.getState();
@@ -663,24 +701,42 @@ function showEditProfileModal(container, user) {
 
   overlay.querySelector('#cancel-edit').addEventListener('click', () => overlay.close());
 
-  overlay.querySelector('#save-edit').addEventListener('click', () => {
+  overlay.querySelector('#save-edit').addEventListener('click', async () => {
     const name = overlay.querySelector('#edit-name').value.trim();
     const bio = overlay.querySelector('#edit-bio').value.trim();
     const city = overlay.querySelector('#edit-city').value;
-    const instagram = overlay.querySelector('#edit-instagram').value.trim();
-    const tiktok = overlay.querySelector('#edit-tiktok').value.trim();
-    const twitter = overlay.querySelector('#edit-twitter').value.trim();
+    const stripAt = (v) => v.trim().replace(/^@+/, '');
+    const instagram = stripAt(overlay.querySelector('#edit-instagram').value);
+    const tiktok = stripAt(overlay.querySelector('#edit-tiktok').value);
+    const twitter = stripAt(overlay.querySelector('#edit-twitter').value);
     if (!name) { showToast('El nombre es obligatorio', 'error'); return; }
 
-    const updatedUser = {
-      ...user, name, bio, city,
-      social: { instagram, tiktok, twitter }
-    };
-    const users = store.getState().users.map(u => u.id === user.id ? updatedUser : u);
-    store.setState({ currentUser: updatedUser, users, selectedCity: city });
-    overlay.close();
-    showToast('Perfil actualizado ✅', 'success');
-    renderProfile(container);
+    const saveBtn = overlay.querySelector('#save-edit');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Guardando…';
+    try {
+      // Persist to public.profiles FIRST — this was a silent-data-loss
+      // bug: the old handler only did store.setState, but currentUser is
+      // excluded from the cloud blob, so syncProfileIntoStore() reverted
+      // the edit on the next boot. patchProfile() (same path the avatar
+      // flow uses) writes the row AND merges it back into the store.
+      if (isSupabaseConfigured()) {
+        await patchProfile({ name, bio: bio || null, city, social: { instagram, tiktok, twitter } });
+      } else {
+        const updatedUser = { ...user, name, bio, city, social: { instagram, tiktok, twitter } };
+        const users = store.getState().users.map(u => u.id === user.id ? updatedUser : u);
+        store.setState({ currentUser: updatedUser, users });
+      }
+      store.setState({ selectedCity: city });
+      overlay.close();
+      showToast('Perfil actualizado ✅', 'success');
+      renderProfile(container);
+    } catch (err) {
+      console.error('[profile] save failed', err);
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Guardar';
+      showToast('No se pudo guardar el perfil. Intenta de nuevo.', 'error');
+    }
   });
 }
 
@@ -704,9 +760,6 @@ function showSettingsModal() {
           ${ICONS.logout}
           Cerrar sesión
         </button>
-        <button class="btn btn-ghost btn-full" id="btn-reset" style="justify-content:flex-start;color:var(--text-tertiary);">
-          Reiniciar datos (demo)
-        </button>
       </div>
     </div>
   `);
@@ -727,14 +780,6 @@ function showSettingsModal() {
     }
     clearLocalSession();
     router.navigate('login');
-  });
-
-  overlay.querySelector('#btn-reset').addEventListener('click', async () => {
-    if (isSupabaseConfigured()) await signOut();
-    store.resetState();
-    overlay.close();
-    router.navigate('login');
-    showToast('App reiniciada', 'info');
   });
 }
 

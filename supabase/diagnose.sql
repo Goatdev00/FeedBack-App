@@ -26,9 +26,13 @@ select 'TABLES',
 from pg_tables
 where schemaname = 'public'
   and tablename in (
+    -- live_ratings se ELIMINÓ en 0027 (feature descartada). Se mantiene
+    -- en esta lista a propósito: si aparece en el resultado, la 0027 NO
+    -- se ha aplicado en esa base de datos.
     'profiles','parties','party_djs','party_attendees','posts',
     'post_likes','post_comments','questions','follows','live_ratings',
-    'memberships','membership_transactions','chat_rooms','chat_messages','chat_mutes'
+    'memberships','membership_transactions','chat_rooms','chat_messages','chat_mutes',
+    'post_reports','push_subscriptions','user_app_state','support_tickets'
   )
 union all
 select 'FUNCTIONS',
@@ -38,10 +42,14 @@ from pg_proc p
 join pg_namespace n on n.oid = p.pronamespace
 where n.nspname = 'public'
   and p.proname in (
+    -- snapshot_rating_weight se ELIMINÓ en 0027 y los dev_mock_* en 0010,
+    -- pero se mantienen en esta lista a propósito: si alguno aparece en
+    -- el resultado, esas migraciones NO se han aplicado en esa base.
     'current_tier','tier_weight','is_party_host','posts_today',
     'handle_new_user','create_party_chat_rooms','snapshot_message_meta',
     'snapshot_rating_weight','activate_membership','cancel_membership',
-    'expire_memberships','dev_mock_activate_membership','dev_mock_cancel_membership'
+    'expire_memberships','dev_mock_activate_membership','dev_mock_cancel_membership',
+    'report_post','award_points','party_visible'
   )
 union all
 select 'COLUMNS',

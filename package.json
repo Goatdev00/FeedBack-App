@@ -15,7 +15,7 @@
     "supabase:reset": "supabase db reset",
     "supabase:push": "supabase db push",
     "supabase:link": "supabase link --project-ref $SUPABASE_PROJECT_REF",
-    "supabase:deploy": "supabase db push && supabase functions deploy bold-webhook && supabase functions deploy create-bold-checkout"
+    "supabase:deploy": "supabase db push && supabase functions deploy bold-webhook --no-verify-jwt && supabase functions deploy create-bold-checkout && supabase functions deploy send-push && supabase functions deploy notify-support-ticket"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4"

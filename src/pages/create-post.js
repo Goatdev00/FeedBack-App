@@ -5,7 +5,7 @@
 import { store, ICONS, REPORT_CATEGORIES } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { showToast, showPointsToast } from '../utils/toast.js';
-import { avatarHTML } from '../utils/helpers.js';
+import { avatarHTML, sanitize } from '../utils/helpers.js';
 import { fileToResizedDataURL } from '../utils/image.js';
 
 export function renderCreatePost(container, params = {}) {
@@ -46,8 +46,8 @@ export function renderCreatePost(container, params = {}) {
       <div class="card" style="display:flex;align-items:center;gap:var(--space-md);margin-bottom:var(--space-lg);padding:var(--space-sm) var(--space-md);">
         <span style="font-size:1.2rem;">📍</span>
         <div style="flex:1;">
-          <div style="font-size:var(--text-sm);font-weight:600;">${party.name}</div>
-          <div style="font-size:var(--text-xs);color:var(--text-tertiary);">${party.venue} · ${party.city}</div>
+          <div style="font-size:var(--text-sm);font-weight:600;">${sanitize(party.name)}</div>
+          <div style="font-size:var(--text-xs);color:var(--text-tertiary);">${sanitize(party.venue)} · ${sanitize(party.city)}</div>
         </div>
         <button class="btn btn-ghost btn-sm" id="change-party" style="font-size:var(--text-xs);">Cambiar</button>
       </div>
@@ -55,7 +55,7 @@ export function renderCreatePost(container, params = {}) {
       <!-- Author info -->
       <div style="display:flex;align-items:center;gap:var(--space-sm);margin-bottom:var(--space-md);">
         ${avatarHTML(user, 'avatar-sm')}
-        <span style="font-size:var(--text-sm);font-weight:500;">${user.name}</span>
+        <span style="font-size:var(--text-sm);font-weight:500;">${sanitize(user.name)}</span>
         <span class="post-counter" style="margin-left:auto;font-size:0.625rem;">
           ${remaining} publicaciones restantes
         </span>
@@ -65,7 +65,7 @@ export function renderCreatePost(container, params = {}) {
       <textarea 
         class="input textarea" 
         id="post-content" 
-        placeholder="¿Qué está pasando en ${party.name}? Comparte tu experiencia..." 
+        placeholder="¿Qué está pasando en ${sanitize(party.name)}? Comparte tu experiencia..."
         maxlength="500"
         style="min-height:140px;font-size:var(--text-base);border:none;background:transparent;padding:0;resize:none;"
         autofocus

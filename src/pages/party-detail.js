@@ -5,7 +5,7 @@
 import { store, ICONS } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { showToast } from '../utils/toast.js';
-import { avatarHTML, sanitize } from '../utils/helpers.js';
+import { avatarHTML, sanitize, safeImageSrc } from '../utils/helpers.js';
 import { createModal, hashStr } from '../utils/dom.js';
 import { fileToResizedDataURL } from '../utils/image.js';
 import { renderPostCard, bindPostCardActions } from './wall.js';
@@ -54,15 +54,15 @@ export function renderPartyDetail(container, params = {}) {
       </button>
 
       <!-- Flyer / Hero -->
-      ${party.flyer ? `
+      ${safeImageSrc(party.flyer) ? `
         <div style="position:relative;border-radius:var(--radius-lg);overflow:hidden;margin-bottom:var(--space-lg);">
-          <img src="${party.flyer}" alt="${party.name}" style="width:100%;height:220px;object-fit:cover;display:block;" />
+          <img src="${safeImageSrc(party.flyer)}" alt="${sanitize(party.name)}" style="width:100%;height:220px;object-fit:cover;display:block;" />
         </div>
       ` : `
         <div class="party-flyer-placeholder" style="border-radius:var(--radius-lg);margin-bottom:var(--space-lg);height:220px;background:linear-gradient(135deg, hsl(${hashStr(party.name) % 360}, 60%, 25%), hsl(${(hashStr(party.name) + 60) % 360}, 50%, 15%));">
           <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:var(--space-lg);">
-            <span style="font-family:var(--font-display);font-size:var(--text-3xl);font-weight:900;color:#fff;text-align:center;text-transform:uppercase;letter-spacing:3px;">${party.name}</span>
-            <span style="font-size:var(--text-sm);color:#fff;margin-top:8px;">${party.startTime} — ${party.endTime}</span>
+            <span style="font-family:var(--font-display);font-size:var(--text-3xl);font-weight:900;color:#fff;text-align:center;text-transform:uppercase;letter-spacing:3px;">${sanitize(party.name)}</span>
+            <span style="font-size:var(--text-sm);color:#fff;margin-top:8px;">${sanitize(party.startTime)} — ${sanitize(party.endTime)}</span>
           </div>
         </div>
       `}
@@ -73,21 +73,21 @@ export function renderPartyDetail(container, params = {}) {
           <span style="font-size:1.2rem;">📍</span>
           <div>
             <div style="font-size:var(--text-xs);color:var(--text-tertiary);">LUGAR</div>
-            <div style="font-size:var(--text-sm);font-weight:600;">${party.venue}</div>
+            <div style="font-size:var(--text-sm);font-weight:600;">${sanitize(party.venue)}</div>
           </div>
         </div>
         <div class="card" style="display:flex;align-items:center;gap:var(--space-sm);">
           <span style="font-size:1.2rem;">📅</span>
           <div>
             <div style="font-size:var(--text-xs);color:var(--text-tertiary);">FECHA</div>
-            <div style="font-size:var(--text-sm);font-weight:600;">${party.date}</div>
+            <div style="font-size:var(--text-sm);font-weight:600;">${sanitize(party.date)}</div>
           </div>
         </div>
         <div class="card" style="display:flex;align-items:center;gap:var(--space-sm);">
           <span style="font-size:1.2rem;">🏙️</span>
           <div>
             <div style="font-size:var(--text-xs);color:var(--text-tertiary);">CIUDAD</div>
-            <div style="font-size:var(--text-sm);font-weight:600;">${party.city}</div>
+            <div style="font-size:var(--text-sm);font-weight:600;">${sanitize(party.city)}</div>
           </div>
         </div>
         <div class="card" style="display:flex;align-items:center;gap:var(--space-sm);">
@@ -101,7 +101,7 @@ export function renderPartyDetail(container, params = {}) {
 
       <!-- Genres -->
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:var(--space-lg);">
-        ${party.genres.map(g => `<span class="tag active" style="pointer-events:none;">${g}</span>`).join('')}
+        ${party.genres.map(g => `<span class="tag active" style="pointer-events:none;">${sanitize(g)}</span>`).join('')}
       </div>
 
       ${party.description ? `
@@ -116,7 +116,7 @@ export function renderPartyDetail(container, params = {}) {
             ${avatarHTML(promotor, 'avatar-sm')}
             <div>
               <div style="font-size:var(--text-sm);font-weight:600;">${sanitize(promotor.name)}</div>
-              <div style="font-size:var(--text-xs);color:var(--text-tertiary);">${promotor.username}</div>
+              <div style="font-size:var(--text-xs);color:var(--text-tertiary);">${sanitize(promotor.username)}</div>
             </div>
           </div>
         </div>
@@ -130,7 +130,7 @@ export function renderPartyDetail(container, params = {}) {
               ${avatarHTML(dj, 'avatar-sm')}
               <div style="flex:1;">
                 <div style="font-size:var(--text-sm);font-weight:600;">${sanitize(dj.name)}</div>
-                <div style="font-size:var(--text-xs);color:var(--text-tertiary);">${dj.username}</div>
+                <div style="font-size:var(--text-xs);color:var(--text-tertiary);">${sanitize(dj.username)}</div>
               </div>
               <span class="badge badge-purple" style="font-size:0.5625rem;">🎧 DJ</span>
             </div>
@@ -237,7 +237,7 @@ function showEditPartyModal(container, party, params) {
       <div class="form-section">
         <div class="form-section-title">Flyer</div>
         <div id="edit-flyer-preview" style="${flyerData ? '' : 'display:none;'}position:relative;margin-bottom:var(--space-sm);">
-          <img id="edit-flyer-img" src="${flyerData || ''}" style="width:100%;border-radius:var(--radius-md);max-height:240px;object-fit:cover;" />
+          <img id="edit-flyer-img" src="${safeImageSrc(flyerData) || ''}" style="width:100%;border-radius:var(--radius-md);max-height:240px;object-fit:cover;" />
           <button type="button" class="btn btn-icon btn-secondary" id="edit-flyer-remove" style="position:absolute;top:8px;right:8px;width:32px;height:32px;">${ICONS.x}</button>
         </div>
         <button type="button" class="btn btn-ghost btn-sm" id="edit-flyer-pick" style="width:100%;">

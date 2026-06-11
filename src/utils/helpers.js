@@ -24,12 +24,14 @@ export function getInitials(name) {
 
 /** Create avatar HTML (image or placeholder) */
 export function avatarHTML(user, sizeClass = 'avatar-md', extraClass = '') {
-  if (user.avatar) {
-    return `<img src="${user.avatar}" alt="${user.name}" class="avatar ${sizeClass} ${extraClass}" />`;
+  const name = user?.name || '?';
+  const src = safeImageSrc(user?.avatar);
+  if (src) {
+    return `<img src="${src}" alt="${sanitize(name)}" class="avatar ${sizeClass} ${extraClass}" />`;
   }
-  const bg = stringToColor(user.name);
-  const initials = getInitials(user.name);
-  return `<div class="avatar avatar-placeholder ${sizeClass} ${extraClass}" style="background:${bg}">${initials}</div>`;
+  const bg = stringToColor(name);
+  const initials = getInitials(name);
+  return `<div class="avatar avatar-placeholder ${sizeClass} ${extraClass}" style="background:${bg}">${sanitize(initials)}</div>`;
 }
 
 const ROLE_LABEL_MAP = {
@@ -69,9 +71,33 @@ export function debounce(fn, delay = 300) {
   };
 }
 
-/** Sanitize HTML (escape text for safe interpolation in templates). */
+/** Sanitize/escape a value for safe interpolation in HTML templates.
+ *  Escapes &, <, >, " and ' so the result is inert in BOTH text nodes
+ *  and quoted attribute values (src/alt/value/placeholder). The previous
+ *  textContent→innerHTML trick left quotes intact, which let user data
+ *  break out of attribute context — see the jun-2026 audit (XSS C1). */
 export function sanitize(str) {
-  const div = document.createElement('div');
-  div.textContent = str == null ? '' : String(str);
-  return div.innerHTML;
+  return str == null ? '' : String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** Validate + escape a user-controlled image URL for use in src="…".
+ *  Allows https, same-origin paths, blob: previews and data:image/ URIs
+ *  (avatars/flyers/posts are stored as data URLs until the Storage
+ *  migration). Anything else — javascript:, data:text/html, etc. —
+ *  returns null so the caller can fall back to a placeholder. */
+export function safeImageSrc(url) {
+  if (typeof url !== 'string') return null;
+  const v = url.trim();
+  // Single leading "/" only — "//evil.com" is protocol-relative, and
+  // browsers also treat "\" as "/" in the authority part, so "/\evil.com"
+  // resolves cross-origin too. Reject both.
+  if (/^(https:\/\/|data:image\/|blob:)/i.test(v) || /^\/(?![/\\])/.test(v)) {
+    return sanitize(v);
+  }
+  return null;
 }

@@ -514,15 +514,20 @@ export async function listChatMessages(roomKey, limit = 100) {
   if (!isSupabaseConfigured()) return [];
   const roomId = await resolveChatRoomId(roomKey);
   if (!roomId) return [];
+  // Order DESC + limit fetches the LATEST `limit` messages (the previous
+  // ASC + limit returned the 100 OLDEST rows of the room's history, so
+  // any room past 100 messages looked frozen in the past forever). The
+  // reverse() below restores chronological order for rendering. Backed
+  // by the chat_messages_room_idx (room_id, created_at desc) index.
   const { data, error } = await supabase
     .from('chat_messages')
     .select('id, room_id, user_id, content, author_tier, author_role, is_host, status, created_at')
     .eq('room_id', roomId)
     .eq('status', 'visible')
-    .order('created_at', { ascending: true })
+    .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw error;
-  return (data || []).map(chatMsgFromRow);
+  return (data || []).map(chatMsgFromRow).reverse();
 }
 
 function chatMsgFromRow(m) {
@@ -656,6 +661,24 @@ export async function answerQuestion(questionId, answerText) {
   return questionFromRow(data);
 }
 
+// The target can remove a harassing question. RLS (questions_delete in
+// 0017) already restricts the DELETE to target_id = auth.uid(); the
+// extra .eq() is the same belt-and-suspenders used everywhere else.
+// Without Supabase (demo mode) this resolves as a no-op so the store's
+// optimistic local removal stands instead of being rolled back.
+export async function deleteQuestion(questionId) {
+  if (!isSupabaseConfigured()) return;
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
+  if (!user) throw new Error('not_authenticated');
+  const { error } = await supabase
+    .from('questions')
+    .delete()
+    .eq('id', questionId)
+    .eq('target_id', user.id);
+  if (error) throw error;
+}
+
 // =====================================================================
 // PROFILE PATCH (theme, etc) — small partial updates
 // =====================================================================
@@ -687,6 +710,7 @@ registerApi({
   awardPoints,
   createQuestion,
   answerQuestion,
+  deleteQuestion,
 });
 
 // =====================================================================
@@ -1007,60 +1031,15 @@ export function subscribeRealtime(store) {
           router.refreshCurrentRoute();
         }
       })
-    // Party attendance: someone confirmed they're going (INSERT) or
-    // cancelled (DELETE). Folded into BOTH party.attendees[] (cheap
-    // lookups) and state.attendanceLog (timestamped feed used by the
-    // promoter's notification derivation). Skip the echo of OUR own
-    // insert since toggleAttendance already updated local state
-    // optimistically — without the skip we'd push the same uid twice.
-    .on('postgres_changes',
-      { event: 'INSERT', schema: 'public', table: 'party_attendees' },
-      (payload) => {
-        const a = payload.new;
-        if (!a) return;
-        const state = store.getState();
-        if (state.currentUser && a.user_id === state.currentUser.id) return;
-
-        const parties = state.parties.map(p => {
-          if (p.id !== a.party_id) return p;
-          if (p.attendees.includes(a.user_id)) return p;
-          return { ...p, attendees: [...p.attendees, a.user_id] };
-        });
-        const logKey = `${a.party_id}:${a.user_id}`;
-        const log = (state.attendanceLog || []).some(x => `${x.partyId}:${x.userId}` === logKey)
-          ? state.attendanceLog
-          : [{ partyId: a.party_id, userId: a.user_id, attendedAt: new Date(a.attended_at) },
-             ...(state.attendanceLog || [])];
-        store.setState({ parties, attendanceLog: log });
-
-        const route = router.getCurrentRoute();
-        if (route === 'wall' || route === 'parties' || route === 'party-detail'
-            || route === 'notifications') {
-          router.refreshCurrentRoute();
-        }
-      })
-    .on('postgres_changes',
-      { event: 'DELETE', schema: 'public', table: 'party_attendees' },
-      (payload) => {
-        const a = payload.old;
-        if (!a) return;
-        const state = store.getState();
-        if (state.currentUser && a.user_id === state.currentUser.id) return;
-
-        const parties = state.parties.map(p => {
-          if (p.id !== a.party_id) return p;
-          return { ...p, attendees: p.attendees.filter(u => u !== a.user_id) };
-        });
-        const log = (state.attendanceLog || []).filter(
-          x => !(x.partyId === a.party_id && x.userId === a.user_id)
-        );
-        store.setState({ parties, attendanceLog: log });
-
-        const route = router.getCurrentRoute();
-        if (route === 'parties' || route === 'party-detail' || route === 'notifications') {
-          router.refreshCurrentRoute();
-        }
-      })
+    // NOTE (jun-2026 security hardening): party_attendees was REMOVED
+    // from the supabase_realtime publication (migration 0025). The old
+    // INSERT/DELETE listeners here broadcast "who just confirmed going
+    // to which party" — venue + date + time — live to EVERY connected
+    // client, a stalking vector for a nightlife app. Attendance still
+    // hydrates on boot via listAttendees() and the user's own toggles
+    // update local state optimistically; others' changes now appear on
+    // the next hydration instead of in realtime. Do not re-add these
+    // listeners without a per-party, relationship-scoped channel.
     .subscribe();
 
   return () => unsubscribeRealtime();

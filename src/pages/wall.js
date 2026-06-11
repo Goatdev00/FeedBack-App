@@ -5,7 +5,7 @@
 import { store, ICONS, formatRelative } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { showToast } from '../utils/toast.js';
-import { avatarHTML, roleBadgeClass, roleTitle, sanitize } from '../utils/helpers.js';
+import { avatarHTML, roleBadgeClass, roleTitle, sanitize, safeImageSrc } from '../utils/helpers.js';
 import { createModal } from '../utils/dom.js';
 import { renderBottomNav, bindNavEvents } from '../components/nav.js';
 import { refreshFromSupabaseInBackground } from '../data/hydration.js';
@@ -208,7 +208,7 @@ export function renderPostCard(post, state) {
 
       <div class="post-content">${sanitize(post.content)}</div>
 
-      ${post.image ? `<img src="${post.image}" alt="Post image" class="post-image" />` : ''}
+      ${safeImageSrc(post.image) ? `<img src="${safeImageSrc(post.image)}" alt="Post image" class="post-image" loading="lazy" />` : ''}
 
       <div class="post-actions">
         <button class="post-action ${isLiked ? 'liked' : ''}" data-action="like" data-post-id="${post.id}">

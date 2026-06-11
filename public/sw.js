@@ -85,8 +85,11 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     self.registration.showNotification(title, {
       body,
-      icon: '/icons/icon-192.png',
-      badge: '/icons/badge-72.png',
+      // /logo-192.png is a real file in public/ (the old /icons/icon-192
+      // and /icons/badge-72 never existed — every push showed a broken
+      // generic icon). No `badge`: it requires a dedicated monochrome
+      // 72px asset; omitting it falls back to the browser default.
+      icon: '/logo-192.png',
       data: { url },
     })
   );

@@ -1359,6 +1359,33 @@ class Store {
     }
   }
 
+  // Optimistic delete (target removing a harassing/unwanted question).
+  // RLS questions_delete (0017) restricts the server-side DELETE to the
+  // question's target; pending temp rows never reached the server so
+  // they're dropped locally without an API call.
+  deleteQuestion(questionId) {
+    const removed = this.state.questions.find(q => q.id === questionId);
+    if (!removed) return;
+    this.state.questions = this.state.questions.filter(q => q.id !== questionId);
+    this.saveState();
+    this.notify();
+
+    if (_api?.deleteQuestion && !removed._pending) {
+      _api.deleteQuestion(questionId)
+        .catch(err => {
+          console.error('[store] deleteQuestion failed', err);
+          // Restore the row — the server still has it — and repaint so
+          // the list matches the restored state (same pattern as
+          // _replaceQuestion; notify() alone has no subscribers).
+          this.state.questions = [removed, ...this.state.questions];
+          this.saveState();
+          this.notify();
+          repaintIfNeeded();
+          _surfaceError?.('No se pudo eliminar la pregunta. ' + describeApiError(err));
+        });
+    }
+  }
+
   getQuestionsForUser(userId) {
     return this.state.questions.filter(q => q.targetUserId === userId);
   }
