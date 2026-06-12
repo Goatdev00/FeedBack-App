@@ -32,6 +32,7 @@ import { hydrateAll } from './data/api.js';
 import { setupPullToRefresh } from './utils/pull-to-refresh.js';
 import { refreshFromSupabaseInBackground } from './data/hydration.js';
 import { showPermissionModal } from './notifications/permission-modal.js';
+import { resyncPushSubscription, swUrl } from './notifications/push.js';
 
 // --- Pages ---
 import { renderLogin } from './pages/login.js';
@@ -73,6 +74,12 @@ router.register('chat-parties',  (c, p) => { renderChatParties(c, p);    setBott
 router.register('chat-general',  (c, p) => { renderChatGeneral(c, p);    setBottomNav(null);     });
 router.register('chat-party',    (c, p) => { renderChatParty(c, p);      setBottomNav(null);     });
 
+// Hash routing (back button / deep links / refresh). Must come AFTER all
+// register() calls — a hashchange that fires before registration would
+// hit "route not found" and drop the navigation.
+router.setSessionCheck(() => !!store.getState().currentUser);
+router.initHashRouting();
+
 // =====================================================================
 // Initialization
 //
@@ -110,7 +117,10 @@ try {
 // fine too, but we guard on https/localhost to avoid noisy failures.
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch((e) => {
+    // swUrl() appends ?vapid=<public key> so sw.js can re-subscribe in
+    // its pushsubscriptionchange handler (Chrome doesn't expose
+    // event.oldSubscription, so the key can't come from the event).
+    navigator.serviceWorker.register(swUrl()).catch((e) => {
       console.warn('[sw] registration failed', e);
     });
   });
@@ -197,6 +207,11 @@ if (isSupabaseConfigured()) {
       // Signed out (or initial null). Only reset + navigate if we had a
       // previously-routed user; otherwise we're just booting cold.
       if (routedUserId !== null || router.getCurrentRoute() === null) {
+        // Cold boot with a deep link but no session: navigate('login')
+        // replaceState's #/login OVER the deep-link hash, destroying it
+        // before the user can authenticate. Stash it first; it's
+        // consumed (with a TTL) once the session lands.
+        stashPendingDeepLink();
         clearLocalSession();
         router.navigate('login');
       }
@@ -232,7 +247,7 @@ async function routeAfterSession(session) {
   // the visible data once it lands.
   const cached = store.getState();
   if (cached.currentUser && cached.onboardingComplete) {
-    routeWallOrSunday();
+    navigateFromHashOrWall();
     return;
   }
 
@@ -251,17 +266,82 @@ async function routeAfterSession(session) {
   }
   if (!profile) {
     console.warn('[routeAfterSession] session present but profile row missing — pages will use requireCurrentUser fallback');
-    router.navigate('wall');
+    navigateFromHashOrWall();
     return;
   }
   if (!profile.onboardingComplete) {
     router.navigate('onboarding');
     return;
   }
-  routeWallOrSunday();
+  navigateFromHashOrWall();
   // (we already kicked off refreshFromSupabaseInBackground at the top of
   // this function — the _inFlight guard would coalesce a second call,
   // but firing it again is just noise.)
+}
+
+// ---------------------------------------------------------------------
+// Pending deep link — survives the login round-trip. When a cold boot
+// carries a deep-link hash but no session, the redirect to #/login
+// destroys the hash; we stash it (localStorage so it also survives the
+// OAuth full-page redirect) and replay it once the session lands.
+// ---------------------------------------------------------------------
+const PENDING_LINK_KEY = 'feedback.pendingDeepLink';
+const PENDING_LINK_TTL_MS = 30 * 60 * 1000;
+
+function stashPendingDeepLink() {
+  try {
+    const match = router.matchHash(window.location.hash);
+    if (!match || match.name === 'login' || match.name === 'onboarding') return;
+    localStorage.setItem(PENDING_LINK_KEY, JSON.stringify({
+      hash: window.location.hash,
+      at: Date.now(),
+    }));
+  } catch { /* ignore */ }
+}
+
+function consumePendingDeepLink() {
+  try {
+    const raw = localStorage.getItem(PENDING_LINK_KEY);
+    if (!raw) return null;
+    localStorage.removeItem(PENDING_LINK_KEY);
+    const { hash, at } = JSON.parse(raw);
+    if (!hash || Date.now() - (at || 0) > PENDING_LINK_TTL_MS) return null;
+    return router.matchHash(hash);
+  } catch { return null; }
+}
+
+// Routes whose render needs hydrated store data to resolve their param
+// (they bounce to a list page when the row is missing). On a cold boot,
+// navigating to them BEFORE hydration means the bounce — paint the wall
+// first and jump once the data lands.
+const DATA_DEEPLINK_ROUTES = new Set(['party-detail', 'chat-party', 'profile-other', 'create-post']);
+
+/**
+ * Resolve the landing route once the session is settled. Priority:
+ * (1) a deep link stashed before the login round-trip, (2) the current
+ * hash (#/party/x, #/u/y, #/wall?post=z — shared links and tapped push
+ * notifications), (3) the usual wall (+ Sunday prompt). Auth-flow
+ * hashes are never deep-link targets.
+ */
+function navigateFromHashOrWall() {
+  const target = consumePendingDeepLink() || router.matchHash(window.location.hash);
+  if (target && target.name !== 'login' && target.name !== 'onboarding') {
+    if (DATA_DEEPLINK_ROUTES.has(target.name) && !store.getState().hydrated) {
+      // Cold store: the target page would bounce ("party not found").
+      // Paint the wall now, jump to the target when hydration lands.
+      // refreshFromSupabaseInBackground was already kicked off by
+      // routeAfterSession — this returns the SAME in-flight promise.
+      router.navigate('wall');
+      Promise.resolve(refreshFromSupabaseInBackground()).then(() => {
+        router.navigate(target.name, target.params);
+      });
+    } else {
+      router.navigate(target.name, target.params);
+    }
+    schedulePushOffer();
+    return;
+  }
+  routeWallOrSunday();
 }
 
 function routeWallOrSunday() {
@@ -271,16 +351,33 @@ function routeWallOrSunday() {
       sessionStorage.setItem(sundayKey, '1');
       router.navigate('wall');
       setTimeout(showSundayPrompt, 1500);
+      schedulePushOffer();
       return;
     }
   }
   router.navigate('wall');
-  // Offer to enable web push once the wall has had a moment to paint.
-  // The modal self-inhibits if the user already decided (granted or
-  // dismissed) and silently does nothing if push isn't supported.
+  schedulePushOffer();
+}
+
+// Offer/maintain web push once the landing page has had a moment to
+// paint. Two halves:
+//   * resyncPushSubscription — SILENT. If permission is already granted,
+//     re-register the (possibly rotated) endpoint with the server. This
+//     is what keeps notifications alive long-term: push services rotate
+//     endpoints and iOS/Chrome can drop subscriptions; without a boot
+//     resync those users silently stop receiving pushes forever.
+//   * showPermissionModal — self-inhibits per its own decision/EXPIRY
+//     logic, handles the iOS install-first flow, and no-ops where push
+//     isn't supported.
+function schedulePushOffer() {
   setTimeout(() => {
     const uid = store.getState().currentUser?.id;
-    if (uid) showPermissionModal(uid);
+    if (!uid) return;
+    resyncPushSubscription(uid);
+    // Only interrupt with UI on the wall — a session that landed on a
+    // shared deep link (#/party/x) shouldn't get the content covered by
+    // a permission modal or the iOS install guide.
+    if (router.getCurrentRoute() === 'wall') showPermissionModal(uid);
   }, 1500);
 }
 

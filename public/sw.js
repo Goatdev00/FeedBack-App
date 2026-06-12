@@ -95,6 +95,54 @@ self.addEventListener('push', (event) => {
   );
 });
 
+// ---------------------------------------------------------------------
+// pushsubscriptionchange — the push service rotated or expired this
+// device's endpoint. We re-subscribe so the binding stays alive;
+// persisting the NEW endpoint to Supabase happens on the next app boot
+// via resyncPushSubscription() (the SW holds no auth session). Until
+// that boot, sends to the old endpoint 404/410 and get pruned
+// server-side — by design.
+//
+// Key sourcing, in order:
+//   1. event.oldSubscription.options.applicationServerKey — per spec,
+//      but Chrome never implemented PushSubscriptionChangeEvent
+//      (crbug 646721): there the event is a plain ExtendableEvent.
+//   2. ?vapid=<key> in this SW's own registration URL (main.js
+//      registers /sw.js?vapid=… precisely for this fallback).
+// If neither is available, the boot-time resync remains the safety net.
+// ---------------------------------------------------------------------
+function vapidKeyFromRegistrationUrl() {
+  try {
+    const k = new URL(self.location.href).searchParams.get('vapid');
+    if (!k) return null;
+    const padding = '='.repeat((4 - (k.length % 4)) % 4);
+    const b64 = (k + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const raw = atob(b64);
+    const out = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+self.addEventListener('pushsubscriptionchange', (event) => {
+  event.waitUntil((async () => {
+    try {
+      const key = event.oldSubscription?.options?.applicationServerKey
+        || vapidKeyFromRegistrationUrl();
+      if (!key) return;
+      await self.registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: key,
+      });
+    } catch (e) {
+      // Next boot's resync re-subscribes anyway; nothing else to do here.
+      console.warn('[sw] pushsubscriptionchange resubscribe failed', e);
+    }
+  })());
+});
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const target = event.notification.data?.url || '/';

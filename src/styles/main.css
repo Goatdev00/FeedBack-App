@@ -3774,3 +3774,16 @@ span > svg {
   to { transform: rotate(360deg); }
 }
 
+
+/* =====================================================================
+   Deep-link highlight — wall.js flashes this on the post a shared link
+   or push notification points at (#/wall?post=<id>).
+   ===================================================================== */
+.post-card-highlight {
+  animation: postHighlight 2.4s var(--ease-out) forwards;
+}
+@keyframes postHighlight {
+  0%   { box-shadow: 0 0 0 2px var(--orange); }
+  70%  { box-shadow: 0 0 0 2px var(--orange); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}

@@ -13,6 +13,7 @@ import { createSupportTicket } from '../data/api.js';
 import { signOut } from '../data/auth.js';
 import { clearLocalSession, requireCurrentUser, patchProfile } from '../data/profile-sync.js';
 import { flushCloudSave } from '../data/cloud-state.js';
+import { unsubscribeFromPush } from '../notifications/push.js';
 import { fileToResizedDataURL } from '../utils/image.js';
 
 const CITY_OPTIONS = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena', 'Otra'];
@@ -776,6 +777,11 @@ function showSettingsModal() {
       // user's last actions should still be in Supabase when they log
       // back in from another device.
       try { await flushCloudSave(store.getState()); } catch { /* noop */ }
+      // Drop this device's push registration while the JWT is still
+      // valid (the RPC needs auth). Without this, the device keeps
+      // receiving the logged-out user's private notifications — worst
+      // case, in front of whoever uses the phone next.
+      try { await unsubscribeFromPush(); } catch { /* best-effort */ }
       await signOut();
     }
     clearLocalSession();

@@ -1,20 +1,43 @@
 // =====================================================================
-// FEEDBACK / PartyRate — push permission modal
+// FEEDBACK / PartyRate — push permission modal (+ iOS install flow)
 // =====================================================================
-// One-time prompt that asks the user to enable web push. Stays out of
-// the way after the first answer (granted OR dismissed). Uses the
-// existing design tokens (--bg-*, --text-*, --space-*, --radius-*,
-// --shadow-*, --font-display) so it inherits the rest of the UI's look
-// without hardcoded colors.
+// Decides, once per boot (called from main.js schedulePushOffer), what
+// to show about notifications:
+//
+//   * Android / desktop, no decision yet  → permission modal.
+//   * iOS Safari TAB                      → install guide. Apple only
+//     exposes PushManager inside an INSTALLED PWA (iOS ≥16.4), so on a
+//     Safari tab `isPushSupported()` is false BY DESIGN — the old code
+//     bailed on that check first and iPhone users never saw any path to
+//     notifications at all. The guide walks them through "Añadir a
+//     pantalla de inicio"; once they reopen from the icon, standalone
+//     mode exposes PushManager and the normal modal takes over.
+//   * Already granted                     → nothing (the silent boot
+//     resync in push.js keeps the subscription alive).
+//   * Browser-level denied                → nothing we can do.
+//
+// Decisions persist in localStorage as JSON { decision, at } and some
+// of them EXPIRE so the ask can come back later:
+//   granted      → permanent (resync owns it from here)
+//   dismissed    → re-offer after 14 days
+//   ios-install  → re-offer after 3 days (install friction is high; a
+//                  gentle reminder is the only growth lever we have)
+// Legacy plain-string values from the previous version are migrated on
+// read ('granted' stays permanent; 'dismissed' counts as expired so the
+// user gets exactly one re-ask under the new policy).
 // =====================================================================
 
 import { isPushSupported, subscribeToPush } from './push.js';
 
 const DECISION_KEY = 'push-permission-decision';
+const REOFFER_DAYS = { dismissed: 14, 'ios-install': 3 };
+const DAY_MS = 86_400_000;
 
 function isIos() {
   const ua = (navigator.userAgent || '').toLowerCase();
-  return /iphone|ipad|ipod/.test(ua);
+  if (/iphone|ipad|ipod/.test(ua)) return true;
+  // iPadOS 13+ masquerades as macOS but is the only "Mac" with touch.
+  return navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1;
 }
 
 function isStandalone() {
@@ -25,16 +48,44 @@ function isStandalone() {
     ));
 }
 
-export function showPermissionModal(userId) {
-  // Bail early — every short-circuit here avoids piling state on the DOM.
-  if (!isPushSupported()) return;
-  let prior = null;
-  try { prior = localStorage.getItem(DECISION_KEY); } catch { /* ignore */ }
-  if (prior === 'granted' || prior === 'dismissed') return;
-  if (!userId) return;
+function readDecision() {
+  let raw = null;
+  try { raw = localStorage.getItem(DECISION_KEY); } catch { /* ignore */ }
+  if (!raw) return null;
+  // Legacy plain strings ('granted' / 'dismissed') from the previous
+  // version: granted stays permanent; dismissed maps to at=0 (expired)
+  // so the user gets one re-ask under the new expiry policy.
+  if (raw === 'granted' || raw === 'dismissed') return { decision: raw, at: 0 };
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.decision === 'string') return parsed;
+  } catch { /* ignore */ }
+  return null;
+}
 
-  const showIosHint = isIos() && !isStandalone();
+function writeDecision(decision, extra = {}) {
+  try {
+    localStorage.setItem(DECISION_KEY, JSON.stringify({ decision, at: Date.now(), ...extra }));
+  } catch { /* ignore */ }
+}
 
+function decisionStillBlocks(d) {
+  if (!d) return false;
+  if (d.decision === 'granted') return true;
+  let days = REOFFER_DAYS[d.decision];
+  if (days == null) return true; // unknown decision: be conservative
+  // The iOS install guide backs off exponentially (3d → 6d → 12d → 24d,
+  // capped at 30d): Safari-tab localStorage never learns about an
+  // install (iOS partitions storage between tab and PWA), so without a
+  // backoff the guide would nag forever at full cadence.
+  if (d.decision === 'ios-install') {
+    days = Math.min(30, days * Math.pow(2, Math.max(0, (d.n || 1) - 1)));
+  }
+  return (Date.now() - (d.at || 0)) < days * DAY_MS;
+}
+
+// Shared overlay scaffolding for both modals.
+function mountOverlay(innerHtml) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay push-permission-overlay';
   overlay.style.cssText = `
@@ -45,8 +96,36 @@ export function showPermissionModal(userId) {
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
   `;
+  overlay.innerHTML = innerHtml;
+  document.body.appendChild(overlay);
+  return overlay;
+}
 
-  overlay.innerHTML = `
+export function showPermissionModal(userId) {
+  if (!userId) return;
+  if (decisionStillBlocks(readDecision())) return;
+
+  // Browser-level states we can't act on from a modal.
+  if (typeof Notification !== 'undefined') {
+    if (Notification.permission === 'denied') return;
+    if (Notification.permission === 'granted') {
+      // Granted out-of-band (or before this modal existed): record it
+      // and let the boot resync own the subscription from here.
+      writeDecision('granted');
+      return;
+    }
+  }
+
+  // iOS in a Safari tab: PushManager doesn't exist here — guide the
+  // install instead of bailing on isPushSupported().
+  if (isIos() && !isStandalone()) {
+    showIosInstallGuide(readDecision());
+    return;
+  }
+
+  if (!isPushSupported()) return;
+
+  const overlay = mountOverlay(`
     <div class="modal push-permission-modal"
          role="dialog" aria-modal="true" aria-labelledby="push-modal-title"
          style="
@@ -82,21 +161,6 @@ export function showPermissionModal(userId) {
         Activa las notificaciones para saber cuando alguien comenta, da like o te sigue
       </p>
 
-      ${showIosHint ? `
-        <p style="
-            font-size: var(--text-xs);
-            color: var(--text-tertiary);
-            text-align: center;
-            margin: 0 0 var(--space-lg);
-            padding: var(--space-sm) var(--space-md);
-            background: rgba(255,255,255,0.04);
-            border: 1px solid var(--border-subtle);
-            border-radius: var(--radius-md);
-          ">
-          En iPhone, primero añade PartyRate a tu pantalla de inicio
-        </p>
-      ` : ''}
-
       <div id="push-modal-status"
            role="status" aria-live="polite"
            style="
@@ -118,7 +182,7 @@ export function showPermissionModal(userId) {
         </button>
       </div>
     </div>
-  `;
+  `);
 
   let isOpen = true;
 
@@ -134,7 +198,7 @@ export function showPermissionModal(userId) {
   }
 
   function dismiss() {
-    try { localStorage.setItem(DECISION_KEY, 'dismissed'); } catch { /* ignore */ }
+    writeDecision('dismissed');
     close();
   }
 
@@ -147,7 +211,7 @@ export function showPermissionModal(userId) {
     try {
       const result = await subscribeToPush(userId);
       if (result?.granted) {
-        try { localStorage.setItem(DECISION_KEY, 'granted'); } catch { /* ignore */ }
+        writeDecision('granted');
         close();
         return;
       }
@@ -179,6 +243,83 @@ export function showPermissionModal(userId) {
   overlay.querySelector('#push-modal-activate').addEventListener('click', activate);
   overlay.querySelector('#push-modal-dismiss').addEventListener('click', dismiss);
   document.addEventListener('keydown', onKey);
+}
 
-  document.body.appendChild(overlay);
+// ---------------------------------------------------------------------
+// iOS install guide — the prerequisite step for push on iPhone/iPad.
+// Once the user reopens the app from the home-screen icon (standalone),
+// the regular permission modal takes over on the next boot.
+// ---------------------------------------------------------------------
+function showIosInstallGuide(priorDecision) {
+  const overlay = mountOverlay(`
+    <div class="modal push-permission-modal"
+         role="dialog" aria-modal="true" aria-labelledby="ios-guide-title"
+         style="
+            max-width: 360px; width: 100%;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: var(--space-xl);
+            box-shadow: var(--shadow-xl);
+         ">
+      <div style="font-size: 2.4rem; text-align: center; margin-bottom: var(--space-md);"
+           aria-hidden="true">📲</div>
+
+      <h2 id="ios-guide-title"
+          style="
+            font-family: var(--font-display);
+            font-size: var(--text-xl);
+            font-weight: 700;
+            text-align: center;
+            margin: 0 0 var(--space-sm);
+            color: var(--text-primary);
+          ">
+        Instala PartyRate en tu iPhone
+      </h2>
+
+      <p style="
+            font-size: var(--text-sm);
+            color: var(--text-secondary);
+            text-align: center;
+            line-height: 1.5;
+            margin: 0 0 var(--space-md);
+         ">
+        Para recibir notificaciones en iPhone, primero añade la app a tu
+        pantalla de inicio (necesitas iOS 16.4 o superior, en Safari):
+      </p>
+
+      <ol style="
+            font-size: var(--text-sm);
+            color: var(--text-secondary);
+            line-height: 1.9;
+            margin: 0 0 var(--space-lg);
+            padding-left: var(--space-lg);
+          ">
+        <li>Toca el botón <strong>Compartir</strong> <span aria-hidden="true" style="display:inline-block;transform:translateY(1px);">⎙</span> de Safari</li>
+        <li>Elige <strong>«Añadir a pantalla de inicio»</strong></li>
+        <li>Abre <strong>PartyRate desde el icono</strong> y activa las notificaciones cuando te lo pida</li>
+      </ol>
+
+      <div style="display: flex; flex-direction: column; gap: var(--space-sm);">
+        <button id="ios-guide-ok" class="btn btn-primary btn-full">Entendido</button>
+      </div>
+    </div>
+  `);
+
+  function close() {
+    // Track how many times the guide has been shown so the re-offer
+    // backs off (see decisionStillBlocks).
+    const n = (priorDecision?.decision === 'ios-install' ? (priorDecision.n || 1) : 0) + 1;
+    writeDecision('ios-install', { n });
+    overlay.remove();
+    document.removeEventListener('keydown', onKey);
+  }
+  function onKey(e) {
+    if (e.key === 'Escape') close();
+  }
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+  overlay.querySelector('#ios-guide-ok').addEventListener('click', close);
+  document.addEventListener('keydown', onKey);
 }

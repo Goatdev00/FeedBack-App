@@ -55,7 +55,10 @@ const DATA_DRIVEN_ROUTES = new Set([
   'chat-parties',
 ]);
 
-let _inFlight = false;
+// Promise while a refresh is running, null otherwise. Returning it lets
+// callers (the deep-link boot path in main.js) await "data has landed"
+// without breaking fire-and-forget callers, who simply ignore it.
+let _inFlight = null;
 
 // Coalescing now lives inside router.refreshCurrentRoute() (60ms timer
 // debounce) — every caller anywhere in the app benefits, not just the
@@ -72,8 +75,7 @@ function flipHydrated() {
 }
 
 export function refreshFromSupabaseInBackground(knownSession) {
-  if (_inFlight) return;
-  _inFlight = true;
+  if (_inFlight) return _inFlight;
 
   const t0 = performance.now();
   const mark = (label) => console.info(`[hydrate] ${label} +${Math.round(performance.now() - t0)}ms`);
@@ -168,11 +170,12 @@ export function refreshFromSupabaseInBackground(knownSession) {
     })
     .catch((e) => console.warn('[hydrate] cloud-state load failed', e));
 
-  Promise.allSettled([pProfile, pPosts, pParties, pFollows, pProfiles, pQuestions, pCloud]).finally(() => {
-    _inFlight = false;
+  _inFlight = Promise.allSettled([pProfile, pPosts, pParties, pFollows, pProfiles, pQuestions, pCloud]).then(() => {
+    _inFlight = null;
     flipHydrated();
     // SINGLE paint with the full hydrated state. No mid-burst flicker.
     maybeRefreshRoute();
     mark('ALL DONE');
   });
+  return _inFlight;
 }

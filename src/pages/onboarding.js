@@ -9,6 +9,8 @@ import { sanitize } from '../utils/helpers.js';
 import { fileToResizedDataURL } from '../utils/image.js';
 import { isSupabaseConfigured } from '../data/supabase.js';
 import { patchProfile } from '../data/profile-sync.js';
+import { resyncPushSubscription } from '../notifications/push.js';
+import { showPermissionModal } from '../notifications/permission-modal.js';
 
 const TOTAL_STEPS = 4;
 const EMPTY_FORM = Object.freeze({
@@ -339,6 +341,17 @@ async function finishOnboarding(submitBtn) {
   currentStep = 1;
   formData = { ...EMPTY_FORM };
   router.navigate('wall');
+
+  // First-session push offer. routeAfterSession only schedules it on its
+  // own paths, and this direct navigate('wall') bypasses them — without
+  // this, the freshly-onboarded user (peak engagement) never saw the
+  // notifications ask until their NEXT visit.
+  setTimeout(() => {
+    const uid = store.getState().currentUser?.id;
+    if (!uid) return;
+    resyncPushSubscription(uid);
+    showPermissionModal(uid);
+  }, 1500);
 }
 
 export function renderOnboarding(container) {

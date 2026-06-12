@@ -84,6 +84,24 @@ export function renderWall(container) {
   `;
 
   bindWallEvents(container);
+
+  // Deep link target (#/wall?post=<id> — shared links and tapped push
+  // notifications land here). Scroll the post into view and flash a
+  // highlight, then consume the param so subsequent re-renders (likes,
+  // realtime) don't keep yanking the scroll position back.
+  const targetPost = router.getCurrentParams()?.post;
+  if (targetPost) {
+    const node = container.querySelector(`[data-post-id="${CSS.escape(targetPost)}"]`);
+    if (node) {
+      delete router.getCurrentParams().post;
+      requestAnimationFrame(() => {
+        node.scrollIntoView({ block: 'center' });
+        node.classList.add('post-card-highlight');
+      });
+    }
+    // If the post isn't in the initial 50, leave the param: the post-
+    // hydration repaint gets one more chance to find it.
+  }
 }
 
 function renderLiveParties(state) {
