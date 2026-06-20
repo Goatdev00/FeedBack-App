@@ -20,7 +20,15 @@
 // =====================================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { corsHeaders } from '../_shared/cors.ts';
+
+// Inlined from _shared/cors.ts so this function is self-contained and can
+// be deployed by pasting a single file into the Supabase Dashboard editor
+// (the CLI bundles _shared/, the Dashboard editor does not).
+const corsHeaders: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
 
 // Prices live in code (single source of truth alongside the frontend).
 // Keep these in sync with src/config/membership-benefits.js.
