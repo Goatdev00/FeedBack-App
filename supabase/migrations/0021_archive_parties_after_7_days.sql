@@ -134,16 +134,16 @@ create policy comments_read on public.post_comments
   );
 
 -- ---------------------------------------------------------------------
--- live_ratings / party_attendees / party_djs: directly party-scoped.
--- All were `using (true)` since 0003. The live_ratings aggregate view is
--- security_invoker (0016), so tightening this base policy also secures
--- everything read through that view.
+-- party_attendees / party_djs: directly party-scoped. Both were
+-- `using (true)` since 0003.
+--
+-- NOTE: live_ratings is intentionally NOT hardened here. Migration 0027
+-- (drop_live_ratings) removes that table for good. An earlier draft of
+-- this file redefined a ratings_read policy on public.live_ratings —
+-- removed because, applied to a DB that already ran 0027, the CREATE
+-- POLICY errors with "relation public.live_ratings does not exist" and
+-- aborts the whole migration. There is nothing left to secure there.
 -- ---------------------------------------------------------------------
-drop policy if exists ratings_read on public.live_ratings;
-create policy ratings_read on public.live_ratings
-  for select to authenticated
-  using (public.party_visible(party_id));
-
 drop policy if exists attendees_read on public.party_attendees;
 create policy attendees_read on public.party_attendees
   for select to authenticated
