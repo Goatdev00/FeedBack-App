@@ -49,6 +49,7 @@ import { renderNotifications } from './pages/notifications.js';
 import { renderChatHub } from './pages/chat-hub.js';
 import { renderChatParties } from './pages/chat-parties.js';
 import { renderChatGeneral, renderChatParty } from './pages/chat.js';
+import { renderAdmin } from './pages/admin.js';
 
 // --- Register Routes ---
 // setBottomNav() runs after every page render to flip the active tab on
@@ -73,6 +74,7 @@ router.register('chat-hub',      (c, p) => { renderChatHub(c, p);        setBott
 router.register('chat-parties',  (c, p) => { renderChatParties(c, p);    setBottomNav('');       });
 router.register('chat-general',  (c, p) => { renderChatGeneral(c, p);    setBottomNav(null);     });
 router.register('chat-party',    (c, p) => { renderChatParty(c, p);      setBottomNav(null);     });
+router.register('admin',         (c, p) => { renderAdmin(c, p);          setBottomNav('');       });
 
 // Hash routing (back button / deep links / refresh). Must come AFTER all
 // register() calls — a hashchange that fires before registration would

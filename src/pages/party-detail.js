@@ -9,6 +9,8 @@ import { avatarHTML, sanitize, safeImageSrc } from '../utils/helpers.js';
 import { createModal, hashStr } from '../utils/dom.js';
 import { fileToResizedDataURL } from '../utils/image.js';
 import { renderPostCard, bindPostCardActions } from './wall.js';
+import { adminSoftDeleteParty } from '../data/api.js';
+import { confirmAdminDelete } from '../utils/admin-moderation.js';
 
 const PARTY_CITIES = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena'];
 const PARTY_GENRES = [
@@ -45,6 +47,10 @@ export function renderPartyDetail(container, params = {}) {
     && party.promotor
     && party.promotor === user.id
   );
+  // Super-admin moderation gate (cosmetic; admin_soft_delete_party
+  // re-checks is_admin() server-side). Distinct from isCreator: the admin
+  // can delete ANY party, not only their own.
+  const isAdmin = !!(user && user.isAdmin);
 
   container.innerHTML = `
     <div class="page" id="party-detail-page">
@@ -52,6 +58,13 @@ export function renderPartyDetail(container, params = {}) {
         ${ICONS.back}
         <span>Fiestas</span>
       </button>
+
+      ${isAdmin ? `
+        <button class="btn btn-full btn-sm" id="admin-delete-party-btn" style="margin-bottom:var(--space-md);background:rgba(220,38,38,0.12);border:1px solid rgba(220,38,38,0.5);color:#dc2626;gap:6px;font-weight:600;">
+          <span style="width:16px;height:16px;display:inline-flex;">${ICONS.trash}</span>
+          Eliminar fiesta (admin)
+        </button>
+      ` : ''}
 
       <!-- Flyer / Hero -->
       ${safeImageSrc(party.flyer) ? `
@@ -215,6 +228,26 @@ export function renderPartyDetail(container, params = {}) {
   const deleteBtn = container.querySelector('#delete-event-btn');
   if (deleteBtn) {
     deleteBtn.addEventListener('click', () => showDeletePartyConfirm(party));
+  }
+
+  // Super-admin: soft-delete ANY party (moderation path, separate from the
+  // creator-only delete above). Goes through admin_soft_delete_party which
+  // re-checks is_admin() server-side; the row + its children land in the
+  // moderation_log trash for restore.
+  const adminDelBtn = container.querySelector('#admin-delete-party-btn');
+  if (adminDelBtn) {
+    adminDelBtn.addEventListener('click', () => confirmAdminDelete({
+      title: 'Eliminar fiesta (admin)',
+      message: `"<strong>${sanitize(party.name)}</strong>" y todo su contenido (publicaciones, chat, comentarios) se ocultarán para todos. Queda en la papelera y puedes restaurarla.`,
+      onConfirm: async (reason) => {
+        await adminSoftDeleteParty(party.id, reason);
+        // Drop from the local store so the parties list doesn't show it
+        // until the next hydration (which RLS already filters).
+        store.setState({ parties: store.getState().parties.filter(p => p.id !== party.id) });
+        showToast('Fiesta eliminada (admin) 🛡️', 'success');
+        router.navigate('parties');
+      },
+    }));
   }
 }
 
