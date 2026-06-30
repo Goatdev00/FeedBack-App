@@ -199,6 +199,12 @@ function renderProfileView(container, user, isOwn, initialTab) {
               </button>
             `}
           </div>
+          ${isOwn && store.getState().currentUser?.isAdmin ? `
+            <button class="btn btn-full btn-sm" id="superuser-btn" style="margin-top:var(--space-sm);background:linear-gradient(135deg,#7c3aed,#dc2626);color:#fff;border:none;gap:8px;font-weight:700;">
+              <span style="width:16px;height:16px;display:inline-flex;">${ICONS.shield}</span>
+              SUPERUSUARIO
+            </button>
+          ` : ''}
         </div>
       </div>
 
@@ -532,6 +538,14 @@ function bindProfileEvents(container, user, isOwn) {
     settingsBtn.addEventListener('click', () => {
       showSettingsModal();
     });
+  }
+
+  // Super-admin: open the moderation panel. Button only rendered for
+  // currentUser.isAdmin; the /admin route + every admin RPC re-check
+  // server-side, so this is a cosmetic shortcut.
+  const superuserBtn = container.querySelector('#superuser-btn');
+  if (superuserBtn) {
+    superuserBtn.addEventListener('click', () => router.navigate('admin'));
   }
 
   // Tabs

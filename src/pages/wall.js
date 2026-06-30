@@ -9,7 +9,8 @@ import { avatarHTML, roleBadgeClass, roleTitle, sanitize, safeImageSrc } from '.
 import { createModal } from '../utils/dom.js';
 import { renderBottomNav, bindNavEvents } from '../components/nav.js';
 import { refreshFromSupabaseInBackground } from '../data/hydration.js';
-import { reportPost } from '../data/api.js';
+import { reportPost, adminSoftDeletePost, adminSoftDeleteComment } from '../data/api.js';
+import { currentUserIsAdmin, confirmAdminDelete } from '../utils/admin-moderation.js';
 
 const LIKE_RECENCY_BOOST_MS = 60_000 * 30;
 
@@ -133,6 +134,7 @@ function renderPostComments(post) {
 
   const visibleComments = comments.slice(-3);
   const hiddenCount = comments.length - visibleComments.length;
+  const isAdmin = currentUserIsAdmin();
 
   return `
     <div class="post-comments">
@@ -143,11 +145,21 @@ function renderPostComments(post) {
       ` : ''}
       ${visibleComments.map(comment => {
         const commenter = store.getUserById(comment.userId);
-        if (!commenter) return '';
+        // Keep the existing behavior for non-admins (hide a comment whose
+        // author isn't cached yet); for admins render a neutral fallback so
+        // the moderation control is still reachable. Never offer delete on
+        // an optimistic (pending) comment — its temp id can't resolve.
+        if (!commenter && !isAdmin) return '';
+        const canModerate = isAdmin && !comment._pending && !comment._syncFailed;
+        const authorName = commenter ? sanitize(commenter.name) : 'Usuario';
+        const authorAttrs = commenter
+          ? `data-action="view-profile" data-user-id="${commenter.id}" style="cursor:pointer;"`
+          : 'style="opacity:0.7;"';
         return `
           <div class="post-comment">
-            <strong class="post-comment-author" data-action="view-profile" data-user-id="${commenter.id}" style="cursor:pointer;">${sanitize(commenter.name)}</strong>
+            <strong class="post-comment-author" ${authorAttrs}>${authorName}</strong>
             <span class="post-comment-text">${sanitize(comment.text)}</span>
+            ${canModerate ? `<button class="admin-mod-inline" data-action="admin-delete-comment" data-comment-id="${comment.id}" title="Eliminar (admin)" style="margin-left:6px;background:transparent;border:none;color:#dc2626;cursor:pointer;padding:0 2px;font-size:0.8em;line-height:1;vertical-align:middle;">🗑️</button>` : ''}
           </div>
         `;
       }).join('')}
@@ -170,6 +182,7 @@ export function renderPostCard(post, state) {
   const isLiked = !!(currentUser && post.likedBy.includes(currentUser.id));
   const commentsCount = (post.comments || []).length;
   const isOwn = currentUser && post.userId === currentUser.id;
+  const isAdmin = !!(currentUser && currentUser.isAdmin);
 
   // Auto-hidden by report threshold. RLS already prevents foreign clients
   // from receiving these rows; only the author still sees the post — and
@@ -177,7 +190,11 @@ export function renderPostCard(post, state) {
   // original content + actions. Defensive: also bail for non-owners just
   // in case a stale cached row carries hiddenAt.
   if (post.hiddenAt) {
-    if (!isOwn) return '';
+    // Owner sees the "blocked by reports" banner. The admin's is_admin()
+    // RLS override (0032) delivers foreign report-hidden posts too, so the
+    // admin also gets a card here — with a moderation control so they can
+    // permanently soft-delete an abusive post that crossed the threshold.
+    if (!isOwn && !isAdmin) return '';
     return `
       <div class="post-card post-card-hidden" data-post-id="${post.id}">
         <div class="post-header">
@@ -190,12 +207,20 @@ export function renderPostCard(post, state) {
               ${formatRelative(new Date(post.createdAt))}
             </div>
           </div>
+          ${isAdmin ? `
+            <button class="post-action" data-action="admin-delete-post" data-post-id="${post.id}" style="margin-left:auto;color:#dc2626;" title="Eliminar (admin)">
+              ${ICONS.trash}
+            </button>
+          ` : ''}
         </div>
         <div class="post-hidden-banner">
           <div class="post-hidden-icon">🚫</div>
           <div class="post-hidden-text">
             <strong>Publicación oculta por reportes</strong>
-            <p>Tu publicación recibió 10 o más reportes y ya no es visible para otros usuarios.</p>
+            <p>${isOwn
+              ? 'Tu publicación recibió 10 o más reportes y ya no es visible para otros usuarios.'
+              : 'Esta publicación recibió 10 o más reportes y está oculta para los usuarios.'}</p>
+            ${isAdmin && !isOwn ? `<p style="margin-top:6px;color:var(--text-secondary);">${sanitize(post.content)}</p>` : ''}
           </div>
         </div>
       </div>
@@ -245,6 +270,11 @@ export function renderPostCard(post, state) {
             ${ICONS.flag}
           </button>
         `}
+        ${isAdmin ? `
+          <button class="post-action" data-action="admin-delete-post" data-post-id="${post.id}" style="${isOwn ? 'margin-left:auto;' : ''}color:#dc2626;" title="Eliminar (admin)">
+            ${ICONS.trash}
+          </button>
+        ` : ''}
       </div>
 
       ${renderPostComments(post)}
@@ -293,6 +323,23 @@ function submitComment(container, postId, refresh) {
   refresh();
 }
 
+// Optimistic local removal after an admin soft-delete: drop the row from the
+// store so the next refresh() repaint doesn't show it. RLS already hides it
+// from the next server hydration; this just makes the admin's own view
+// instant. Authorization is enforced by the SECURITY DEFINER RPC, not here.
+function removePostFromStore(postId) {
+  store.setState({ posts: store.getState().posts.filter(p => p.id !== postId) });
+}
+
+function removeCommentFromStore(commentId) {
+  const posts = store.getState().posts.map(p =>
+    (p.comments && p.comments.some(c => c.id === commentId))
+      ? { ...p, comments: p.comments.filter(c => c.id !== commentId) }
+      : p
+  );
+  store.setState({ posts });
+}
+
 /**
  * Wire the click + Enter delegation for ANY container that renders
  * post cards (wall, party detail, etc). The `refresh` callback is what
@@ -332,6 +379,32 @@ export function bindPostCardActions(container, root, refresh) {
     },
     'report-post'(action) {
       showReportModal(action.dataset.postId);
+    },
+    'admin-delete-post'(action) {
+      const postId = action.dataset.postId;
+      confirmAdminDelete({
+        title: 'Eliminar publicación',
+        message: 'Se ocultará para todos. Queda en la papelera del panel y puedes restaurarla.',
+        onConfirm: async (reason) => {
+          await adminSoftDeletePost(postId, reason);
+          removePostFromStore(postId);
+          showToast('Publicación eliminada (admin) 🛡️', 'success');
+          refresh();
+        },
+      });
+    },
+    'admin-delete-comment'(action) {
+      const commentId = action.dataset.commentId;
+      confirmAdminDelete({
+        title: 'Eliminar comentario',
+        message: 'Se ocultará para todos. Queda en la papelera del panel.',
+        onConfirm: async (reason) => {
+          await adminSoftDeleteComment(commentId, reason);
+          removeCommentFromStore(commentId);
+          showToast('Comentario eliminado (admin) 🛡️', 'success');
+          refresh();
+        },
+      });
     },
   };
 
@@ -451,6 +524,7 @@ function showAllCommentsModal(container, postId, refresh) {
   const post = store.getState().posts.find(p => p.id === postId);
   if (!post) return;
   const comments = post.comments || [];
+  const isAdmin = currentUserIsAdmin();
 
   const overlay = createModal(`
     <div class="modal" style="max-height:70dvh;">
@@ -459,17 +533,21 @@ function showAllCommentsModal(container, postId, refresh) {
       <div style="display:flex;flex-direction:column;gap:var(--space-md);max-height:50dvh;overflow-y:auto;">
         ${comments.map(c => {
           const commenter = store.getUserById(c.userId);
-          if (!commenter) return '';
+          if (!commenter && !isAdmin) return '';
+          const canModerate = isAdmin && !c._pending && !c._syncFailed;
           return `
             <div style="display:flex;gap:var(--space-sm);align-items:flex-start;">
-              <span data-action="view-profile" data-user-id="${commenter.id}" style="cursor:pointer;display:inline-flex;">
-                ${avatarHTML(commenter, 'avatar-sm')}
-              </span>
+              ${commenter ? `
+                <span data-action="view-profile" data-user-id="${commenter.id}" style="cursor:pointer;display:inline-flex;">
+                  ${avatarHTML(commenter, 'avatar-sm')}
+                </span>
+              ` : ''}
               <div style="flex:1;">
-                <div data-action="view-profile" data-user-id="${commenter.id}" style="cursor:pointer;font-size:var(--text-sm);font-weight:600;">${sanitize(commenter.name)}</div>
+                <div ${commenter ? `data-action="view-profile" data-user-id="${commenter.id}" style="cursor:pointer;font-size:var(--text-sm);font-weight:600;"` : 'style="font-size:var(--text-sm);font-weight:600;opacity:0.7;"'}>${commenter ? sanitize(commenter.name) : 'Usuario'}</div>
                 <div style="font-size:var(--text-sm);color:var(--text-secondary);line-height:1.5;">${sanitize(c.text)}</div>
                 <div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-top:2px;">${formatRelative(new Date(c.createdAt))}</div>
               </div>
+              ${canModerate ? `<button data-action="admin-delete-comment" data-comment-id="${c.id}" title="Eliminar (admin)" style="background:transparent;border:none;color:#dc2626;cursor:pointer;padding:2px;align-self:flex-start;line-height:1;">🗑️</button>` : ''}
             </div>
           `;
         }).join('')}
@@ -500,6 +578,22 @@ function showAllCommentsModal(container, postId, refresh) {
   // root-level delegate doesn't reach modals (they live in document.body),
   // so we wire a local delegate here.
   overlay.addEventListener('click', (e) => {
+    const del = e.target.closest('[data-action="admin-delete-comment"]');
+    if (del) {
+      const commentId = del.dataset.commentId;
+      confirmAdminDelete({
+        title: 'Eliminar comentario',
+        message: 'Se ocultará para todos. Queda en la papelera del panel.',
+        onConfirm: async (reason) => {
+          await adminSoftDeleteComment(commentId, reason);
+          removeCommentFromStore(commentId);
+          showToast('Comentario eliminado (admin) 🛡️', 'success');
+          overlay.close();
+          refresh();
+        },
+      });
+      return;
+    }
     const trigger = e.target.closest('[data-action="view-profile"]');
     if (!trigger) return;
     const userId = trigger.dataset.userId;

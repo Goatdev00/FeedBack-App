@@ -46,9 +46,14 @@ export async function listParties() {
   // After migration 0009 there is no synthetic global-chat party to
   // filter out — the global chat lives on a chat_rooms row with
   // party_id IS NULL.
+  // Exclude admin-soft-deleted parties. The admin's is_admin() RLS
+  // override returns deleted rows too (so the trash works), so the
+  // *browsing* views must filter deleted_at explicitly or a moderated
+  // party would reappear on the admin's own /parties after re-hydration.
   const { data, error } = await supabase
     .from('parties')
     .select('*')
+    .is('deleted_at', null)
     .order('party_date', { ascending: true });
   if (error) throw error;
   return (data || []).map(partyFromRow);
@@ -164,6 +169,13 @@ export async function listPosts() {
       post_likes(user_id),
       post_comments(id, user_id, content, created_at)
     `)
+    // Exclude admin-soft-deleted posts AND deleted comments nested under
+    // live posts. The admin's is_admin() RLS override returns deleted rows,
+    // so the browsing feed must filter them or moderated content reappears
+    // on the admin's own wall after re-hydration. (PostgREST embedded-
+    // resource filter uses the embed name as the column prefix.)
+    .is('deleted_at', null)
+    .is('post_comments.deleted_at', null)
     .order('created_at', { ascending: false })
     .limit(POSTS_INITIAL_LIMIT);
   if (error) throw error;
@@ -236,6 +248,70 @@ export async function reportPost(postId, reason) {
   });
   if (error) throw error;
   return data;
+}
+
+// =====================================================================
+// ADMIN MODERATION — super-admin ("FeedBack") soft-delete + restore
+// =====================================================================
+// Thin wrappers over the SECURITY DEFINER admin_* RPCs (migration 0033).
+// Each RPC re-checks public.is_admin() server-side and raises 'forbidden'
+// for non-admins, so these are safe to expose to the authenticated client;
+// the UI gate (currentUser.isAdmin) is cosmetic. Each returns the new
+// moderation_log id (soft-deletes) or void (restore).
+export async function adminSoftDeletePost(postId, reason) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data, error } = await supabase.rpc('admin_soft_delete_post', {
+    p_post_id: postId,
+    p_reason: reason ?? null,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function adminSoftDeleteComment(commentId, reason) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data, error } = await supabase.rpc('admin_soft_delete_comment', {
+    p_comment_id: commentId,
+    p_reason: reason ?? null,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function adminSoftDeleteChatMessage(messageId, reason) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data, error } = await supabase.rpc('admin_soft_delete_chat_message', {
+    p_message_id: messageId,
+    p_reason: reason ?? null,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function adminSoftDeleteQuestion(questionId, reason) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data, error } = await supabase.rpc('admin_soft_delete_question', {
+    p_question_id: questionId,
+    p_reason: reason ?? null,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function adminSoftDeleteParty(partyId, reason) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data, error } = await supabase.rpc('admin_soft_delete_party', {
+    p_party_id: partyId,
+    p_reason: reason ?? null,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function adminRestore(logId) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { error } = await supabase.rpc('admin_restore', { p_log_id: logId });
+  if (error) throw error;
 }
 
 // =====================================================================
@@ -524,6 +600,10 @@ export async function listChatMessages(roomKey, limit = 100) {
     .select('id, room_id, user_id, content, author_tier, author_role, is_host, status, created_at')
     .eq('room_id', roomId)
     .eq('status', 'visible')
+    // admin_soft_delete_chat_message sets deleted_at (not status), and the
+    // admin's RLS override returns deleted rows — filter explicitly so a
+    // moderated message doesn't reappear when the admin re-enters the room.
+    .is('deleted_at', null)
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw error;
@@ -619,9 +699,42 @@ export async function listQuestions() {
   const { data, error } = await supabase
     .from('questions')
     .select('id, target_id, asker_id, question, answer, created_at, answered_at')
+    // Exclude admin-soft-deleted questions (admin RLS override returns them).
+    .is('deleted_at', null)
     .order('created_at', { ascending: false });
   if (error) throw error;
   return (data || []).map(questionFromRow);
+}
+
+// ---------------------------------------------------------------------
+// moderation_log — the admin trash / audit ledger (migration 0031).
+// RLS exposes it to admins only; a non-admin gets an empty list (no rows
+// pass the policy), so this is safe to call unconditionally from the
+// admin page (which is itself gated). Returns newest-first.
+// ---------------------------------------------------------------------
+function moderationLogFromRow(r) {
+  return {
+    id: r.id,
+    actorId: r.actor_id,
+    action: r.action,
+    targetType: r.target_type,
+    targetId: r.target_id,
+    reason: r.reason || null,
+    beforeState: r.before_state || null,
+    manifest: r.manifest || null,
+    createdAt: new Date(r.created_at),
+    restoredAt: r.restored_at ? new Date(r.restored_at) : null,
+  };
+}
+
+export async function listModerationLog() {
+  if (!isSupabaseConfigured()) return [];
+  const { data, error } = await supabase
+    .from('moderation_log')
+    .select('id, actor_id, action, target_type, target_id, reason, before_state, manifest, created_at, restored_at')
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map(moderationLogFromRow);
 }
 
 export async function createQuestion(targetUserId, questionText) {

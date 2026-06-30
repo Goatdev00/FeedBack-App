@@ -38,6 +38,12 @@ export function profileRowToCurrentUser(p) {
     social: p.social || { instagram: '', tiktok: '', twitter: '' },
     theme: p.theme || 'dark',
     onboardingComplete: !!p.onboarding_complete,
+    // Super-admin flag (migration 0030). The profile fetch uses select('*'),
+    // so is_admin already arrives in the row. This gate is COSMETIC ONLY —
+    // every admin action re-checks is_admin() server-side via SECURITY
+    // DEFINER RPCs, and the column is frozen against client self-update.
+    isAdmin: !!p.is_admin,
+    moderationStatus: p.moderation_status || 'active',
   };
 }
 

@@ -1,0 +1,77 @@
+// =====================================================================
+// FEEDBACK — Shared admin (super-admin) moderation UI helpers
+// =====================================================================
+// Logic shared by every inline-moderation surface (posts, comments, chat,
+// parties). Presentation (the button HTML) stays at each call site so it
+// matches that surface's existing markup; only the GATE and the CONFIRM
+// MODAL live here.
+//
+// SECURITY: currentUserIsAdmin() is a COSMETIC gate — it decides whether a
+// control renders, nothing more. The real authorization is server-side:
+// every admin_* RPC is SECURITY DEFINER and re-checks public.is_admin()
+// (migration 0033), and profiles.is_admin is frozen against client
+// self-update (migration 0030). A tampered DevTools session that forces
+// the button to appear still gets 'forbidden' from the RPC.
+// =====================================================================
+
+import { store } from '../data/mock-data.js';
+import { createModal } from './dom.js';
+import { showToast } from './toast.js';
+
+/** True when the logged-in user is the super-admin (FeedBack). */
+export function currentUserIsAdmin() {
+  return !!store.getState().currentUser?.isAdmin;
+}
+
+/**
+ * Open a confirm-with-reason modal for an admin soft-delete.
+ *
+ * @param {object}  opts
+ * @param {string}  opts.title         Modal heading.
+ * @param {string}  opts.message       Safe HTML/text body (sanitize at the call site).
+ * @param {string} [opts.confirmLabel] Confirm button label.
+ * @param {(reason: string|null) => Promise<void>} opts.onConfirm
+ *        Performs the RPC + any local refresh. MUST throw on failure; the
+ *        modal stays open and shows an error toast. On success the modal
+ *        closes automatically.
+ */
+export function confirmAdminDelete({ title, message, confirmLabel = 'Eliminar', onConfirm }) {
+  const overlay = createModal(`
+    <div class="modal" style="max-width:420px;">
+      <div class="modal-handle"></div>
+      <div style="text-align:center;padding:var(--space-sm) 0;">
+        <div style="font-size:2.25rem;margin-bottom:var(--space-xs);">🛡️</div>
+        <h2 style="font-family:var(--font-display);font-size:var(--text-lg);font-weight:700;margin-bottom:var(--space-sm);">${title}</h2>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);line-height:1.5;margin-bottom:var(--space-md);">${message}</p>
+      </div>
+      <div class="input-group mb-md">
+        <label class="input-label">Motivo (opcional, queda en el registro)</label>
+        <input type="text" class="input" id="admin-del-reason" maxlength="200" placeholder="Ej: spam, contenido ofensivo…" />
+      </div>
+      <div style="display:flex;gap:var(--space-sm);">
+        <button type="button" class="btn btn-secondary" id="admin-del-cancel" style="flex:1;">Cancelar</button>
+        <button type="button" class="btn" id="admin-del-confirm" style="flex:1;background:#dc2626;color:white;border:none;">${confirmLabel}</button>
+      </div>
+    </div>
+  `);
+
+  overlay.querySelector('#admin-del-cancel').addEventListener('click', () => overlay.close());
+
+  const confirmBtn = overlay.querySelector('#admin-del-confirm');
+  confirmBtn.addEventListener('click', async () => {
+    const reason = overlay.querySelector('#admin-del-reason').value.trim() || null;
+    confirmBtn.disabled = true;
+    try {
+      await onConfirm(reason);
+      overlay.close();
+    } catch (err) {
+      confirmBtn.disabled = false;
+      const msg = String(err?.message || '');
+      showToast(
+        msg.includes('forbidden') ? 'No tienes permiso (solo admin).' : 'No se pudo eliminar.',
+        'error',
+      );
+      console.warn('[admin-delete]', err);
+    }
+  });
+}

@@ -42,6 +42,7 @@ const ROUTE_PATHS = {
   'chat-parties':  () => '/chats/parties',
   'chat-general':  () => '/chat/general',
   'chat-party':    (p) => `/chat/party/${encodeURIComponent(p?.partyId || '')}`,
+  admin:           () => '/admin',
 };
 
 // Auth-flow routes use history.replaceState instead of a pushed hash:
@@ -78,7 +79,7 @@ function parseHash(hash) {
     login: 'login', onboarding: 'onboarding', wall: 'wall',
     profile: 'profile', parties: 'parties', 'select-party': 'select-party',
     'create-party': 'create-party', 'sunday-rating': 'sunday-rating',
-    notifications: 'notifications', chats: 'chat-hub',
+    notifications: 'notifications', chats: 'chat-hub', admin: 'admin',
   };
   if (seg.length === 1 && STATIC[seg[0]]) {
     const name = STATIC[seg[0]];

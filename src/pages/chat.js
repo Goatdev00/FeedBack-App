@@ -13,10 +13,12 @@ import {
   sendChatMessageDB,
   subscribeChatRoom,
   resolveChatRoomId,
+  adminSoftDeleteChatMessage,
 } from '../data/api.js';
 import { supabase } from '../data/supabase.js';
 import { requireCurrentUser } from '../data/profile-sync.js';
 import { showToast } from '../utils/toast.js';
+import { confirmAdminDelete } from '../utils/admin-moderation.js';
 
 const GENERAL_ROOM_KEY = 'general';
 
@@ -47,6 +49,7 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
   if (!requireCurrentUser(container)) return;
   const state = store.getState();
   const user = state.currentUser;
+  const isAdmin = !!(user && user.isAdmin);
 
   // Entering a live room — user is now seeing this specific chat
   // directly. Two clear-cases:
@@ -129,7 +132,7 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
            <div class="chat-empty-icon">💬</div>
            <p>Aún nadie ha escrito. ¡Rompe el hielo!</p>
          </div>`
-      : messages.map((m, i) => renderMessage(m, messages[i - 1], user.id, userCache)).join('');
+      : messages.map((m, i) => renderMessage(m, messages[i - 1], user.id, userCache, isAdmin)).join('');
 
     if (wasNearBottom) {
       messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -271,6 +274,27 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
   // Delegated on the messages list so it works for every message past and
   // future without re-binding on each paint().
   messagesEl.addEventListener('click', (e) => {
+    // Admin moderation: soft-delete a message. Intercept before the
+    // view-profile branch (stopPropagation so the tap doesn't also open
+    // a profile).
+    const del = e.target.closest('[data-action="admin-del-msg"]');
+    if (del) {
+      e.stopPropagation();
+      const id = del.dataset.msgId;
+      confirmAdminDelete({
+        title: 'Eliminar mensaje',
+        message: 'Este mensaje se ocultará para todos.',
+        onConfirm: async (reason) => {
+          await adminSoftDeleteChatMessage(id, reason);
+          messages = messages.filter(x => x.id !== id);
+          lastRenderedSig = ''; // force a repaint even if length+lastid look unchanged
+          paint();
+          showToast('Mensaje eliminado (admin) 🛡️', 'success');
+        },
+      });
+      return;
+    }
+
     const trigger = e.target.closest('[data-action="view-profile"]');
     if (!trigger) return;
     const userId = trigger.dataset.userId;
@@ -323,16 +347,19 @@ function profileRowToUserShape(p) {
   };
 }
 
-function renderMessage(m, prev, currentUserId, userCache) {
+function renderMessage(m, prev, currentUserId, userCache, isAdmin = false) {
   const author = store.getUserById(m.userId) || userCache.get(m.userId);
   if (!author) return '';
   const isMine = m.userId === currentUserId;
   const sameAsPrev = prev
     && prev.userId === m.userId
     && (m.createdAt.getTime() - prev.createdAt.getTime()) < 5 * 60_000;
+  // Admin moderation control — never on still-pending optimistic rows
+  // (their id is a temp id the RPC can't resolve).
+  const canModerate = isAdmin && !m._pending && !m._syncFailed;
 
   return `
-    <div class="chat-msg ${isMine ? 'chat-msg-mine' : ''} ${sameAsPrev ? 'chat-msg-stacked' : ''}">
+    <div class="chat-msg ${isMine ? 'chat-msg-mine' : ''} ${sameAsPrev ? 'chat-msg-stacked' : ''}" data-msg-id="${m.id}">
       ${sameAsPrev
         ? '<div class="chat-msg-avatar-slot"></div>'
         : `<span data-action="view-profile" data-user-id="${m.userId}" style="cursor:pointer;display:inline-flex;">${avatarHTML(author, 'avatar-sm chat-msg-avatar-slot')}</span>`
@@ -346,6 +373,7 @@ function renderMessage(m, prev, currentUserId, userCache) {
           </div>
         `}
         <div class="chat-msg-bubble">${sanitize(m.content)}</div>
+        ${canModerate ? `<button data-action="admin-del-msg" data-msg-id="${m.id}" title="Eliminar (admin)" aria-label="Eliminar (admin)" style="background:transparent;border:none;color:#dc2626;cursor:pointer;padding:2px 0 0;font-size:0.78em;line-height:1;align-self:flex-start;">🗑️ eliminar</button>` : ''}
       </div>
     </div>
   `;
