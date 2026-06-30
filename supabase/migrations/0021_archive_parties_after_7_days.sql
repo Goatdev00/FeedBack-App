@@ -4,12 +4,13 @@
 -- WHAT THE USER ASKED FOR
 --   "Quiero que todo se archive a los 7 días pero que no quede visible
 --    para nadie, solo accesible desde la base de datos."
---   + "endurécelos [chat/ratings/asistentes] y que los creadores puedan
---      ver sus fiestas viejas."
+--   + "endurécelos [chat/ratings/asistentes]."
+--   + (revised) "que no quede nada después de 7 días visible para
+--      absolutamente nadie" — the earlier creator carve-out was DROPPED.
 --   → 7 days after a party's date, the party AND everything hanging off
---     it disappears from the APP for EVERYONE — except its own creator,
---     who keeps full access to their history. The rows always stay in the
---     database (service_role / SQL editor bypass RLS), so the team can
+--     it disappears from the APP for EVERYONE — including its own
+--     creator, no exceptions. The rows always stay in the database
+--     (service_role / SQL editor bypass RLS), so the team can
 --     export/inspect archived data anytime.
 --
 -- WHY RLS-ONLY (no archived_at column, no cron job)
@@ -19,13 +20,11 @@
 --   invisible the instant its party_date crosses the 7-day line.
 --
 -- THE VISIBILITY RULE (single source of truth = party_visible())
---   A party P is visible to the current user U  ⟺
---       P.party_date >= current_date - interval '7 days'   (inside window)
---       OR P.promoter_id = U                                (U is creator)
---   Everything that hangs off a party (posts, comments, likes, chat,
---   ratings, attendees, djs) inherits that exact rule via party_visible(),
---   so the whole unit appears/disappears together and the rule can never
---   drift between tables.
+--   A party P is visible  ⟺  P.party_date >= current_date - interval '7 days'
+--   No creator exception. Everything that hangs off a party (posts,
+--   comments, likes, chat, attendees, djs) inherits that exact rule via
+--   party_visible(), so the whole unit appears/disappears together and
+--   the rule can never drift between tables.
 --
 -- THE 7-DAY BOUNDARY
 --   Visible through the entire 7th day after the event; drops off on day
@@ -51,13 +50,17 @@ create index if not exists parties_date_idx on public.parties(party_date);
 --   * SECURITY DEFINER: runs as the function owner so the inner read of
 --     public.parties bypasses RLS — no recursion with parties_read, and
 --     the rule is self-contained (doesn't lean on another policy being
---     correct). auth.uid() still resolves to the CALLING user inside a
---     definer function (it reads the request JWT, not the role), so the
---     `promoter_id = auth.uid()` creator carve-out works correctly.
+--     correct).
 --   * NULL party_id → TRUE: the global chat room (chat_rooms.party_id IS
 --     NULL since 0009) is not party-scoped, so it must never be archived.
---   * STABLE: depends only on current_date + auth.uid(), constant within
---     a statement — lets the planner cache it per row-batch.
+--   * STABLE: depends only on current_date, constant within a statement —
+--     lets the planner cache it per row-batch.
+--
+-- HARD CUTOFF, NO EXCEPTIONS: 7 days after a party's date it disappears
+-- from the app for EVERYONE — including its own creator. (The earlier
+-- `or promoter_id = auth.uid()` creator carve-out was removed by owner
+-- decision: nothing must stay visible to anyone after the window.) The
+-- rows still live in the DB; service_role / the SQL editor bypass RLS.
 -- ---------------------------------------------------------------------
 create or replace function public.party_visible(p_party_id uuid)
 returns boolean
@@ -72,27 +75,22 @@ as $$
       select 1
       from public.parties pa
       where pa.id = p_party_id
-        and (
-          pa.party_date >= current_date - interval '7 days'
-          or pa.promoter_id = auth.uid()
-        )
+        and pa.party_date >= current_date - interval '7 days'
     );
 $$;
 
 grant execute on function public.party_visible(uuid) to authenticated;
 
 -- ---------------------------------------------------------------------
--- parties: inside the window OR you're the creator. (Inline, not via
--- party_visible(), so the policy doesn't query its own table through a
--- definer function for every row.) Was `using (true)` since 0003.
+-- parties: ONLY inside the 7-day window — no creator exception. (Inline,
+-- not via party_visible(), so the policy doesn't query its own table
+-- through a definer function for every row.) Was `using (true)` since
+-- 0003.
 -- ---------------------------------------------------------------------
 drop policy if exists parties_read on public.parties;
 create policy parties_read on public.parties
   for select to authenticated
-  using (
-    party_date >= current_date - interval '7 days'
-    or promoter_id = auth.uid()
-  );
+  using (party_date >= current_date - interval '7 days');
 
 -- ---------------------------------------------------------------------
 -- posts: keep the moderation carve-out from 0018 (hidden posts stay

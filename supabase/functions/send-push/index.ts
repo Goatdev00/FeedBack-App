@@ -26,10 +26,78 @@ const VAPID_PUBLIC_KEY = Deno.env.get('VAPID_PUBLIC_KEY') ?? '';
 const VAPID_PRIVATE_KEY = Deno.env.get('VAPID_PRIVATE_KEY') ?? '';
 const VAPID_SUBJECT = Deno.env.get('VAPID_SUBJECT') ?? '';
 
-if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY || !VAPID_SUBJECT) {
-  console.warn('[send-push] missing VAPID secrets — setVapidDetails will throw on send');
-} else {
-  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+// ---------------------------------------------------------------------
+// VAPID JWT signing — WebCrypto, NOT web-push's setVapidDetails.
+// ---------------------------------------------------------------------
+// web-push signs the VAPID JWT through jws → jwa, which uses Node
+// `crypto` + ecdsa-sig-formatter.derToJose(). Under Deno's node:crypto
+// shim that path emits an ES256 signature that is structurally valid but
+// cryptographically WRONG (right length, wrong bytes). FCM/Mozilla accept
+// it; Apple (web.push.apple.com) fully verifies and rejects it with
+// 403 {"reason":"BadJwtToken"}. So we sign the VAPID JWT ourselves with
+// WebCrypto (crypto.subtle.sign → correct raw r||s), and hand the ready
+// Authorization header to web-push, which still does the aes128gcm
+// payload encryption + HTTP. setVapidDetails is intentionally NOT called,
+// so web-push never adds its own broken Authorization.
+//
+// The subject MUST be Apple-valid: a clean `mailto:you@realdomain.com`
+// (no spaces / angle brackets / @localhost) or a public https: origin.
+const VAPID_SUB = VAPID_SUBJECT.trim();
+
+if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY || !VAPID_SUB) {
+  console.warn('[send-push] missing VAPID secrets — pushes will fail until set');
+}
+
+function b64urlToBytes(s: string): Uint8Array {
+  const b64 = s.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(s.length / 4) * 4, '=');
+  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+}
+function bytesToB64url(b: Uint8Array): string {
+  let s = '';
+  for (const c of b) s += String.fromCharCode(c);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// Import the P-256 private key once as a CryptoKey, reconstructed from the
+// raw VAPID secrets: public = 65-byte uncompressed point (0x04||X||Y),
+// private = 32-byte d scalar (both base64url, as generate-vapid.mjs emits).
+let _vapidKey: CryptoKey | null = null;
+async function vapidSignKey(): Promise<CryptoKey> {
+  if (_vapidKey) return _vapidKey;
+  const pub = b64urlToBytes(VAPID_PUBLIC_KEY); // 65 bytes
+  _vapidKey = await crypto.subtle.importKey(
+    'jwk',
+    {
+      kty: 'EC',
+      crv: 'P-256',
+      x: bytesToB64url(pub.slice(1, 33)),
+      y: bytesToB64url(pub.slice(33, 65)),
+      d: VAPID_PRIVATE_KEY,
+      ext: true,
+    } as JsonWebKey,
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['sign'],
+  );
+  return _vapidKey;
+}
+
+// Build `Authorization: vapid t=<jwt>, k=<pubkey>` for one endpoint.
+// aud = the push-service origin (e.g. https://web.push.apple.com);
+// exp = now + 12h (RFC 8292 requires <= 24h).
+async function vapidAuthHeader(endpoint: string): Promise<string> {
+  const header = bytesToB64url(new TextEncoder().encode(JSON.stringify({ typ: 'JWT', alg: 'ES256' })));
+  const claims = bytesToB64url(new TextEncoder().encode(JSON.stringify({
+    aud: new URL(endpoint).origin,
+    exp: Math.floor(Date.now() / 1000) + 12 * 60 * 60,
+    sub: VAPID_SUB,
+  })));
+  const sig = new Uint8Array(await crypto.subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    await vapidSignKey(),
+    new TextEncoder().encode(`${header}.${claims}`),
+  ));
+  return `vapid t=${header}.${claims}.${bytesToB64url(sig)}, k=${VAPID_PUBLIC_KEY}`;
 }
 
 const CORS_HEADERS = {
@@ -353,7 +421,15 @@ Deno.serve(async (req: Request) => {
     try {
       // web-push accepts the full PushSubscription shape (endpoint +
       // keys.{p256dh, auth}). Our `subscription` jsonb is exactly that.
-      await webpush.sendNotification(row.subscription as unknown as webpush.PushSubscription, payload);
+      // Inject our own WebCrypto-signed VAPID Authorization header; with
+      // no setVapidDetails, web-push keeps our header and only does the
+      // aes128gcm encryption + HTTP send.
+      const sub = row.subscription as unknown as webpush.PushSubscription;
+      await webpush.sendNotification(sub, payload, {
+        headers: { Authorization: await vapidAuthHeader(sub.endpoint) },
+        TTL: 12 * 60 * 60,
+        contentEncoding: 'aes128gcm', // matches the `vapid t=, k=` header form
+      });
       sent++;
     } catch (err) {
       const e = err as { statusCode?: number; body?: unknown };
