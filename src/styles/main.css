@@ -1221,6 +1221,35 @@ span > svg {
   animation: heartBeat 0.4s var(--ease-spring);
 }
 
+/* --- Comment like (small heart on each comment) --- */
+.comment-like {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 0 2px;
+  margin-left: 4px;
+  font-size: var(--text-xs);
+  line-height: 1;
+  vertical-align: middle;
+}
+.comment-like svg {
+  width: 13px;
+  height: 13px;
+}
+.comment-like.liked {
+  color: var(--orange);
+}
+.comment-like.liked svg {
+  animation: heartBeat 0.4s var(--ease-spring);
+}
+.comment-like-count {
+  font-weight: 600;
+}
+
 /* --- Party Card --- */
 .party-card {
   background: rgba(26, 26, 37, 0.5);

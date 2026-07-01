@@ -106,12 +106,13 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info, x-client',
 };
 
-type PushType = 'like' | 'comment' | 'follow' | 'chat' | 'question-answered' | 'question-received' | 'party-attendance';
+type PushType = 'like' | 'comment' | 'comment-like' | 'follow' | 'chat' | 'question-answered' | 'question-received' | 'party-attendance';
 
 interface RequestBody {
   type: PushType;
   toUserId: string;
   postId?: string;
+  commentId?: string;
   roomId?: string;
   questionId?: string;
   partyId?: string;
@@ -147,6 +148,12 @@ function buildMessage(
         title: 'Nuevo comentario',
         body: `${fromUsername} comentó tu publicación`,
         url: `/#/wall?post=${body.postId}`,
+      };
+    case 'comment-like':
+      return {
+        title: 'Nuevo like',
+        body: `A ${fromUsername} le gustó tu comentario`,
+        url: body.postId ? `/#/wall?post=${body.postId}` : '/#/wall',
       };
     case 'follow':
       return {
@@ -221,6 +228,17 @@ async function verifyRelationship(
         .eq('post_id', body.postId!).eq('user_id', senderId)
         .order('created_at', { ascending: false }).limit(1).maybeSingle();
       return { ok: !!comment };
+    }
+    case 'comment-like': {
+      // Recipient must own the comment, and the sender must have really
+      // liked it (row exists in post_comment_likes).
+      const { data: comment } = await admin
+        .from('post_comments').select('user_id').eq('id', body.commentId!).maybeSingle();
+      if (!comment || comment.user_id !== body.toUserId) return { ok: false };
+      const { data: like } = await admin
+        .from('post_comment_likes').select('comment_id')
+        .eq('comment_id', body.commentId!).eq('user_id', senderId).maybeSingle();
+      return { ok: !!like };
     }
     case 'follow': {
       const { data: f } = await admin
@@ -330,12 +348,15 @@ Deno.serve(async (req: Request) => {
     return json(400, { error: 'invalid_json' });
   }
 
-  const validTypes: PushType[] = ['like', 'comment', 'follow', 'chat', 'question-answered', 'question-received', 'party-attendance'];
+  const validTypes: PushType[] = ['like', 'comment', 'comment-like', 'follow', 'chat', 'question-answered', 'question-received', 'party-attendance'];
   if (!body || !validTypes.includes(body.type) || !body.toUserId) {
     return json(400, { error: 'invalid_payload' });
   }
   if ((body.type === 'like' || body.type === 'comment') && !body.postId) {
     return json(400, { error: 'missing_postId' });
+  }
+  if (body.type === 'comment-like' && !body.commentId) {
+    return json(400, { error: 'missing_commentId' });
   }
   if (body.type === 'chat' && !body.roomId) {
     return json(400, { error: 'missing_roomId' });

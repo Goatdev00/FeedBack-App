@@ -167,7 +167,7 @@ export async function listPosts() {
       hidden_at, hidden_reason,
       author:profiles!posts_user_id_fkey(id, name, username, role, city, avatar_url, membership_tier, points),
       post_likes(user_id),
-      post_comments(id, user_id, content, created_at)
+      post_comments(id, user_id, content, created_at, post_comment_likes(user_id))
     `)
     // Exclude admin-soft-deleted posts AND deleted comments nested under
     // live posts. The admin's is_admin() RLS override returns deleted rows,
@@ -189,6 +189,8 @@ function postFromRow(p) {
       userId: c.user_id,
       text: c.content,
       createdAt: new Date(c.created_at),
+      likedBy: (c.post_comment_likes || []).map(l => l.user_id),
+      likes: (c.post_comment_likes || []).length,
     }))
     .sort((a, b) => a.createdAt - b.createdAt);
 
@@ -583,6 +585,38 @@ export async function toggleLike(postId) {
   }
 }
 
+// Like / unlike a COMMENT (mirror of toggleLike). Toggles the caller's row
+// in post_comment_likes (migration 0036).
+export async function toggleCommentLike(commentId) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
+  if (!user) throw new Error('not_authenticated');
+
+  const { data: existing } = await supabase
+    .from('post_comment_likes')
+    .select('comment_id')
+    .eq('comment_id', commentId)
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  if (existing) {
+    const { error } = await supabase
+      .from('post_comment_likes')
+      .delete()
+      .eq('comment_id', commentId)
+      .eq('user_id', user.id);
+    if (error) throw error;
+    return { liked: false };
+  } else {
+    const { error } = await supabase
+      .from('post_comment_likes')
+      .insert({ comment_id: commentId, user_id: user.id });
+    if (error) throw error;
+    return { liked: true };
+  }
+}
+
 // =====================================================================
 // COMMENTS
 // =====================================================================
@@ -602,6 +636,8 @@ export async function addComment(postId, text) {
     userId: data.user_id,
     text: data.content,
     createdAt: new Date(data.created_at),
+    likedBy: [],
+    likes: 0,
   };
 }
 
@@ -1029,6 +1065,7 @@ export async function patchProfileTheme(theme) {
 registerApi({
   createPost,
   toggleLike,
+  toggleCommentLike,
   addComment,
   toggleFollow,
   toggleAttendance,
@@ -1171,6 +1208,8 @@ export function subscribeRealtime(store) {
           userId: c.user_id,
           text: c.content,
           createdAt: new Date(c.created_at),
+          likedBy: [],
+          likes: 0,
         });
         post.replies = post.comments.length;
 

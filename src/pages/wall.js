@@ -182,6 +182,16 @@ function renderLiveParties(state) {
   `;
 }
 
+// Small heart on a comment. Hidden on optimistic (pending) comments whose
+// temp id can't be liked server-side yet.
+function commentLikeBtn(postId, comment) {
+  if (comment._pending) return '';
+  const me = store.getState().currentUser;
+  const isLiked = !!(me && (comment.likedBy || []).includes(me.id));
+  const count = comment.likes || 0;
+  return `<button class="comment-like ${isLiked ? 'liked' : ''}" data-action="like-comment" data-post-id="${postId}" data-comment-id="${comment.id}" title="Me gusta" aria-label="Me gusta comentario">${isLiked ? ICONS.heartFilled : ICONS.heart}${count > 0 ? `<span class="comment-like-count">${count}</span>` : ''}</button>`;
+}
+
 function renderPostComments(post) {
   const comments = post.comments || [];
   if (comments.length === 0) return '';
@@ -213,6 +223,7 @@ function renderPostComments(post) {
           <div class="post-comment">
             <strong class="post-comment-author" ${authorAttrs}>${authorName}</strong>
             <span class="post-comment-text">${sanitize(comment.text)}</span>
+            ${commentLikeBtn(post.id, comment)}
             ${canModerate ? `<button class="admin-mod-inline" data-action="admin-delete-comment" data-comment-id="${comment.id}" title="Eliminar (admin)" style="margin-left:6px;background:transparent;border:none;color:#dc2626;cursor:pointer;padding:0 2px;font-size:0.8em;line-height:1;vertical-align:middle;">🗑️</button>` : ''}
           </div>
         `;
@@ -408,6 +419,10 @@ export function bindPostCardActions(container, root, refresh) {
       store.toggleLike(action.dataset.postId);
       refresh();
     },
+    'like-comment'(action) {
+      store.toggleCommentLike(action.dataset.postId, action.dataset.commentId);
+      refresh();
+    },
     'view-profile'(action) {
       const userId = action.dataset.userId;
       store.setState({ viewingUserId: userId });
@@ -599,7 +614,10 @@ function showAllCommentsModal(container, postId, refresh) {
               <div style="flex:1;">
                 <div ${commenter ? `data-action="view-profile" data-user-id="${commenter.id}" style="cursor:pointer;font-size:var(--text-sm);font-weight:600;"` : 'style="font-size:var(--text-sm);font-weight:600;opacity:0.7;"'}>${commenter ? sanitize(commenter.name) : 'Usuario'}</div>
                 <div style="font-size:var(--text-sm);color:var(--text-secondary);line-height:1.5;">${sanitize(c.text)}</div>
-                <div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-top:2px;">${formatRelative(new Date(c.createdAt))}</div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:2px;">
+                  <span style="font-size:var(--text-xs);color:var(--text-tertiary);">${formatRelative(new Date(c.createdAt))}</span>
+                  ${commentLikeBtn(postId, c)}
+                </div>
               </div>
               ${canModerate ? `<button data-action="admin-delete-comment" data-comment-id="${c.id}" title="Eliminar (admin)" style="background:transparent;border:none;color:#dc2626;cursor:pointer;padding:2px;align-self:flex-start;line-height:1;">🗑️</button>` : ''}
             </div>
@@ -632,6 +650,17 @@ function showAllCommentsModal(container, postId, refresh) {
   // root-level delegate doesn't reach modals (they live in document.body),
   // so we wire a local delegate here.
   overlay.addEventListener('click', (e) => {
+    const likeC = e.target.closest('[data-action="like-comment"]');
+    if (likeC) {
+      store.toggleCommentLike(likeC.dataset.postId, likeC.dataset.commentId);
+      // toggleCommentLike repaints the wall BEHIND the modal (repaintIfNeeded),
+      // but not the modal itself — swap just this button in place so its
+      // heart/count update without closing the open comments sheet.
+      const post = store.getState().posts.find(p => p.id === likeC.dataset.postId);
+      const c = post?.comments?.find(x => x.id === likeC.dataset.commentId);
+      if (c) likeC.outerHTML = commentLikeBtn(likeC.dataset.postId, c);
+      return;
+    }
     const del = e.target.closest('[data-action="admin-delete-comment"]');
     if (del) {
       const commentId = del.dataset.commentId;
