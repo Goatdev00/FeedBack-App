@@ -300,6 +300,30 @@ Deno.serve(async (req: Request) => {
     }
   }
 
+  // Record this send for the admin "Historial de notificaciones" (best
+  // effort — the notifications already went out, so a failed history
+  // insert must NOT turn a successful broadcast into an error). The
+  // service-role client bypasses RLS; there is no client insert policy.
+  // Wrapped so that even a missing table (function deployed before
+  // migration 0035 is applied) or a network blip can't reach the outer
+  // catch and 500 a send that already happened.
+  try {
+    const { error: histErr } = await admin.from('admin_broadcasts').insert({
+      actor_id: user.id,
+      title,
+      body: text,
+      url,
+      channels: { push: wantPush, email: wantEmail },
+      target_type: target.type,
+      target_count: ids.length,
+      push_sent: pushSent,
+      email_sent: emailSent,
+    });
+    if (histErr) console.warn('[admin-broadcast] history insert failed', histErr);
+  } catch (e) {
+    console.warn('[admin-broadcast] history insert threw', e);
+  }
+
   return json(200, {
     recipients: ids.length,
     push: { sent: pushSent, removed: pushRemoved },

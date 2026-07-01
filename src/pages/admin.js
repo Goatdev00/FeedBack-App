@@ -17,7 +17,7 @@ import { currentUserIsAdmin, confirmAdminDelete } from '../utils/admin-moderatio
 import {
   listModerationLog, adminRestore,
   adminListUsers, adminSetRole, adminSetModeration, adminAnonymizeUser,
-  adminModerateUser, adminDeleteUser, adminBroadcast,
+  adminModerateUser, adminDeleteUser, adminBroadcast, listAdminBroadcasts,
   listAdminReports, listAdminTickets, setTicketStatus, adminSoftDeletePost,
   listQuestions, answerQuestion, adminSoftDeleteQuestion,
   getProfileNames, listAllUserIds, listPartyAttendeeIds, adminAskQuestion,
@@ -266,6 +266,10 @@ async function renderNotify(el) {
       <button class="btn btn-secondary" id="n-dry" style="flex:1;">Calcular alcance</button>
       <button class="btn btn-primary" id="n-send" style="flex:1;">Enviar</button>
     </div>
+
+    <div style="border-top:1px solid var(--border-subtle);margin:var(--space-lg) 0 var(--space-md);"></div>
+    <h3 style="font-size:var(--text-md);font-weight:700;margin-bottom:var(--space-sm);">📜 Historial de notificaciones</h3>
+    <div id="n-history">${loadingHTML()}</div>
   `;
 
   const targetEl = el.querySelector('#n-target');
@@ -371,9 +375,51 @@ async function renderNotify(el) {
       onConfirm: async () => {
         const r = await adminBroadcast(p);
         showToast(`Enviado: ${r.push?.sent ?? 0} push, ${r.email?.sent ?? 0} correos.`, 'success', 5000);
+        const hist = el.querySelector('#n-history');
+        if (hist) loadBroadcastHistory(hist);
       },
     });
   });
+
+  loadBroadcastHistory(el.querySelector('#n-history'));
+}
+
+const N_TARGET_LABEL = { all: 'Todos', role: 'Por rol', city: 'Por ciudad', party: 'Por fiesta', user: 'Usuarios' };
+
+function broadcastHistoryItem(b) {
+  const channels = [];
+  if (b.channels?.push) channels.push('push');
+  if (b.channels?.email) channels.push('correo');
+  const stats = [`${b.recipients} destinatario${b.recipients === 1 ? '' : 's'}`];
+  if (b.pushSent) stats.push(`${b.pushSent} push`);
+  if (b.emailSent) stats.push(`${b.emailSent} correo${b.emailSent === 1 ? '' : 's'}`);
+  return card(`
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;">
+      <span style="font-weight:600;font-size:var(--text-sm);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${sanitize(b.title)}</span>
+      <span style="font-size:var(--text-xs);color:var(--text-tertiary);flex-shrink:0;">${formatRelative(b.createdAt)}</span>
+    </div>
+    <div style="font-size:var(--text-sm);color:var(--text-secondary);line-height:1.45;word-break:break-word;white-space:pre-wrap;margin-bottom:8px;">${sanitize(b.body)}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+      <span class="badge">${sanitize(N_TARGET_LABEL[b.targetType] || b.targetType)}</span>
+      ${channels.length ? `<span style="font-size:var(--text-xs);color:var(--text-tertiary);">${channels.join(' + ')}</span>` : ''}
+      <span style="font-size:var(--text-xs);color:var(--text-tertiary);">· ${stats.join(' · ')}</span>
+    </div>
+  `);
+}
+
+async function loadBroadcastHistory(el) {
+  if (!el) return;
+  el.innerHTML = loadingHTML();
+  try {
+    const list = await listAdminBroadcasts();
+    if (!document.contains(el)) return;
+    if (!list.length) { el.innerHTML = emptyHTML('🔔', 'Sin envíos', 'Las notificaciones que envíes aparecerán aquí con sus detalles.'); return; }
+    el.innerHTML = list.map(broadcastHistoryItem).join('');
+  } catch (err) {
+    if (!document.contains(el)) return;
+    el.innerHTML = errorHTML('No se pudo cargar el historial de notificaciones.');
+    console.warn('[admin] broadcast history', err);
+  }
 }
 
 // =====================================================================
@@ -412,15 +458,17 @@ function trashItem(entry) {
   const label = TYPE_LABEL[entry.targetType] || entry.targetType;
   const restored = !!entry.restoredAt;
   return card(`
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
       <span class="badge">${sanitize(label)}</span>
-      <span style="font-size:var(--text-xs);color:var(--text-tertiary);">${formatRelative(entry.createdAt)}</span>
+      <span style="font-size:var(--text-xs);color:var(--text-tertiary);flex-shrink:0;">${formatRelative(entry.createdAt)}</span>
     </div>
-    <div style="font-size:var(--text-sm);color:var(--text-secondary);line-height:1.4;margin-bottom:6px;">${sanitize(previewOf(entry))}</div>
-    ${entry.reason ? `<div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-bottom:8px;">Motivo: ${sanitize(entry.reason)}</div>` : ''}
-    ${restored
-      ? `<span style="font-size:var(--text-xs);color:#16a34a;font-weight:600;">Restaurado ✓</span>`
-      : `<button class="btn btn-secondary btn-sm" data-restore-log="${entry.id}">Restaurar</button>`}
+    <div style="font-size:var(--text-sm);color:var(--text-secondary);line-height:1.45;word-break:break-word;padding:8px 10px;background:rgba(255,255,255,0.03);border-left:2px solid var(--border-subtle);border-radius:6px;margin-bottom:${entry.reason ? '6px' : '10px'};">${sanitize(previewOf(entry))}</div>
+    ${entry.reason ? `<div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-bottom:10px;">Motivo: ${sanitize(entry.reason)}</div>` : ''}
+    <div style="display:flex;justify-content:flex-end;">
+      ${restored
+        ? `<span style="font-size:var(--text-xs);color:#16a34a;font-weight:600;">Restaurado ✓</span>`
+        : `<button class="btn btn-secondary btn-sm" data-restore-log="${entry.id}">Restaurar</button>`}
+    </div>
   `, restored);
 }
 
