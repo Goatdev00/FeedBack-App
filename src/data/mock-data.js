@@ -8,6 +8,7 @@ import {
   notifyNewComment,
   notifyNewFollower,
   notifyQuestionAnswered,
+  notifyQuestionReceived,
   notifyPartyAttendance,
 } from '../notifications/notify.js';
 
@@ -1299,7 +1300,13 @@ class Store {
 
     if (_api?.createQuestion) {
       _api.createQuestion(targetUserId, questionText)
-        .then(real => this._replaceQuestion(tempId, real))
+        .then(real => {
+          this._replaceQuestion(tempId, real);
+          // Push the target: a new anonymous question arrived. Fire-and-
+          // forget (errors swallowed in notify.js). Uses the REAL server id
+          // so send-push's verifyRelationship can confirm asker→target.
+          if (real?.id) notifyQuestionReceived(targetUserId, this.state.currentUser?.username, real.id);
+        })
         .catch(err => {
           console.error('[store] createQuestion failed', err);
           // Drop the temp row — without a server id the question can't

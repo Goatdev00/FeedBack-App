@@ -106,7 +106,7 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info, x-client',
 };
 
-type PushType = 'like' | 'comment' | 'follow' | 'chat' | 'question-answered' | 'party-attendance';
+type PushType = 'like' | 'comment' | 'follow' | 'chat' | 'question-answered' | 'question-received' | 'party-attendance';
 
 interface RequestBody {
   type: PushType;
@@ -169,6 +169,15 @@ function buildMessage(
         title: 'Respondieron tu pregunta',
         body: `${fromUsername} respondió tu pregunta anónima`,
         url: `/#/u/${ctx.senderId}?tab=questions`,
+      };
+    case 'question-received':
+      // Anonymity: NEVER name the asker (fromUsername) — the asker IS the
+      // sender and their identity must stay hidden. Land on the recipient's
+      // OWN profile, Questions tab, so they can answer in one tap.
+      return {
+        title: 'Nueva pregunta',
+        body: 'Alguien te hizo una pregunta anónima',
+        url: '/#/profile?tab=questions',
       };
     case 'party-attendance':
       // Fired toward the promoter when a guest confirms attendance —
@@ -252,6 +261,14 @@ async function verifyRelationship(
         .eq('asker_id', body.toUserId).not('answer', 'is', null).maybeSingle();
       return { ok: !!q };
     }
+    case 'question-received': {
+      // Sender must be the asker and recipient the target of this question.
+      const { data: q } = await admin
+        .from('questions').select('id')
+        .eq('id', body.questionId!).eq('asker_id', senderId)
+        .eq('target_id', body.toUserId).maybeSingle();
+      return { ok: !!q };
+    }
     case 'party-attendance': {
       const { data: party } = await admin
         .from('parties').select('promoter_id').eq('id', body.partyId!).maybeSingle();
@@ -313,7 +330,7 @@ Deno.serve(async (req: Request) => {
     return json(400, { error: 'invalid_json' });
   }
 
-  const validTypes: PushType[] = ['like', 'comment', 'follow', 'chat', 'question-answered', 'party-attendance'];
+  const validTypes: PushType[] = ['like', 'comment', 'follow', 'chat', 'question-answered', 'question-received', 'party-attendance'];
   if (!body || !validTypes.includes(body.type) || !body.toUserId) {
     return json(400, { error: 'invalid_payload' });
   }
@@ -323,7 +340,7 @@ Deno.serve(async (req: Request) => {
   if (body.type === 'chat' && !body.roomId) {
     return json(400, { error: 'missing_roomId' });
   }
-  if (body.type === 'question-answered' && !body.questionId) {
+  if ((body.type === 'question-answered' || body.type === 'question-received') && !body.questionId) {
     return json(400, { error: 'missing_questionId' });
   }
   if (body.type === 'party-attendance' && !body.partyId) {
