@@ -52,6 +52,13 @@ export function notifyNewComment(toUserId, _fromUsername, postId) {
   return callSendPush({ type: 'comment', toUserId, postId });
 }
 
+// Fired by the liker toward the comment's author when their comment gets a
+// new like. `commentId` lets send-push verify the like really exists before
+// notifying; `postId` builds the deep link back to the post.
+export function notifyCommentLike(toUserId, _fromUsername, commentId, postId) {
+  return callSendPush({ type: 'comment-like', toUserId, commentId, postId });
+}
+
 export function notifyNewFollower(toUserId, _fromUsername) {
   return callSendPush({ type: 'follow', toUserId });
 }

@@ -6,6 +6,7 @@ import { router } from '../router.js';
 import {
   notifyNewLike,
   notifyNewComment,
+  notifyCommentLike,
   notifyNewFollower,
   notifyQuestionAnswered,
   notifyQuestionReceived,
@@ -884,6 +885,60 @@ class Store {
     }
   }
 
+  // --- Comment likes ---
+  toggleCommentLike(postId, commentId) {
+    if (!this.state.currentUser) return;
+    const post = this.state.posts.find(p => p.id === postId);
+    const comment = post?.comments?.find(c => c.id === commentId);
+    if (!comment) return;
+    // A still-pending comment has only a temp id; it can't be liked
+    // server-side yet, so ignore the tap rather than desync.
+    if (comment._pending) return;
+    const uid = this.state.currentUser.id;
+    if (!comment.likedBy) comment.likedBy = [];
+    const wasLiked = comment.likedBy.includes(uid);
+
+    // Optimistic local update first.
+    if (wasLiked) {
+      comment.likedBy = comment.likedBy.filter(id => id !== uid);
+      comment.likes = Math.max(0, (comment.likes || 0) - 1);
+    } else {
+      comment.likedBy.push(uid);
+      comment.likes = (comment.likes || 0) + 1;
+    }
+    this.saveState();
+    this.notify();
+    // Repaint the active feed (e.g. the wall behind the open comments
+    // modal) — there's no wall store-subscription, so mutations repaint
+    // explicitly, same as toggleAttendance / delete flows.
+    repaintIfNeeded();
+
+    // Push to the comment author — only on a NEW like and never to self.
+    // Fire-and-forget (errors swallowed inside notifyCommentLike).
+    if (!wasLiked && comment.userId && comment.userId !== uid) {
+      notifyCommentLike(comment.userId, this.state.currentUser.username, commentId, postId);
+    }
+
+    // Persist; server is source of truth, rollback on failure.
+    if (_api?.toggleCommentLike) {
+      _api.toggleCommentLike(commentId).catch((err) => {
+        console.error('[store] toggleCommentLike failed', {
+          code: err?.code, message: err?.message, commentId, wasLiked,
+        });
+        const p = this.state.posts.find(x => x.id === postId);
+        const c = p?.comments?.find(x => x.id === commentId);
+        if (!c) return;
+        if (!c.likedBy) c.likedBy = [];
+        if (wasLiked) { c.likedBy.push(uid); c.likes = (c.likes || 0) + 1; }
+        else { c.likedBy = c.likedBy.filter(id => id !== uid); c.likes = Math.max(0, (c.likes || 0) - 1); }
+        this.saveState();
+        this.notify();
+        repaintIfNeeded();
+        _surfaceError?.('No se pudo dar like al comentario. ' + describeApiError(err));
+      });
+    }
+  }
+
   // --- Comments ---
   addComment(postId, text) {
     if (!this.state.currentUser) return;
@@ -896,6 +951,8 @@ class Store {
       userId: this.state.currentUser.id,
       text,
       createdAt: new Date(),
+      likedBy: [],
+      likes: 0,
       _pending: true,
     };
     post.comments.push(comment);
@@ -917,6 +974,9 @@ class Store {
           if (idx !== -1) p.comments[idx] = real;
           this.saveState();
           this.notify();
+          // The real row swaps in the like button (hidden while _pending);
+          // repaint so it appears without waiting for the next action.
+          repaintIfNeeded();
         })
         .catch((err) => {
           console.error('[store] addComment failed', {
