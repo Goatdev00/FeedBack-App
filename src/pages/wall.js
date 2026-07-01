@@ -132,23 +132,43 @@ export function renderWall(container) {
 }
 
 function renderLiveParties(state) {
-  const todayParties = store.getTodayParties(state.selectedCity);
-  if (todayParties.length === 0) return '';
+  const parties = store.getTodayParties(state.selectedCity);
+  if (parties.length === 0) return '';
+
+  // getTodayParties returns every non-finished party regardless of calendar
+  // date, so past-but-still-visible parties are already in this strip. Split
+  // them: current/upcoming first (soonest → later), then the past ones behind
+  // a compact "Antiguas" divider so it's clear which are old.
+  const todayStr = bogotaTodayStr();
+  const isOld = (p) => !!(p.date && p.date < todayStr);
+  const recent = parties.filter(p => !isOld(p)).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const old = parties.filter(isOld).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+  const partyCard = (party, faded) => `
+    <div class="card" style="min-width:140px;max-width:160px;padding:var(--space-sm) var(--space-md);cursor:pointer;flex-shrink:0;${faded ? 'opacity:0.6;' : ''}"
+         data-action="view-party" data-party-id="${party.id}">
+      <div style="font-size:1.2rem;margin-bottom:4px;">${faded ? '🕓' : '🔴'}</div>
+      <div style="font-size:var(--text-xs);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${sanitize(party.name)}</div>
+      <div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-top:2px;">${sanitize(party.venue)}</div>
+      <div style="display:flex;align-items:center;gap:4px;margin-top:6px;">
+        <span style="font-size:var(--text-xs);color:var(--orange);">⚡ ${party.reports?.energia || 0}%</span>
+      </div>
+    </div>
+  `;
+
+  const oldDivider = `
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;flex-shrink:0;align-self:stretch;padding:0 2px;">
+      <span style="flex:1;width:2px;border-radius:2px;background:var(--border-subtle);min-height:12px;"></span>
+      <span style="font-size:0.5rem;color:var(--text-tertiary);font-weight:700;text-transform:uppercase;letter-spacing:1px;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;">Antiguas</span>
+      <span style="flex:1;width:2px;border-radius:2px;background:var(--border-subtle);min-height:12px;"></span>
+    </div>
+  `;
 
   return `
     <div class="wall-live-strip" style="margin-bottom:var(--space-lg);overflow-x:auto;-webkit-overflow-scrolling:touch;">
       <div style="display:flex;gap:var(--space-sm);padding-bottom:var(--space-sm);">
-        ${todayParties.map(party => `
-          <div class="card" style="min-width:140px;max-width:160px;padding:var(--space-sm) var(--space-md);cursor:pointer;flex-shrink:0;"
-               data-action="view-party" data-party-id="${party.id}">
-            <div style="font-size:1.2rem;margin-bottom:4px;">🔴</div>
-            <div style="font-size:var(--text-xs);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${sanitize(party.name)}</div>
-            <div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-top:2px;">${sanitize(party.venue)}</div>
-            <div style="display:flex;align-items:center;gap:4px;margin-top:6px;">
-              <span style="font-size:var(--text-xs);color:var(--orange);">⚡ ${party.reports?.energia || 0}%</span>
-            </div>
-          </div>
-        `).join('')}
+        ${recent.map(p => partyCard(p, false)).join('')}
+        ${old.length ? oldDivider + old.map(p => partyCard(p, true)).join('') : ''}
       </div>
     </div>
   `;
