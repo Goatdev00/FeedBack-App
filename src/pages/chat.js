@@ -373,7 +373,7 @@ function renderMessage(m, prev, currentUserId, userCache, isAdmin = false) {
           </div>
         `}
         <div class="chat-msg-bubble">${sanitize(m.content)}</div>
-        ${canModerate ? `<button data-action="admin-del-msg" data-msg-id="${m.id}" title="Eliminar (admin)" aria-label="Eliminar (admin)" style="background:transparent;border:none;color:#dc2626;cursor:pointer;padding:2px 0 0;font-size:0.78em;line-height:1;align-self:flex-start;">🗑️ eliminar</button>` : ''}
+        ${canModerate ? `<button data-action="admin-del-msg" data-msg-id="${m.id}" title="Eliminar (admin)" aria-label="Eliminar (admin)" style="background:transparent;border:none;color:#dc2626;cursor:pointer;padding:2px 0 0;font-size:0.95em;line-height:1;align-self:${isMine ? 'flex-end' : 'flex-start'};">🗑️</button>` : ''}
       </div>
     </div>
   `;

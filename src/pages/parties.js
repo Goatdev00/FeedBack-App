@@ -5,11 +5,22 @@
 import { store, ICONS, isSunday } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { showToast } from '../utils/toast.js';
-import { avatarHTML, debounce, sanitize, safeImageSrc } from '../utils/helpers.js';
+import { avatarHTML, debounce, sanitize, safeImageSrc, bogotaTodayStr } from '../utils/helpers.js';
 import { hashStr } from '../utils/dom.js';
 import { renderBottomNav, bindNavEvents } from '../components/nav.js';
 
 const CITIES = ['Todas', 'Bogotá', 'Medellín', 'Cali', 'Barranquilla'];
+
+// Divider between current and archived-but-visible content.
+function sectionSeparator(label) {
+  return `
+    <div style="display:flex;align-items:center;gap:var(--space-sm);margin:var(--space-lg) 0 var(--space-md);">
+      <span style="flex:1;height:1px;background:var(--border-subtle);"></span>
+      <span style="font-size:var(--text-xs);color:var(--text-tertiary);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">${label}</span>
+      <span style="flex:1;height:1px;background:var(--border-subtle);"></span>
+    </div>
+  `;
+}
 
 export function renderParties(container) {
   const state = store.getState();
@@ -19,9 +30,10 @@ export function renderParties(container) {
     ? store.getRecommendedParties(user?.id)
     : store.getPartiesByCity(selectedCity);
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = bogotaTodayStr();
   const todayParties = parties.filter(p => p.date === todayStr);
-  const otherParties = parties.filter(p => p.date !== todayStr);
+  const upcomingParties = parties.filter(p => p.date > todayStr);
+  const pastParties = parties.filter(p => p.date < todayStr);
 
   container.innerHTML = `
     <div class="page" id="parties-page">
@@ -63,11 +75,16 @@ export function renderParties(container) {
           ${todayParties.map(p => renderPartyCard(p, state)).join('')}
         ` : ''}
 
-        ${otherParties.length > 0 ? `
+        ${upcomingParties.length > 0 ? `
           <h3 style="font-size:var(--text-sm);font-weight:600;color:var(--text-secondary);margin-top:var(--space-lg);margin-bottom:var(--space-md);">
             Próximamente
           </h3>
-          ${otherParties.map(p => renderPartyCard(p, state)).join('')}
+          ${upcomingParties.map(p => renderPartyCard(p, state)).join('')}
+        ` : ''}
+
+        ${pastParties.length > 0 ? `
+          ${sectionSeparator('Publicaciones antiguas')}
+          ${pastParties.map(p => renderPartyCard(p, state)).join('')}
         ` : ''}
 
         ${parties.length === 0 ? `

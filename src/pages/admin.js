@@ -43,8 +43,8 @@ export function renderAdmin(container) {
         <span style="width:22px;height:22px;display:inline-flex;color:#dc2626;">${ICONS.shield}</span>
         Panel · Super-admin
       </div>
-      <div class="tab-bar" id="admin-tabs" style="margin:var(--space-sm) 0 var(--space-md);flex-wrap:wrap;gap:4px;">
-        ${TABS.map(t => `<button class="tab-item" type="button" data-tab="${t.id}">${t.label}</button>`).join('')}
+      <div class="tab-bar" id="admin-tabs" style="margin:var(--space-sm) 0 var(--space-md);display:flex;flex-wrap:nowrap;gap:2px;">
+        ${TABS.map(t => `<button class="tab-item" type="button" data-tab="${t.id}" style="flex:1 1 0;min-width:0;padding:7px 3px;font-size:clamp(0.55rem,2.5vw,0.72rem);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${t.label}</button>`).join('')}
       </div>
       <div id="admin-content"></div>
     </div>
@@ -260,13 +260,45 @@ async function renderNotify(el) {
 
   const targetEl = el.querySelector('#n-target');
   const valueWrap = el.querySelector('#n-target-value');
+  let userSearchTimer = null;
   function renderValueInput() {
     const t = targetEl.value;
     if (t === 'all') { valueWrap.innerHTML = ''; return; }
-    if (t === 'role') valueWrap.innerHTML = `<select class="input" id="n-value"><option value="raver">raver</option><option value="dj">dj</option><option value="promotor">promotor</option></select>`;
-    else if (t === 'city') valueWrap.innerHTML = `<select class="input" id="n-value">${CITIES.map(c => `<option value="${c}">${c}</option>`).join('')}</select>`;
-    else if (t === 'party') valueWrap.innerHTML = `<select class="input" id="n-value">${parties.map(p => `<option value="${p.id}">${sanitize(p.name)}</option>`).join('') || '<option value="">(sin fiestas)</option>'}</select>`;
-    else valueWrap.innerHTML = `<input type="text" class="input" id="n-value" placeholder="UUID del usuario" />`;
+    if (t === 'role') { valueWrap.innerHTML = `<select class="input" id="n-value"><option value="raver">raver</option><option value="dj">dj</option><option value="promotor">promotor</option></select>`; return; }
+    if (t === 'city') { valueWrap.innerHTML = `<select class="input" id="n-value">${CITIES.map(c => `<option value="${c}">${c}</option>`).join('')}</select>`; return; }
+    if (t === 'party') { valueWrap.innerHTML = `<select class="input" id="n-value">${parties.map(p => `<option value="${p.id}">${sanitize(p.name)}</option>`).join('') || '<option value="">(sin fiestas)</option>'}</select>`; return; }
+
+    // user → search by name (no pasting UUIDs). The hidden #n-value holds
+    // the selected id that readPayload() reads.
+    valueWrap.innerHTML = `
+      <input type="text" class="input" id="n-user-search" placeholder="Buscar por nombre o @usuario…" autocomplete="off" />
+      <div id="n-user-results" style="max-height:200px;overflow-y:auto;margin-top:4px;"></div>
+      <input type="hidden" id="n-value" />
+    `;
+    const searchInput = valueWrap.querySelector('#n-user-search');
+    const results = valueWrap.querySelector('#n-user-results');
+    const hidden = valueWrap.querySelector('#n-value');
+    searchInput.addEventListener('input', () => {
+      hidden.value = ''; // typing invalidates a prior pick
+      clearTimeout(userSearchTimer);
+      userSearchTimer = setTimeout(async () => {
+        const q = searchInput.value.trim();
+        if (!q) { results.innerHTML = ''; return; }
+        try {
+          const users = await adminListUsers({ search: q, limit: 8 });
+          results.innerHTML = users.map(u =>
+            `<button type="button" class="btn btn-secondary btn-sm" data-uid="${u.id}" data-uname="${sanitize(u.name || u.username || '')}" style="display:block;width:100%;text-align:left;margin-bottom:4px;">${sanitize(u.name || '—')} · ${sanitize(u.username || '')}</button>`
+          ).join('') || '<div style="font-size:var(--text-xs);color:var(--text-tertiary);">Sin resultados</div>';
+        } catch (err) { results.innerHTML = ''; console.warn('[admin] user search', err); }
+      }, 300);
+    });
+    results.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-uid]');
+      if (!btn) return;
+      hidden.value = btn.dataset.uid;
+      searchInput.value = btn.dataset.uname;
+      results.innerHTML = '<div style="font-size:var(--text-xs);color:#16a34a;font-weight:600;">Seleccionado ✓</div>';
+    });
   }
   targetEl.addEventListener('change', renderValueInput);
   renderValueInput();

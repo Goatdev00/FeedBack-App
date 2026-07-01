@@ -85,6 +85,14 @@ export function sanitize(str) {
     .replace(/'/g, '&#39;');
 }
 
+// Today's calendar date (YYYY-MM-DD) in Colombia time. Used to classify
+// parties/posts as current vs past for the "Publicaciones antiguas" split.
+// A UTC-based date (toISOString) would skew near local midnight — a party
+// happening tonight would look "old" after ~19:00 Bogotá time.
+export function bogotaTodayStr() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(new Date());
+}
+
 /** Validate + escape a user-controlled image URL for use in src="…".
  *  Allows https, same-origin paths, blob: previews and data:image/ URIs
  *  (avatars/flyers/posts are stored as data URLs until the Storage
