@@ -88,12 +88,12 @@ function card(inner, faded = false) {
 // =====================================================================
 async function renderUsers(el) {
   el.innerHTML = `
-    <div style="display:flex;gap:6px;margin-bottom:var(--space-sm);flex-wrap:wrap;">
-      <input type="text" class="input" id="u-search" placeholder="Buscar nombre / @usuario / correo…" style="flex:1;min-width:160px;" />
-      <select class="input" id="u-role" style="width:auto;">
+    <input type="text" class="input" id="u-search" placeholder="Buscar nombre / @usuario / correo…" style="width:100%;margin-bottom:6px;" />
+    <div style="display:flex;gap:6px;margin-bottom:var(--space-sm);">
+      <select class="input" id="u-role" style="flex:1;">
         <option value="">Rol: todos</option><option value="raver">raver</option><option value="dj">dj</option><option value="promotor">promotor</option>
       </select>
-      <select class="input" id="u-status" style="width:auto;">
+      <select class="input" id="u-status" style="flex:1;">
         <option value="">Estado: todos</option><option value="active">activo</option><option value="muted">muteado</option><option value="banned">baneado</option>
       </select>
     </div>
@@ -194,7 +194,7 @@ function userRow(u) {
   const untilLabel = untilDate ? `hasta ${untilDate.toLocaleDateString()}` : (status !== 'active' ? 'permanente' : '');
   const roleSelect = protectedRow
     ? `<span class="badge">${sanitize(u.role)}</span>`
-    : `<select class="input" data-act="role" data-user-id="${u.id}" style="width:auto;padding:4px 8px;font-size:var(--text-xs);">
+    : `<select class="input" data-act="role" data-user-id="${u.id}" style="width:auto;padding:4px 8px;font-size:var(--text-xs);text-align:center;text-align-last:center;">
          ${['raver', 'dj', 'promotor'].map(r => `<option value="${r}" ${r === u.role ? 'selected' : ''}>${r}</option>`).join('')}
        </select>`;
 
@@ -203,7 +203,7 @@ function userRow(u) {
     actions = `<span style="font-size:var(--text-xs);color:var(--text-tertiary);">${u.is_admin ? '🛡️ admin' : 'tú'}</span>`;
   } else {
     const bd = `data-user-id="${u.id}" data-name="${sanitize(u.name || u.username || '')}"`;
-    const btn = (act, label, extra = '') => `<button class="btn btn-sm" data-act="${act}" ${bd} style="${extra}">${label}</button>`;
+    const btn = (act, label, extra = '') => `<button class="btn btn-secondary btn-sm" data-act="${act}" ${bd} style="${extra}">${label}</button>`;
     const modBtns = status === 'banned'
       ? btn('unban', 'Desbanear')
       : status === 'muted'
