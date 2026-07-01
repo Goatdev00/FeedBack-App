@@ -18,7 +18,7 @@ import {
   listModerationLog, adminRestore,
   adminListUsers, adminSetRole, adminSetModeration, adminAnonymizeUser,
   adminModerateUser, adminDeleteUser, adminBroadcast, listAdminBroadcasts,
-  listAdminReports, listAdminTickets, setTicketStatus, adminSoftDeletePost,
+  listAdminReports, listAdminTickets, setTicketStatus, adminReplyTicket, adminSoftDeletePost,
   listQuestions, answerQuestion, adminSoftDeleteQuestion,
   getProfileNames, listAllUserIds, listPartyAttendeeIds, adminAskQuestion,
 } from '../data/api.js';
@@ -549,14 +549,41 @@ async function renderModeration(el) {
         </div>
         <div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-bottom:6px;">${sanitize(t.email)}</div>
         <div style="font-size:var(--text-sm);color:var(--text-secondary);line-height:1.4;white-space:pre-wrap;margin-bottom:8px;">${sanitize(t.message)}</div>
-        ${t.status === 'closed'
-          ? `<button class="btn btn-sm" data-ticket="${t.id}" data-status="open">Reabrir</button>`
-          : `<button class="btn btn-secondary btn-sm" data-ticket="${t.id}" data-status="closed">Marcar resuelto</button>`}
+        <textarea class="input textarea" data-reply-for="${t.id}" placeholder="Responder al usuario (se envía por push y correo)…" maxlength="2000" style="min-height:56px;margin-bottom:8px;"></textarea>
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+          <button class="btn btn-primary btn-sm" data-reply="${t.id}">Responder</button>
+          ${t.status === 'closed'
+            ? `<button class="btn btn-sm" data-ticket="${t.id}" data-status="open">Reabrir</button>`
+            : `<button class="btn btn-secondary btn-sm" data-ticket="${t.id}" data-status="closed">Marcar resuelto</button>`}
+        </div>
       `, t.status === 'closed')).join('');
     }
   } catch (err) { ticketsEl.innerHTML = errorHTML('No se pudieron cargar los tickets.'); console.warn('[admin] tickets', err); }
 
   ticketsEl.addEventListener('click', async (e) => {
+    // Reply → push (if account) + email to the ticket's contact address.
+    const replyBtn = e.target.closest('[data-reply]');
+    if (replyBtn) {
+      const id = replyBtn.dataset.reply;
+      const ta = ticketsEl.querySelector(`textarea[data-reply-for="${id}"]`);
+      const text = ta?.value.trim();
+      if (!text) { showToast('Escribe una respuesta.', 'error'); return; }
+      replyBtn.disabled = true;
+      try {
+        const r = await adminReplyTicket(id, text);
+        const parts = [];
+        if (r?.emailSent) parts.push('correo');
+        if (r?.pushSent) parts.push(`${r.pushSent} push`);
+        if (parts.length) { showToast(`Respuesta enviada (${parts.join(' + ')}).`, 'success', 5000); if (ta) ta.value = ''; }
+        else if (r?.emailAttempted) { showToast('El correo no se pudo enviar (revisá la dirección o el proveedor) y no hay push.', 'warning', 6000); }
+        else { showToast('Este ticket no tiene cuenta con push ni correo entregable.', 'warning', 6000); }
+      } catch (err) {
+        const m = String(err?.message || '');
+        showToast(m.includes('ticket_not_found') ? 'El ticket ya no existe.' : m.includes('non-2xx') || m === 'edge_error' ? 'No se pudo enviar. ¿La función admin-reply-ticket está desplegada?' : 'No se pudo enviar la respuesta.', 'error', 6000);
+        console.warn('[admin] reply ticket', err);
+      } finally { replyBtn.disabled = false; }
+      return;
+    }
     const btn = e.target.closest('[data-ticket]');
     if (!btn) return;
     btn.disabled = true;

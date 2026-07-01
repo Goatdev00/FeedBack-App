@@ -383,6 +383,19 @@ export async function adminDeleteUser(userId) {
   return data;
 }
 
+// Reply to a support ticket → email to the ticket's contact address + push
+// to the user's devices (if the ticket is tied to an account). The recipient
+// is resolved server-side from the ticket id. Returns
+// { emailSent, pushSent, pushRemoved, hasUser }.
+export async function adminReplyTicket(ticketId, message) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data, error } = await supabase.functions.invoke('admin-reply-ticket', {
+    body: { ticketId, message },
+  });
+  if (error) throw await invokeError(error);
+  return data;
+}
+
 // Moderation-queue reads (admin-only via the 0034 RLS policies).
 export async function listAdminReports() {
   if (!isSupabaseConfigured()) return [];
