@@ -158,17 +158,29 @@ export async function deleteParty(partyId) {
 // fill the visible feed; older posts can be paginated in later.
 const POSTS_INITIAL_LIMIT = 50;
 
+// Comments embed WITH their likes (migration 0036). If that table isn't in
+// the schema yet, PostgREST can't resolve the nested embed and rejects the
+// WHOLE query — which would blank the feed (and, since base64 images are
+// pruned from localStorage, drop every image until re-hydration succeeds).
+// So we keep a likes-free fallback and retry with it on that specific error.
+const POST_COMMENTS_WITH_LIKES = 'post_comments(id, user_id, content, created_at, post_comment_likes(user_id))';
+const POST_COMMENTS_NO_LIKES   = 'post_comments(id, user_id, content, created_at)';
+
+function postsSelect(commentsEmbed) {
+  return `
+    id, user_id, party_id, content, image_url, type, created_at, expires_at,
+    hidden_at, hidden_reason,
+    author:profiles!posts_user_id_fkey(id, name, username, role, city, avatar_url, membership_tier, points),
+    post_likes(user_id),
+    ${commentsEmbed}
+  `;
+}
+
 export async function listPosts() {
   if (!isSupabaseConfigured()) return [];
-  const { data, error } = await supabase
+  const run = (commentsEmbed) => supabase
     .from('posts')
-    .select(`
-      id, user_id, party_id, content, image_url, type, created_at, expires_at,
-      hidden_at, hidden_reason,
-      author:profiles!posts_user_id_fkey(id, name, username, role, city, avatar_url, membership_tier, points),
-      post_likes(user_id),
-      post_comments(id, user_id, content, created_at, post_comment_likes(user_id))
-    `)
+    .select(postsSelect(commentsEmbed))
     // Exclude admin-soft-deleted posts AND deleted comments nested under
     // live posts. The admin's is_admin() RLS override returns deleted rows,
     // so the browsing feed must filter them or moderated content reappears
@@ -178,6 +190,16 @@ export async function listPosts() {
     .is('post_comments.deleted_at', null)
     .order('created_at', { ascending: false })
     .limit(POSTS_INITIAL_LIMIT);
+
+  let { data, error } = await run(POST_COMMENTS_WITH_LIKES);
+  // Deploy-ordering safety net: the client can ship before migration 0036
+  // runs. PGRST200 = "could not find a relationship" for the nested embed →
+  // retry without comment likes so the wall + images still load (comment
+  // like counts stay 0 until the table exists).
+  if (error && (error.code === 'PGRST200' || /post_comment_likes/i.test(error.message || ''))) {
+    console.warn('[api] post_comment_likes embed unavailable (migration 0036 not applied?) — falling back', error);
+    ({ data, error } = await run(POST_COMMENTS_NO_LIKES));
+  }
   if (error) throw error;
   return (data || []).map(postFromRow);
 }
