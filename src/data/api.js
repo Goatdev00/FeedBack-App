@@ -909,6 +909,38 @@ export async function listModerationLog() {
   return (data || []).map(moderationLogFromRow);
 }
 
+// ---------------------------------------------------------------------
+// admin_broadcasts — the sent-notification history (migration 0035).
+// Written by the admin-broadcast Edge Function (service role) after each
+// real send; RLS exposes it to admins only. Returns newest-first.
+// ---------------------------------------------------------------------
+function broadcastFromRow(r) {
+  return {
+    id: r.id,
+    actorId: r.actor_id,
+    title: r.title,
+    body: r.body,
+    url: r.url || null,
+    channels: r.channels || {},
+    targetType: r.target_type,
+    recipients: r.target_count ?? 0,
+    pushSent: r.push_sent ?? 0,
+    emailSent: r.email_sent ?? 0,
+    createdAt: new Date(r.created_at),
+  };
+}
+
+export async function listAdminBroadcasts(limit = 50) {
+  if (!isSupabaseConfigured()) return [];
+  const { data, error } = await supabase
+    .from('admin_broadcasts')
+    .select('id, actor_id, title, body, url, channels, target_type, target_count, push_sent, email_sent, created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data || []).map(broadcastFromRow);
+}
+
 export async function createQuestion(targetUserId, questionText) {
   if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
   const { data: { session } } = await supabase.auth.getSession();
