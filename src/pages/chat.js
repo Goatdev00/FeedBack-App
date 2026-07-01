@@ -372,8 +372,11 @@ function renderMessage(m, prev, currentUserId, userCache, isAdmin = false) {
             <span class="chat-msg-time">${formatRelative(m.createdAt)}</span>
           </div>
         `}
-        <div class="chat-msg-bubble">${sanitize(m.content)}</div>
-        ${canModerate ? `<button data-action="admin-del-msg" data-msg-id="${m.id}" title="Eliminar (admin)" aria-label="Eliminar (admin)" style="background:transparent;border:none;color:#dc2626;cursor:pointer;padding:2px 0 0;font-size:0.95em;line-height:1;align-self:${isMine ? 'flex-end' : 'flex-start'};">🗑️</button>` : ''}
+        <div style="display:flex;align-items:center;gap:6px;">
+          ${isMine && canModerate ? `<button data-action="admin-del-msg" data-msg-id="${m.id}" title="Eliminar (admin)" aria-label="Eliminar (admin)" style="background:transparent;border:none;color:#dc2626;cursor:pointer;padding:0;font-size:0.95em;line-height:1;flex-shrink:0;">🗑️</button>` : ''}
+          <div class="chat-msg-bubble">${sanitize(m.content)}</div>
+          ${!isMine && canModerate ? `<button data-action="admin-del-msg" data-msg-id="${m.id}" title="Eliminar (admin)" aria-label="Eliminar (admin)" style="background:transparent;border:none;color:#dc2626;cursor:pointer;padding:0;font-size:0.95em;line-height:1;flex-shrink:0;">🗑️</button>` : ''}
+        </div>
       </div>
     </div>
   `;
