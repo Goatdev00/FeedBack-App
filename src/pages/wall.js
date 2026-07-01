@@ -5,7 +5,7 @@
 import { store, ICONS, formatRelative } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { showToast } from '../utils/toast.js';
-import { avatarHTML, roleBadgeClass, roleTitle, sanitize, safeImageSrc } from '../utils/helpers.js';
+import { avatarHTML, roleBadgeClass, roleTitle, sanitize, safeImageSrc, bogotaTodayStr } from '../utils/helpers.js';
 import { createModal } from '../utils/dom.js';
 import { renderBottomNav, bindNavEvents } from '../components/nav.js';
 import { refreshFromSupabaseInBackground } from '../data/hydration.js';
@@ -22,11 +22,29 @@ function sortFeed(posts) {
   });
 }
 
+// Divider between current and archived-but-visible content (wall + fiestas).
+function sectionSeparator(label) {
+  return `
+    <div style="display:flex;align-items:center;gap:var(--space-sm);margin:var(--space-lg) 0 var(--space-md);">
+      <span style="flex:1;height:1px;background:var(--border-subtle);"></span>
+      <span style="font-size:var(--text-xs);color:var(--text-tertiary);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">${label}</span>
+      <span style="flex:1;height:1px;background:var(--border-subtle);"></span>
+    </div>
+  `;
+}
+
 export function renderWall(container) {
   const state = store.getState();
   const user = state.currentUser;
   const posts = sortFeed(state.posts);
   const unreadNotifs = user ? store.getUnreadNotificationCount() : 0;
+  // Split "current" (posts whose party is today/upcoming) from "old" (posts
+  // whose party date already passed, still inside the 7-day window). Old
+  // ones sink below a "Publicaciones antiguas" divider.
+  const _todayStr = bogotaTodayStr();
+  const isOldPost = (p) => { const pty = store.getPartyById(p.partyId); return !!(pty && pty.date && pty.date < _todayStr); };
+  const currentPosts = posts.filter(p => !isOldPost(p));
+  const oldPosts = posts.filter(isOldPost);
 
   // Belt-and-suspenders: if the wall rendered without a prior hydrate
   // (e.g. user came straight from /onboarding → /wall without re-
@@ -67,10 +85,18 @@ export function renderWall(container) {
 
       <!-- Feed -->
       <div id="feed-container">
-        ${posts.length > 0
-          ? posts.map(post => renderPostCard(post, state)).join('')
-          : state.hydrated ? renderEmptyWall() : renderWallSkeleton()
-        }
+        ${(() => {
+          // Render each section first, then gate the separator on the
+          // ACTUAL markup (renderPostCard returns '' for report-hidden /
+          // uncached-author posts), so no divider shows with nothing under
+          // it and the empty state shows when everything renders blank.
+          const currentHtml = currentPosts.map(post => renderPostCard(post, state)).join('');
+          const oldHtml = oldPosts.map(post => renderPostCard(post, state)).join('');
+          if (!currentHtml.trim() && !oldHtml.trim()) {
+            return state.hydrated ? renderEmptyWall() : renderWallSkeleton();
+          }
+          return currentHtml + (oldHtml.trim() ? sectionSeparator('Publicaciones antiguas') + oldHtml : '');
+        })()}
       </div>
     </div>
 
