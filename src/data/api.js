@@ -410,6 +410,82 @@ export async function setTicketStatus(ticketId, status) {
   if (error) throw error;
 }
 
+// Resolve display names for a set of user ids (for the admin Q&A "Para: X").
+export async function getProfileNames(ids) {
+  if (!isSupabaseConfigured() || !ids.length) return {};
+  const unique = [...new Set(ids.filter(Boolean))];
+  const map = {};
+  // Chunk the .in() list so a big id set can't blow the request-URI length
+  // limit; a failed chunk warns + continues instead of blanking every name.
+  for (let i = 0; i < unique.length; i += 150) {
+    const chunk = unique.slice(i, i + 150);
+    const { data, error } = await supabase.from('profiles').select('id, name, username').in('id', chunk);
+    if (error) { console.warn('[api] getProfileNames chunk failed', error); continue; }
+    for (const p of data || []) map[p.id] = p.name || p.username || 'Usuario';
+  }
+  return map;
+}
+
+// Recipient resolvers for the admin "ask a question to many" flow.
+// profiles_read is open (using(true)); attendees_read gives the admin every
+// attendee via the is_admin override. PAGINATED: an unbounded PostgREST
+// select is capped at max_rows (1000), which would silently truncate a
+// "to everyone" audience — loop by range until a short page. The explicit
+// stable order prevents skipped/duplicated rows across page seams.
+export async function listAllUserIds() {
+  if (!isSupabaseConfigured()) return [];
+  const ids = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from('profiles').select('id').order('id', { ascending: true }).range(from, from + PAGE - 1);
+    if (error) throw error;
+    const batch = data || [];
+    for (const r of batch) ids.push(r.id);
+    if (batch.length < PAGE) break;
+  }
+  return ids;
+}
+
+export async function listPartyAttendeeIds(partyId) {
+  if (!isSupabaseConfigured()) return [];
+  const ids = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from('party_attendees').select('user_id').eq('party_id', partyId)
+      .order('user_id', { ascending: true }).range(from, from + PAGE - 1);
+    if (error) throw error;
+    const batch = data || [];
+    for (const r of batch) ids.push(r.user_id);
+    if (batch.length < PAGE) break;
+  }
+  return ids;
+}
+
+// Admin asks one question to many users at once. Inserts one questions row
+// per recipient (asker = the admin, so the target sees an anonymous
+// question they can answer). Excludes the admin themselves (questions_create
+// forbids target = asker) and de-dupes. Chunked to keep inserts small.
+export async function adminAskQuestion(questionText, recipientIds) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data: { session } } = await supabase.auth.getSession();
+  const me = session?.user?.id;
+  if (!me) throw new Error('not_authenticated');
+  const rows = [...new Set(recipientIds)]
+    .filter((id) => id && id !== me)
+    .map((id) => ({ target_id: id, asker_id: me, question: questionText }));
+  if (!rows.length) return { inserted: 0 };
+  let inserted = 0;
+  for (let i = 0; i < rows.length; i += 500) {
+    const chunk = rows.slice(i, i + 500);
+    const { error } = await supabase.from('questions').insert(chunk);
+    if (error) throw error;
+    inserted += chunk.length;
+  }
+  return { inserted };
+}
+
 // =====================================================================
 // POINTS — atomic, server-side persisted award
 // =====================================================================

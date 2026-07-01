@@ -20,6 +20,7 @@ import {
   adminModerateUser, adminDeleteUser, adminBroadcast,
   listAdminReports, listAdminTickets, setTicketStatus, adminSoftDeletePost,
   listQuestions, answerQuestion, adminSoftDeleteQuestion,
+  getProfileNames, listAllUserIds, listPartyAttendeeIds, adminAskQuestion,
 } from '../data/api.js';
 
 const CITIES = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena'];
@@ -492,30 +493,109 @@ async function renderModeration(el) {
 // =====================================================================
 async function renderQA(el) {
   const meId = store.getState().currentUser?.id;
+  const parties = store.getState().parties || [];
   el.innerHTML = `
+    <div style="background:var(--surface,rgba(255,255,255,0.04));border:1px solid var(--border-subtle);border-radius:var(--radius-md);padding:var(--space-md);margin-bottom:var(--space-md);">
+      <div style="font-weight:700;margin-bottom:8px;">Hacer una pregunta</div>
+      <textarea class="input textarea" id="qa-ask-text" maxlength="500" placeholder="Escribe la pregunta…" style="min-height:56px;margin-bottom:8px;"></textarea>
+      <select class="input" id="qa-ask-target" style="margin-bottom:8px;">
+        <option value="all">A todos</option>
+        <option value="party">Por fiesta (asistentes)</option>
+        <option value="people">A personas</option>
+      </select>
+      <div id="qa-ask-value" style="margin-bottom:8px;"></div>
+      <button class="btn btn-primary btn-sm" id="qa-ask-send">Enviar pregunta</button>
+    </div>
+
     <div class="tab-bar" id="qa-sub" style="margin-bottom:var(--space-md);">
       <button class="tab-item active" type="button" data-sub="mine">Para FeedBack</button>
       <button class="tab-item" type="button" data-sub="all">Todas</button>
     </div>
     <div id="qa-content">${loadingHTML()}</div>
   `;
+
+  // ---- Composer: ask a question to all / a party's attendees / people ----
+  const askTargetEl = el.querySelector('#qa-ask-target');
+  const askValueWrap = el.querySelector('#qa-ask-value');
+  const askPeople = [];
+  let askSearchTimer = null;
+  function renderAskValue() {
+    const t = askTargetEl.value;
+    if (t === 'all') { askValueWrap.innerHTML = ''; return; }
+    if (t === 'party') { askValueWrap.innerHTML = `<select class="input" id="qa-ask-party">${parties.map(p => `<option value="${p.id}">${sanitize(p.name)}</option>`).join('') || '<option value="">(sin fiestas)</option>'}</select>`; return; }
+    askPeople.length = 0;
+    askValueWrap.innerHTML = `
+      <input type="text" class="input" id="qa-ask-search" placeholder="Buscar y agregar personas…" autocomplete="off" />
+      <div id="qa-ask-results" style="max-height:180px;overflow-y:auto;margin-top:4px;"></div>
+      <div id="qa-ask-chips" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;"></div>
+    `;
+    const s = askValueWrap.querySelector('#qa-ask-search');
+    const res = askValueWrap.querySelector('#qa-ask-results');
+    const chips = askValueWrap.querySelector('#qa-ask-chips');
+    const paintChips = () => { chips.innerHTML = askPeople.map(u => `<span style="display:inline-flex;align-items:center;gap:4px;background:var(--surface,rgba(255,255,255,0.08));border:1px solid var(--border-subtle);border-radius:var(--radius-full);padding:3px 8px;font-size:var(--text-xs);">${sanitize(u.name)} <button type="button" data-remove="${u.id}" style="background:none;border:none;color:var(--text-tertiary);cursor:pointer;line-height:1;">✕</button></span>`).join(''); };
+    s.addEventListener('input', () => {
+      clearTimeout(askSearchTimer);
+      askSearchTimer = setTimeout(async () => {
+        const q = s.value.trim();
+        if (!q) { res.innerHTML = ''; return; }
+        try {
+          const users = await adminListUsers({ search: q, limit: 8 });
+          res.innerHTML = users.map(u => `<button type="button" class="btn btn-secondary btn-sm" data-uid="${u.id}" data-uname="${sanitize(u.name || u.username || '')}" style="display:block;width:100%;text-align:left;margin-bottom:4px;">${sanitize(u.name || '—')} · ${sanitize(u.username || '')}</button>`).join('') || '<div style="font-size:var(--text-xs);color:var(--text-tertiary);">Sin resultados</div>';
+        } catch { res.innerHTML = ''; }
+      }, 300);
+    });
+    res.addEventListener('click', (e) => { const b = e.target.closest('[data-uid]'); if (!b) return; const id = b.dataset.uid; if (!askPeople.some(u => u.id === id)) askPeople.push({ id, name: b.dataset.uname || '—' }); s.value = ''; res.innerHTML = ''; paintChips(); });
+    chips.addEventListener('click', (e) => { const rm = e.target.closest('[data-remove]'); if (!rm) return; const i = askPeople.findIndex(u => u.id === rm.dataset.remove); if (i >= 0) askPeople.splice(i, 1); paintChips(); });
+  }
+  askTargetEl.addEventListener('change', renderAskValue);
+  renderAskValue();
+
+  el.querySelector('#qa-ask-send').addEventListener('click', async () => {
+    const text = el.querySelector('#qa-ask-text').value.trim();
+    if (!text) { showToast('Escribe la pregunta.', 'error'); return; }
+    const t = askTargetEl.value;
+    let ids = [];
+    try {
+      if (t === 'all') ids = await listAllUserIds();
+      else if (t === 'party') { const pid = el.querySelector('#qa-ask-party')?.value; if (!pid) { showToast('Elegí una fiesta.', 'error'); return; } ids = await listPartyAttendeeIds(pid); }
+      else { ids = askPeople.map(u => u.id); if (!ids.length) { showToast('Elegí al menos una persona.', 'error'); return; } }
+    } catch (err) { showToast('No se pudieron resolver los destinatarios.', 'error'); console.warn('[admin] ask resolve', err); return; }
+    const recipients = ids.filter(id => id && id !== meId);
+    if (!recipients.length) { showToast('No hay destinatarios.', 'error'); return; }
+    confirmAdminDelete({
+      title: 'Enviar pregunta',
+      message: `La pregunta se enviará a <strong>${recipients.length}</strong> persona(s). La reciben de forma anónima y pueden responderla.`,
+      confirmLabel: 'Enviar',
+      errorLabel: 'No se pudo enviar la pregunta.',
+      hideReason: true,
+      onConfirm: async () => {
+        const r = await adminAskQuestion(text, recipients);
+        showToast(`Pregunta enviada a ${r.inserted} persona(s).`, 'success', 5000);
+        el.querySelector('#qa-ask-text').value = '';
+      },
+    });
+  });
+
+  // ---- List + moderate ----
   const subEl = el.querySelector('#qa-sub');
   const contentEl = el.querySelector('#qa-content');
-
   let questions = [];
   try { questions = await listQuestions(); }
   catch (err) { contentEl.innerHTML = errorHTML('No se pudieron cargar las preguntas.'); console.warn('[admin] questions', err); return; }
 
+  // Resolve target names not already in the store cache (so "Para: X" is real).
+  const uncached = [...new Set(questions.map(q => q.targetUserId))].filter(id => id && !store.getUserById(id));
+  const nameMap = uncached.length ? await getProfileNames(uncached) : {};
+  const resolveName = (id) => { const u = store.getUserById(id); return u ? (u.name || u.username || 'Usuario') : (nameMap[id] || 'Usuario'); };
+
   function paint(sub) {
     subEl.querySelectorAll('.tab-item').forEach(b => b.classList.toggle('active', b.dataset.sub === sub));
     const list = sub === 'mine' ? questions.filter(q => q.targetUserId === meId) : questions;
-    if (!list.length) { contentEl.innerHTML = emptyHTML('❓', 'Sin preguntas', sub === 'mine' ? 'No tienes preguntas dirigidas a FeedBack.' : 'No hay preguntas.'); return; }
-    contentEl.innerHTML = list.map(q => qaItem(q, sub === 'mine')).join('');
+    if (!list.length) { contentEl.innerHTML = emptyHTML('❓', 'Sin preguntas', sub === 'mine' ? 'No hay preguntas dirigidas a FeedBack.' : 'No hay preguntas.'); return; }
+    contentEl.innerHTML = list.map(q => qaItem(q, sub === 'mine', resolveName(q.targetUserId))).join('');
   }
-
   subEl.addEventListener('click', (e) => { const b = e.target.closest('[data-sub]'); if (b) paint(b.dataset.sub); });
 
-  // Answer (mine) + delete (any) delegation.
   contentEl.addEventListener('click', async (e) => {
     const ansBtn = e.target.closest('[data-answer]');
     if (ansBtn) {
@@ -543,13 +623,14 @@ async function renderQA(el) {
   paint('mine');
 }
 
-function qaItem(q, mine) {
+function qaItem(q, mine, targetNameStr = 'Usuario') {
   const answered = !!q.answer;
   return card(`
     <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:4px;">
       <span class="badge">${answered ? 'respondida' : 'pendiente'}</span>
       <span style="font-size:var(--text-xs);color:var(--text-tertiary);">${formatRelative(q.createdAt)}</span>
     </div>
+    <div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-bottom:4px;">Para: <strong>${sanitize(targetNameStr)}</strong></div>
     <div style="font-size:var(--text-sm);font-weight:600;margin-bottom:6px;">${sanitize(q.question)}</div>
     ${answered ? `<div style="font-size:var(--text-sm);color:var(--text-secondary);line-height:1.4;margin-bottom:8px;">↳ ${sanitize(q.answer)}</div>` : ''}
     ${mine && !answered ? `
