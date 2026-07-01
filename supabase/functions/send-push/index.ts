@@ -103,7 +103,7 @@ async function vapidAuthHeader(endpoint: string): Promise<string> {
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
+  'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info, x-client',
 };
 
 type PushType = 'like' | 'comment' | 'follow' | 'chat' | 'question-answered' | 'party-attendance';
