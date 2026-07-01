@@ -99,10 +99,11 @@ async function vapidAuthHeader(endpoint: string): Promise<string> {
 // ---------------- Recipient resolution (server-side) ----------------
 async function resolveRecipientIds(
   admin: SupabaseClient,
-  target: { type: string; value?: string },
+  target: { type: string; value?: string | string[] },
 ): Promise<string[]> {
   // Surface query errors (e.g. a bad enum/uuid that slipped validation)
   // instead of swallowing them into a fake empty audience.
+  const single = Array.isArray(target.value) ? (target.value[0] ?? '') : (target.value ?? '');
   switch (target.type) {
     case 'all': {
       const { data, error } = await admin.from('profiles').select('id');
@@ -110,22 +111,23 @@ async function resolveRecipientIds(
       return (data ?? []).map((r) => r.id as string);
     }
     case 'role': {
-      const { data, error } = await admin.from('profiles').select('id').eq('role', target.value);
+      const { data, error } = await admin.from('profiles').select('id').eq('role', single);
       if (error) throw error;
       return (data ?? []).map((r) => r.id as string);
     }
     case 'city': {
-      const { data, error } = await admin.from('profiles').select('id').eq('city', target.value);
+      const { data, error } = await admin.from('profiles').select('id').eq('city', single);
       if (error) throw error;
       return (data ?? []).map((r) => r.id as string);
     }
     case 'party': {
-      const { data, error } = await admin.from('party_attendees').select('user_id').eq('party_id', target.value);
+      const { data, error } = await admin.from('party_attendees').select('user_id').eq('party_id', single);
       if (error) throw error;
       return (data ?? []).map((r) => r.user_id as string);
     }
     case 'user': {
-      return target.value ? [target.value] : [];
+      // One or many hand-picked users.
+      return Array.isArray(target.value) ? target.value : (target.value ? [target.value] : []);
     }
     default:
       return [];
@@ -173,7 +175,7 @@ Deno.serve(async (req: Request) => {
   let body: {
     title?: string; body?: string; url?: string;
     channels?: { push?: boolean; email?: boolean };
-    target?: { type?: string; value?: string };
+    target?: { type?: string; value?: string | string[] };
     dryRun?: boolean;
   };
   try { body = await req.json(); } catch { return json(400, { error: 'invalid_json' }); }
@@ -194,12 +196,19 @@ Deno.serve(async (req: Request) => {
   if (target.type !== 'all' && !target.value) return json(400, { error: 'missing_target_value' });
   // Validate value shape so a typo doesn't error in the query and look like
   // a clean 0-recipient success.
-  if (target.type === 'role' && !['raver', 'dj', 'promotor'].includes(target.value ?? '')) {
+  if (target.type === 'role' && !['raver', 'dj', 'promotor'].includes(String(target.value ?? ''))) {
     return json(400, { error: 'invalid_role' });
   }
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if ((target.type === 'party' || target.type === 'user') && !UUID_RE.test(target.value ?? '')) {
+  if (target.type === 'party' && !UUID_RE.test(String(target.value ?? ''))) {
     return json(400, { error: 'invalid_uuid' });
+  }
+  if (target.type === 'user') {
+    // One or many user ids.
+    const vals = Array.isArray(target.value) ? target.value : (target.value ? [target.value] : []);
+    if (vals.length === 0 || !vals.every((v) => UUID_RE.test(String(v)))) {
+      return json(400, { error: 'invalid_uuid' });
+    }
   }
 
   // ---------------- Resolve recipients ----------------

@@ -232,7 +232,16 @@ async function renderNotify(el) {
   el.innerHTML = `
     <div class="input-group mb-md"><label class="input-label">Título</label><input type="text" class="input" id="n-title" maxlength="120" /></div>
     <div class="input-group mb-md"><label class="input-label">Mensaje</label><textarea class="input textarea" id="n-body" maxlength="500" style="min-height:80px;"></textarea></div>
-    <div class="input-group mb-md"><label class="input-label">Enlace (opcional, /#/…)</label><input type="text" class="input" id="n-url" placeholder="/#/notifications" /></div>
+    <div class="input-group mb-md">
+      <label class="input-label">¿A dónde lleva al tocarla?</label>
+      <select class="input" id="n-url">
+        <option value="/#/notifications">Notificaciones</option>
+        <option value="/#/wall">Muro</option>
+        <option value="/#/parties">Fiestas</option>
+        <option value="/#/chats">Chats</option>
+        <option value="/#/profile">Mi perfil</option>
+      </select>
+    </div>
     <div class="input-group mb-md">
       <label class="input-label">Canales</label>
       <div style="display:flex;gap:16px;">
@@ -247,7 +256,7 @@ async function renderNotify(el) {
         <option value="role">Por rol</option>
         <option value="city">Por ciudad</option>
         <option value="party">Por fiesta (asistentes)</option>
-        <option value="user">Un usuario (ID)</option>
+        <option value="user">Usuarios (uno o varios)</option>
       </select>
       <div id="n-target-value" style="margin-top:8px;"></div>
     </div>
@@ -260,6 +269,7 @@ async function renderNotify(el) {
 
   const targetEl = el.querySelector('#n-target');
   const valueWrap = el.querySelector('#n-target-value');
+  const selectedUsers = []; // for the 'user' target — one or many picks
   let userSearchTimer = null;
   function renderValueInput() {
     const t = targetEl.value;
@@ -268,18 +278,23 @@ async function renderNotify(el) {
     if (t === 'city') { valueWrap.innerHTML = `<select class="input" id="n-value">${CITIES.map(c => `<option value="${c}">${c}</option>`).join('')}</select>`; return; }
     if (t === 'party') { valueWrap.innerHTML = `<select class="input" id="n-value">${parties.map(p => `<option value="${p.id}">${sanitize(p.name)}</option>`).join('') || '<option value="">(sin fiestas)</option>'}</select>`; return; }
 
-    // user → search by name (no pasting UUIDs). The hidden #n-value holds
-    // the selected id that readPayload() reads.
+    // user → multi-select by name: search, click to ADD, chips to remove.
+    // readPayload() reads the selectedUsers array (no pasting UUIDs).
+    selectedUsers.length = 0;
     valueWrap.innerHTML = `
-      <input type="text" class="input" id="n-user-search" placeholder="Buscar por nombre o @usuario…" autocomplete="off" />
+      <input type="text" class="input" id="n-user-search" placeholder="Buscar y agregar usuarios…" autocomplete="off" />
       <div id="n-user-results" style="max-height:200px;overflow-y:auto;margin-top:4px;"></div>
-      <input type="hidden" id="n-value" />
+      <div id="n-user-chips" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;"></div>
     `;
     const searchInput = valueWrap.querySelector('#n-user-search');
     const results = valueWrap.querySelector('#n-user-results');
-    const hidden = valueWrap.querySelector('#n-value');
+    const chips = valueWrap.querySelector('#n-user-chips');
+    const renderChips = () => {
+      chips.innerHTML = selectedUsers.map(u =>
+        `<span style="display:inline-flex;align-items:center;gap:4px;background:var(--surface,rgba(255,255,255,0.08));border:1px solid var(--border-subtle);border-radius:var(--radius-full);padding:3px 8px;font-size:var(--text-xs);">${sanitize(u.name)} <button type="button" data-remove="${u.id}" style="background:none;border:none;color:var(--text-tertiary);cursor:pointer;line-height:1;">✕</button></span>`
+      ).join('');
+    };
     searchInput.addEventListener('input', () => {
-      hidden.value = ''; // typing invalidates a prior pick
       clearTimeout(userSearchTimer);
       userSearchTimer = setTimeout(async () => {
         const q = searchInput.value.trim();
@@ -295,9 +310,18 @@ async function renderNotify(el) {
     results.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-uid]');
       if (!btn) return;
-      hidden.value = btn.dataset.uid;
-      searchInput.value = btn.dataset.uname;
-      results.innerHTML = '<div style="font-size:var(--text-xs);color:#16a34a;font-weight:600;">Seleccionado ✓</div>';
+      const id = btn.dataset.uid;
+      if (!selectedUsers.some(u => u.id === id)) selectedUsers.push({ id, name: btn.dataset.uname || '—' });
+      searchInput.value = '';
+      results.innerHTML = '';
+      renderChips();
+    });
+    chips.addEventListener('click', (e) => {
+      const rm = e.target.closest('[data-remove]');
+      if (!rm) return;
+      const idx = selectedUsers.findIndex(u => u.id === rm.dataset.remove);
+      if (idx >= 0) selectedUsers.splice(idx, 1);
+      renderChips();
     });
   }
   targetEl.addEventListener('change', renderValueInput);
@@ -310,13 +334,17 @@ async function renderNotify(el) {
     const push = el.querySelector('#n-push').checked;
     const email = el.querySelector('#n-email').checked;
     const type = targetEl.value;
-    const value = el.querySelector('#n-value')?.value || undefined;
+    const value = type === 'user'
+      ? selectedUsers.map(u => u.id)
+      : (el.querySelector('#n-value')?.value || undefined);
     return { title, body, url, channels: { push, email }, target: { type, value } };
   }
   function validate(p) {
     if (!p.title || !p.body) { showToast('Título y mensaje son obligatorios.', 'error'); return false; }
     if (!p.channels.push && !p.channels.email) { showToast('Elegí al menos un canal.', 'error'); return false; }
-    if (p.target.type !== 'all' && !p.target.value) { showToast('Falta el destinatario.', 'error'); return false; }
+    if (p.target.type === 'user') {
+      if (!Array.isArray(p.target.value) || p.target.value.length === 0) { showToast('Elegí al menos un usuario.', 'error'); return false; }
+    } else if (p.target.type !== 'all' && !p.target.value) { showToast('Falta el destinatario.', 'error'); return false; }
     if (p.url && !p.url.startsWith('/#/')) { showToast('El enlace debe empezar con /#/', 'error'); return false; }
     return true;
   }
