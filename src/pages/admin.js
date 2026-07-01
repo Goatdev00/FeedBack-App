@@ -80,7 +80,10 @@ function errorHTML(text) {
   return `<div class="empty-state"><div class="empty-state-icon">⚠️</div><p class="empty-state-text">${sanitize(text)}</p></div>`;
 }
 function card(inner, faded = false) {
-  return `<div style="background:var(--surface,rgba(255,255,255,0.04));border:1px solid var(--border-subtle);border-radius:var(--radius-md);padding:var(--space-md);margin-bottom:var(--space-sm);${faded ? 'opacity:0.55;' : ''}">${inner}</div>`;
+  // Frosted-glass panel: nearly-opaque dark base + blur so the animated
+  // lava-lamp background doesn't bleed through and hurt readability (the old
+  // rgba(255,255,255,0.04) fallback let bright bubbles show right through).
+  return `<div style="background:var(--surface,rgba(28,28,42,0.88));backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--border-subtle);border-radius:var(--radius-md);padding:var(--space-md);margin-bottom:var(--space-sm);${faded ? 'opacity:0.55;' : ''}">${inner}</div>`;
 }
 
 // =====================================================================
@@ -569,7 +572,7 @@ async function renderQA(el) {
   const meId = store.getState().currentUser?.id;
   const parties = store.getState().parties || [];
   el.innerHTML = `
-    <div style="background:var(--surface,rgba(255,255,255,0.04));border:1px solid var(--border-subtle);border-radius:var(--radius-md);padding:var(--space-md);margin-bottom:var(--space-md);">
+    <div style="background:var(--surface,rgba(28,28,42,0.88));backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--border-subtle);border-radius:var(--radius-md);padding:var(--space-md);margin-bottom:var(--space-md);">
       <div style="font-weight:700;margin-bottom:8px;">Hacer una pregunta</div>
       <textarea class="input textarea" id="qa-ask-text" maxlength="500" placeholder="Escribe la pregunta…" style="min-height:56px;margin-bottom:8px;"></textarea>
       <select class="input" id="qa-ask-target" style="margin-bottom:8px;">
@@ -699,18 +702,19 @@ async function renderQA(el) {
 
 function qaItem(q, mine, targetNameStr = 'Usuario') {
   const answered = !!q.answer;
+  const canAnswer = mine && !answered;
   return card(`
-    <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:4px;">
-      <span class="badge">${answered ? 'respondida' : 'pendiente'}</span>
-      <span style="font-size:var(--text-xs);color:var(--text-tertiary);">${formatRelative(q.createdAt)}</span>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
+      <span class="badge" style="${answered ? 'background:rgba(22,163,74,0.18);color:#16a34a;' : ''}">${answered ? 'respondida' : 'pendiente'}</span>
+      <span style="font-size:var(--text-xs);color:var(--text-tertiary);flex-shrink:0;">${formatRelative(q.createdAt)}</span>
     </div>
-    <div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-bottom:4px;">Para: <strong>${sanitize(targetNameStr)}</strong></div>
-    <div style="font-size:var(--text-sm);font-weight:600;margin-bottom:6px;">${sanitize(q.question)}</div>
-    ${answered ? `<div style="font-size:var(--text-sm);color:var(--text-secondary);line-height:1.4;margin-bottom:8px;">↳ ${sanitize(q.answer)}</div>` : ''}
-    ${mine && !answered ? `
-      <textarea class="input textarea" data-answer-for="${q.id}" placeholder="Tu respuesta…" maxlength="1000" style="min-height:60px;margin-bottom:6px;"></textarea>
-      <button class="btn btn-primary btn-sm" data-answer="${q.id}">Responder</button>
-    ` : ''}
-    <button class="btn btn-sm" data-del-q="${q.id}" style="color:#dc2626;margin-left:6px;">Eliminar</button>
+    <div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-bottom:6px;">Para: <strong style="color:var(--text-secondary);font-weight:600;">${sanitize(targetNameStr)}</strong></div>
+    <div style="font-size:var(--text-sm);font-weight:600;line-height:1.4;word-break:break-word;margin-bottom:${answered || canAnswer ? '8px' : '10px'};">${sanitize(q.question)}</div>
+    ${answered ? `<div style="font-size:var(--text-sm);color:var(--text-secondary);line-height:1.45;word-break:break-word;padding:8px 10px;background:rgba(255,255,255,0.03);border-left:2px solid var(--border-subtle);border-radius:6px;margin-bottom:10px;">↳ ${sanitize(q.answer)}</div>` : ''}
+    ${canAnswer ? `<textarea class="input textarea" data-answer-for="${q.id}" placeholder="Tu respuesta…" maxlength="1000" style="min-height:60px;margin-bottom:8px;"></textarea>` : ''}
+    <div style="display:flex;justify-content:flex-end;gap:8px;">
+      ${canAnswer ? `<button class="btn btn-primary btn-sm" data-answer="${q.id}">Responder</button>` : ''}
+      <button class="btn btn-secondary btn-sm" data-del-q="${q.id}" style="color:#dc2626;">Eliminar</button>
+    </div>
   `);
 }
