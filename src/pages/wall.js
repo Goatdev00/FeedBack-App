@@ -157,18 +157,26 @@ function renderLiveParties(state) {
   `;
 
   const oldDivider = `
-    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;flex-shrink:0;align-self:stretch;padding:0 2px;">
-      <span style="flex:1;width:2px;border-radius:2px;background:var(--border-subtle);min-height:12px;"></span>
-      <span style="font-size:0.5rem;color:var(--text-tertiary);font-weight:700;text-transform:uppercase;letter-spacing:1px;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;">Antiguas</span>
-      <span style="flex:1;width:2px;border-radius:2px;background:var(--border-subtle);min-height:12px;"></span>
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;flex-shrink:0;align-self:stretch;padding:0 8px;">
+      <span style="flex:1;width:2px;border-radius:2px;background:var(--border-subtle);min-height:8px;"></span>
+      <span style="font-size:0.6rem;color:var(--text-secondary);font-weight:800;text-transform:uppercase;letter-spacing:2px;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;padding:8px 4px;background:rgba(255,255,255,0.05);border:1px solid var(--border-subtle);border-radius:var(--radius-full);">Antiguas</span>
+      <span style="flex:1;width:2px;border-radius:2px;background:var(--border-subtle);min-height:8px;"></span>
     </div>
   `;
+
+  // Only split when BOTH groups exist. If everything is current, no divider;
+  // if everything is past (e.g. all dates slipped within the 7-day window),
+  // show them as normal cards rather than an empty "recent" side + a leading
+  // divider.
+  const split = recent.length > 0 && old.length > 0;
+  const strip = split
+    ? recent.map(p => partyCard(p, false)).join('') + oldDivider + old.map(p => partyCard(p, true)).join('')
+    : recent.concat(old).map(p => partyCard(p, false)).join('');
 
   return `
     <div class="wall-live-strip" style="margin-bottom:var(--space-lg);overflow-x:auto;-webkit-overflow-scrolling:touch;">
       <div style="display:flex;gap:var(--space-sm);padding-bottom:var(--space-sm);">
-        ${recent.map(p => partyCard(p, false)).join('')}
-        ${old.length ? oldDivider + old.map(p => partyCard(p, true)).join('') : ''}
+        ${strip}
       </div>
     </div>
   `;
