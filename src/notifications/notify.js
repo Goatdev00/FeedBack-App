@@ -68,6 +68,15 @@ export function notifyQuestionAnswered(toUserId, _fromUsername, questionId) {
   return callSendPush({ type: 'question-answered', toUserId, questionId });
 }
 
+// Fired by the asker toward the target when a NEW anonymous question is
+// sent, so the target gets a push telling them they have a question to
+// answer. The Edge Function builds a neutral body that NEVER names the
+// asker (anonymity). `questionId` lets send-push verify the question
+// really exists asker→target before notifying.
+export function notifyQuestionReceived(toUserId, _fromUsername, questionId) {
+  return callSendPush({ type: 'question-received', toUserId, questionId });
+}
+
 // Fired by a guest confirming attendance toward the party's promoter,
 // so the promoter sees a real-time push every time someone RSVPs.
 // `partyId` lets the Edge Function build a link straight to the
