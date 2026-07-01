@@ -1,146 +1,501 @@
 // ============================================
 // FEEDBACK — Super-admin panel (SUPERUSUARIO)
 // ============================================
-// FASE 1: the moderation trash ("Papelera"). Lists everything the admin
-// soft-deleted (from moderation_log) and restores it via admin_restore.
-// FASE 2 will add the Usuarios / Notificaciones / Moderación / Q&A tabs.
+// FASE 1 shipped the Papelera. FASE 2 adds the full panel:
+//   Usuarios · Notificaciones · Papelera · Moderación · Q&A
 //
-// SECURITY: this page is reachable only via the isAdmin-gated SUPERUSUARIO
-// button, and re-checks currentUserIsAdmin() on entry. But that's cosmetic
-// — moderation_log RLS returns ZERO rows to non-admins, and admin_restore
-// re-checks is_admin() server-side. A non-admin who forces the route sees
-// an empty trash and can restore nothing.
+// SECURITY: reachable only via the isAdmin-gated button; re-checks
+// currentUserIsAdmin() on entry. Every action calls an is_admin-gated
+// SECURITY DEFINER RPC or a service-role-verified Edge Function — the UI
+// gate is cosmetic. A forced non-admin sees empty data and can do nothing.
 
-import { ICONS, formatRelative } from '../data/mock-data.js';
+import { store, ICONS, formatRelative } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { showToast } from '../utils/toast.js';
 import { sanitize } from '../utils/helpers.js';
-import { listModerationLog, adminRestore } from '../data/api.js';
-import { currentUserIsAdmin } from '../utils/admin-moderation.js';
+import { currentUserIsAdmin, confirmAdminDelete } from '../utils/admin-moderation.js';
+import {
+  listModerationLog, adminRestore,
+  adminListUsers, adminSetRole, adminSetModeration, adminAnonymizeUser,
+  adminModerateUser, adminDeleteUser, adminBroadcast,
+  listAdminReports, listAdminTickets, setTicketStatus, adminSoftDeletePost,
+  listQuestions, answerQuestion, adminSoftDeleteQuestion,
+} from '../data/api.js';
 
-const TYPE_LABEL = {
-  post: 'Publicación',
-  comment: 'Comentario',
-  chat_message: 'Mensaje de chat',
-  question: 'Pregunta',
-  party: 'Fiesta',
-};
+const CITIES = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena'];
+const TYPE_LABEL = { post: 'Publicación', comment: 'Comentario', chat_message: 'Mensaje de chat', question: 'Pregunta', party: 'Fiesta' };
+
+const TABS = [
+  { id: 'usuarios',      label: '👥 Usuarios' },
+  { id: 'notificaciones', label: '🔔 Notificaciones' },
+  { id: 'papelera',      label: '🗑️ Papelera' },
+  { id: 'moderacion',    label: '🚩 Moderación' },
+  { id: 'qa',            label: '❓ Q&A' },
+];
 
 export function renderAdmin(container) {
-  // Defensive gate. The button + route are admin-only, but never trust the
-  // client — server RLS/RPCs are the real guard.
   if (!currentUserIsAdmin()) { router.navigate('wall'); return; }
 
   container.innerHTML = `
     <div class="page" id="admin-page">
       <button class="back-btn" id="admin-back">${ICONS.back}<span>Perfil</span></button>
-
       <div class="page-title" style="display:flex;align-items:center;gap:8px;">
         <span style="width:22px;height:22px;display:inline-flex;color:#dc2626;">${ICONS.shield}</span>
         Panel · Super-admin
       </div>
-      <p style="color:var(--text-secondary);font-size:var(--text-sm);line-height:1.5;margin:4px 0 var(--space-md);">
-        Papelera de moderación: restaura lo que hayas eliminado. Las demás herramientas
-        (usuarios, notificaciones, moderación y Q&amp;A) llegan en la Fase 2.
-      </p>
-
-      <div class="tab-bar" style="margin-bottom:var(--space-md);">
-        <button class="tab-item active" type="button">🗑️ Papelera</button>
+      <div class="tab-bar" id="admin-tabs" style="margin:var(--space-sm) 0 var(--space-md);flex-wrap:wrap;gap:4px;">
+        ${TABS.map(t => `<button class="tab-item" type="button" data-tab="${t.id}">${t.label}</button>`).join('')}
       </div>
-
-      <div id="admin-trash">
-        <div class="empty-state">
-          <div class="spinner" style="margin:0 auto var(--space-md);"></div>
-          <p class="empty-state-text">Cargando papelera…</p>
-        </div>
-      </div>
+      <div id="admin-content"></div>
     </div>
   `;
 
   container.querySelector('#admin-back').addEventListener('click', () => router.navigate('profile'));
 
-  loadTrash(container.querySelector('#admin-trash'));
+  const tabsEl = container.querySelector('#admin-tabs');
+  const contentEl = container.querySelector('#admin-content');
+
+  function selectTab(t) {
+    tabsEl.querySelectorAll('.tab-item').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
+    contentEl.innerHTML = loadingHTML();
+    const fn = { usuarios: renderUsers, notificaciones: renderNotify, papelera: renderTrash, moderacion: renderModeration, qa: renderQA }[t];
+    fn(contentEl);
+  }
+  tabsEl.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-tab]');
+    if (b) selectTab(b.dataset.tab);
+  });
+
+  selectTab('usuarios');
 }
 
-async function loadTrash(trashEl) {
-  let entries = [];
-  try {
-    entries = await listModerationLog();
-  } catch (err) {
-    console.warn('[admin] moderation_log fetch failed', err);
-    trashEl.innerHTML = `
-      <div class="empty-state">
-        <div class="empty-state-icon">⚠️</div>
-        <p class="empty-state-text">No se pudo cargar la papelera.</p>
-      </div>`;
-    return;
+function loadingHTML() {
+  return `<div class="empty-state"><div class="spinner" style="margin:0 auto var(--space-md);"></div><p class="empty-state-text">Cargando…</p></div>`;
+}
+function emptyHTML(icon, title, text) {
+  return `<div class="empty-state"><div class="empty-state-icon">${icon}</div><h3 class="empty-state-title">${title}</h3><p class="empty-state-text">${text}</p></div>`;
+}
+function errorHTML(text) {
+  return `<div class="empty-state"><div class="empty-state-icon">⚠️</div><p class="empty-state-text">${sanitize(text)}</p></div>`;
+}
+function card(inner, faded = false) {
+  return `<div style="background:var(--surface,rgba(255,255,255,0.04));border:1px solid var(--border-subtle);border-radius:var(--radius-md);padding:var(--space-md);margin-bottom:var(--space-sm);${faded ? 'opacity:0.55;' : ''}">${inner}</div>`;
+}
+
+// =====================================================================
+// USUARIOS
+// =====================================================================
+async function renderUsers(el) {
+  el.innerHTML = `
+    <div style="display:flex;gap:6px;margin-bottom:var(--space-sm);flex-wrap:wrap;">
+      <input type="text" class="input" id="u-search" placeholder="Buscar nombre / @usuario / correo…" style="flex:1;min-width:160px;" />
+      <select class="input" id="u-role" style="width:auto;">
+        <option value="">Rol: todos</option><option value="raver">raver</option><option value="dj">dj</option><option value="promotor">promotor</option>
+      </select>
+      <select class="input" id="u-status" style="width:auto;">
+        <option value="">Estado: todos</option><option value="active">activo</option><option value="muted">muteado</option><option value="banned">baneado</option>
+      </select>
+    </div>
+    <div id="u-list">${loadingHTML()}</div>
+  `;
+  const listEl = el.querySelector('#u-list');
+  const searchEl = el.querySelector('#u-search');
+  const roleEl = el.querySelector('#u-role');
+  const statusEl = el.querySelector('#u-status');
+
+  let timer = null;
+  async function load() {
+    // A pending debounce timer or in-flight request may resolve after the
+    // admin switched tabs — don't query/write into a detached element.
+    if (!document.contains(listEl)) return;
+    listEl.innerHTML = loadingHTML();
+    try {
+      const users = await adminListUsers({
+        search: searchEl.value.trim() || null,
+        role: roleEl.value || null,
+        status: statusEl.value || null,
+        limit: 100,
+      });
+      if (!document.contains(listEl)) return;
+      if (!users.length) { listEl.innerHTML = emptyHTML('👥', 'Sin usuarios', 'No hay usuarios que coincidan.'); return; }
+      listEl.innerHTML = users.map(userRow).join('');
+    } catch (err) {
+      if (!document.contains(listEl)) return;
+      listEl.innerHTML = errorHTML('No se pudo cargar la lista de usuarios.');
+      console.warn('[admin] listUsers', err);
+    }
   }
+  const debounced = () => { clearTimeout(timer); timer = setTimeout(load, 300); };
+  searchEl.addEventListener('input', debounced);
+  roleEl.addEventListener('change', load);
+  statusEl.addEventListener('change', load);
+
+  // Delegated actions on the list.
+  listEl.addEventListener('change', async (e) => {
+    const sel = e.target.closest('select[data-act="role"]');
+    if (!sel) return;
+    const userId = sel.dataset.userId;
+    const role = sel.value;
+    try { await adminSetRole(userId, role); showToast(`Rol → ${role}`, 'success'); }
+    catch (err) { showToast('No se pudo cambiar el rol.', 'error'); console.warn('[admin] setRole', err); load(); }
+  });
+  listEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    const act = btn.dataset.act;
+    const userId = btn.dataset.userId;
+    const name = btn.dataset.name || 'este usuario';
+    if (act === 'mute') {
+      confirmAdminDelete({ title: 'Mutear usuario', message: `<strong>${sanitize(name)}</strong> no podrá publicar, comentar ni chatear (sí puede leer).`, confirmLabel: 'Mutear', errorLabel: 'No se pudo mutear.', durationField: true,
+        onConfirm: async (reason, days) => {
+          const until = days ? new Date(Date.now() + days * 86400000).toISOString() : null;
+          await adminSetModeration(userId, 'muted', reason, until); showToast('Usuario muteado', 'success'); load();
+        } });
+    } else if (act === 'unmute') {
+      confirmAdminDelete({ title: 'Reactivar usuario', message: `Quitar el muteo a <strong>${sanitize(name)}</strong>.`, confirmLabel: 'Reactivar', errorLabel: 'No se pudo reactivar.',
+        onConfirm: async () => { await adminSetModeration(userId, 'active'); showToast('Usuario reactivado', 'success'); load(); } });
+    } else if (act === 'ban') {
+      confirmAdminDelete({ title: 'Banear usuario', message: `<strong>${sanitize(name)}</strong> no podrá iniciar sesión ni escribir. (Bloqueo de login + escritura.)`, confirmLabel: 'Banear', errorLabel: 'No se pudo banear.', durationField: true,
+        onConfirm: async (reason, days) => { await adminModerateUser(userId, 'ban', { reason, durationDays: days || null }); showToast('Usuario baneado', 'success'); load(); } });
+    } else if (act === 'unban') {
+      confirmAdminDelete({ title: 'Desbanear usuario', message: `Restaurar el acceso de <strong>${sanitize(name)}</strong>.`, confirmLabel: 'Desbanear', errorLabel: 'No se pudo desbanear.',
+        onConfirm: async () => { await adminModerateUser(userId, 'unban'); showToast('Usuario desbaneado', 'success'); load(); } });
+    } else if (act === 'anonymize') {
+      confirmAdminDelete({ title: 'Anonimizar usuario', message: `Se borran los datos personales de <strong>${sanitize(name)}</strong> (nombre, @usuario, bio, avatar). Sus publicaciones quedan como "Usuario eliminado". La cuenta sigue existiendo.`, confirmLabel: 'Anonimizar', errorLabel: 'No se pudo anonimizar.',
+        onConfirm: async () => { await adminAnonymizeUser(userId); showToast('Usuario anonimizado', 'success'); load(); } });
+    } else if (act === 'delete') {
+      confirmAdminDelete({ title: 'Eliminar cuenta (definitivo)', message: `⚠️ Borra la cuenta de <strong>${sanitize(name)}</strong> y TODO su contenido, sin restauración. Para anonimizar (reversible) usá "Anonimizar".`, confirmLabel: 'Eliminar definitivamente', errorLabel: 'No se pudo eliminar la cuenta.',
+        onConfirm: async () => { await adminDeleteUser(userId); showToast('Cuenta eliminada', 'success'); load(); } });
+    }
+  });
+
+  load();
+}
+
+function statusBadge(s) {
+  if (s === 'banned') return '<span class="badge" style="background:rgba(220,38,38,0.18);color:#dc2626;">baneado</span>';
+  if (s === 'muted') return '<span class="badge" style="background:rgba(234,179,8,0.18);color:#a16207;">muteado</span>';
+  return '';
+}
+
+function userRow(u) {
+  const me = store.getState().currentUser?.id;
+  const isSelf = u.id === me;
+  const protectedRow = u.is_admin || isSelf;
+  // Effective status: a temporary sanction whose moderation_until has passed
+  // is already lifted server-side (is_muted/is_banned auto-expire) even
+  // though the column still reads muted/banned — reflect that here so the
+  // badge + action buttons match reality.
+  const rawStatus = u.moderation_status || 'active';
+  const expired = rawStatus !== 'active' && u.moderation_until && new Date(u.moderation_until) <= new Date();
+  const status = expired ? 'active' : rawStatus;
+  const untilDate = (status !== 'active' && u.moderation_until) ? new Date(u.moderation_until) : null;
+  const untilLabel = untilDate ? `hasta ${untilDate.toLocaleDateString()}` : (status !== 'active' ? 'permanente' : '');
+  const roleSelect = protectedRow
+    ? `<span class="badge">${sanitize(u.role)}</span>`
+    : `<select class="input" data-act="role" data-user-id="${u.id}" style="width:auto;padding:4px 8px;font-size:var(--text-xs);">
+         ${['raver', 'dj', 'promotor'].map(r => `<option value="${r}" ${r === u.role ? 'selected' : ''}>${r}</option>`).join('')}
+       </select>`;
+
+  let actions = '';
+  if (protectedRow) {
+    actions = `<span style="font-size:var(--text-xs);color:var(--text-tertiary);">${u.is_admin ? '🛡️ admin' : 'tú'}</span>`;
+  } else {
+    const bd = `data-user-id="${u.id}" data-name="${sanitize(u.name || u.username || '')}"`;
+    const btn = (act, label, extra = '') => `<button class="btn btn-sm" data-act="${act}" ${bd} style="${extra}">${label}</button>`;
+    const modBtns = status === 'banned'
+      ? btn('unban', 'Desbanear')
+      : status === 'muted'
+        ? btn('unmute', 'Reactivar') + btn('ban', 'Banear', 'color:#dc2626;')
+        : btn('mute', 'Mutear') + btn('ban', 'Banear', 'color:#dc2626;');
+    actions = `${modBtns}${btn('anonymize', 'Anonimizar')}${btn('delete', 'Eliminar', 'color:#dc2626;')}`;
+  }
+
+  return card(`
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">
+      <div style="min-width:0;flex:1;">
+        <div style="font-weight:600;font-size:var(--text-sm);">${sanitize(u.name || '—')} ${statusBadge(status)}${untilLabel ? ` <span style="font-size:var(--text-xs);color:var(--text-tertiary);font-weight:400;">${sanitize(untilLabel)}</span>` : ''}</div>
+        <div style="font-size:var(--text-xs);color:var(--text-tertiary);">${sanitize(u.username || '')} · ${sanitize(u.email || '')}</div>
+        <div style="font-size:var(--text-xs);color:var(--text-tertiary);">${u.points ?? 0} pts · ${sanitize(u.city || '')}</div>
+      </div>
+      <div style="flex-shrink:0;">${roleSelect}</div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">${actions}</div>
+  `);
+}
+
+// =====================================================================
+// NOTIFICACIONES
+// =====================================================================
+async function renderNotify(el) {
+  const parties = store.getState().parties || [];
+  el.innerHTML = `
+    <div class="input-group mb-md"><label class="input-label">Título</label><input type="text" class="input" id="n-title" maxlength="120" /></div>
+    <div class="input-group mb-md"><label class="input-label">Mensaje</label><textarea class="input textarea" id="n-body" maxlength="500" style="min-height:80px;"></textarea></div>
+    <div class="input-group mb-md"><label class="input-label">Enlace (opcional, /#/…)</label><input type="text" class="input" id="n-url" placeholder="/#/notifications" /></div>
+    <div class="input-group mb-md">
+      <label class="input-label">Canales</label>
+      <div style="display:flex;gap:16px;">
+        <label style="display:flex;gap:6px;align-items:center;"><input type="checkbox" id="n-push" checked /> Push</label>
+        <label style="display:flex;gap:6px;align-items:center;"><input type="checkbox" id="n-email" /> Correo</label>
+      </div>
+    </div>
+    <div class="input-group mb-md">
+      <label class="input-label">Destinatarios</label>
+      <select class="input" id="n-target">
+        <option value="all">Todos</option>
+        <option value="role">Por rol</option>
+        <option value="city">Por ciudad</option>
+        <option value="party">Por fiesta (asistentes)</option>
+        <option value="user">Un usuario (ID)</option>
+      </select>
+      <div id="n-target-value" style="margin-top:8px;"></div>
+    </div>
+    <div id="n-count" style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-sm);"></div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-secondary" id="n-dry" style="flex:1;">Calcular alcance</button>
+      <button class="btn btn-primary" id="n-send" style="flex:1;">Enviar</button>
+    </div>
+  `;
+
+  const targetEl = el.querySelector('#n-target');
+  const valueWrap = el.querySelector('#n-target-value');
+  function renderValueInput() {
+    const t = targetEl.value;
+    if (t === 'all') { valueWrap.innerHTML = ''; return; }
+    if (t === 'role') valueWrap.innerHTML = `<select class="input" id="n-value"><option value="raver">raver</option><option value="dj">dj</option><option value="promotor">promotor</option></select>`;
+    else if (t === 'city') valueWrap.innerHTML = `<select class="input" id="n-value">${CITIES.map(c => `<option value="${c}">${c}</option>`).join('')}</select>`;
+    else if (t === 'party') valueWrap.innerHTML = `<select class="input" id="n-value">${parties.map(p => `<option value="${p.id}">${sanitize(p.name)}</option>`).join('') || '<option value="">(sin fiestas)</option>'}</select>`;
+    else valueWrap.innerHTML = `<input type="text" class="input" id="n-value" placeholder="UUID del usuario" />`;
+  }
+  targetEl.addEventListener('change', renderValueInput);
+  renderValueInput();
+
+  function readPayload() {
+    const title = el.querySelector('#n-title').value.trim();
+    const body = el.querySelector('#n-body').value.trim();
+    const url = el.querySelector('#n-url').value.trim() || undefined;
+    const push = el.querySelector('#n-push').checked;
+    const email = el.querySelector('#n-email').checked;
+    const type = targetEl.value;
+    const value = el.querySelector('#n-value')?.value || undefined;
+    return { title, body, url, channels: { push, email }, target: { type, value } };
+  }
+  function validate(p) {
+    if (!p.title || !p.body) { showToast('Título y mensaje son obligatorios.', 'error'); return false; }
+    if (!p.channels.push && !p.channels.email) { showToast('Elegí al menos un canal.', 'error'); return false; }
+    if (p.target.type !== 'all' && !p.target.value) { showToast('Falta el destinatario.', 'error'); return false; }
+    if (p.url && !p.url.startsWith('/#/')) { showToast('El enlace debe empezar con /#/', 'error'); return false; }
+    return true;
+  }
+
+  el.querySelector('#n-dry').addEventListener('click', async () => {
+    const p = readPayload();
+    if (!validate(p)) return;
+    el.querySelector('#n-count').textContent = 'Calculando…';
+    try {
+      const r = await adminBroadcast({ ...p, dryRun: true });
+      el.querySelector('#n-count').textContent = `Alcance: ${r.recipients} usuarios · ${r.push?.subscriptions ?? 0} dispositivos push · ${r.email?.addresses ?? 0} correos.`;
+    } catch (err) { el.querySelector('#n-count').textContent = ''; showToast('No se pudo calcular el alcance.', 'error'); console.warn('[admin] broadcast dry', err); }
+  });
+
+  el.querySelector('#n-send').addEventListener('click', async () => {
+    const p = readPayload();
+    if (!validate(p)) return;
+    confirmAdminDelete({
+      title: 'Enviar notificación',
+      message: `Se enviará "<strong>${sanitize(p.title)}</strong>" a los destinatarios seleccionados. ¿Confirmar?`,
+      confirmLabel: 'Enviar',
+      errorLabel: 'No se pudo enviar la notificación.',
+      onConfirm: async () => {
+        const r = await adminBroadcast(p);
+        showToast(`Enviado: ${r.push?.sent ?? 0} push, ${r.email?.sent ?? 0} correos.`, 'success', 5000);
+      },
+    });
+  });
+}
+
+// =====================================================================
+// PAPELERA
+// =====================================================================
+async function renderTrash(el) {
+  let entries = [];
+  try { entries = await listModerationLog(); }
+  catch (err) { el.innerHTML = errorHTML('No se pudo cargar la papelera.'); console.warn('[admin] trash', err); return; }
 
   const deletions = entries.filter(e => e.action === 'soft_delete');
-  if (deletions.length === 0) {
-    trashEl.innerHTML = `
-      <div class="empty-state">
-        <div class="empty-state-icon">🗑️</div>
-        <h3 class="empty-state-title">Papelera vacía</h3>
-        <p class="empty-state-text">Lo que elimines como admin aparecerá aquí para restaurarlo.</p>
-      </div>`;
-    return;
-  }
+  if (!deletions.length) { el.innerHTML = emptyHTML('🗑️', 'Papelera vacía', 'Lo que elimines aparecerá aquí para restaurarlo.'); return; }
 
-  trashEl.innerHTML = deletions.map(renderTrashItem).join('');
-
-  // One delegated handler for all restore buttons (survives re-render
-  // because we reassign onclick each load).
-  trashEl.onclick = async (e) => {
+  el.innerHTML = deletions.map(trashItem).join('');
+  el.onclick = async (e) => {
     const btn = e.target.closest('[data-restore-log]');
     if (!btn) return;
     btn.disabled = true;
-    try {
-      await adminRestore(btn.dataset.restoreLog);
-      showToast('Restaurado ✓', 'success');
-      loadTrash(trashEl);
-    } catch (err) {
-      btn.disabled = false;
-      const msg = String(err?.message || '');
-      showToast(
-        msg.includes('already_restored') ? 'Ya estaba restaurado.' : 'No se pudo restaurar.',
-        'error',
-      );
-      console.warn('[admin] restore failed', err);
-    }
+    try { await adminRestore(btn.dataset.restoreLog); showToast('Restaurado ✓', 'success'); renderTrash(el); }
+    catch (err) { btn.disabled = false; const m = String(err?.message || ''); showToast(m.includes('already_restored') ? 'Ya estaba restaurado.' : 'No se pudo restaurar.', 'error'); console.warn('[admin] restore', err); }
   };
 }
-
 function previewOf(entry) {
   const b = entry.beforeState || {};
   let t = '';
   switch (entry.targetType) {
-    case 'post':
-    case 'comment':
-    case 'chat_message': t = b.content; break;
-    case 'question':     t = b.question; break;
-    case 'party':        t = b.name; break;
-    default:             t = '';
+    case 'post': case 'comment': case 'chat_message': t = b.content; break;
+    case 'question': t = b.question; break;
+    case 'party': t = b.name; break;
   }
   t = (t || '').toString().trim();
   if (!t) return '(sin vista previa)';
   return t.length > 140 ? t.slice(0, 140) + '…' : t;
 }
-
-function renderTrashItem(entry) {
+function trashItem(entry) {
   const label = TYPE_LABEL[entry.targetType] || entry.targetType;
   const restored = !!entry.restoredAt;
-  return `
-    <div style="background:var(--surface,rgba(255,255,255,0.04));border:1px solid var(--border-subtle);border-radius:var(--radius-md);padding:var(--space-md);margin-bottom:var(--space-sm);${restored ? 'opacity:0.55;' : ''}">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;">
-        <span class="badge">${sanitize(label)}</span>
-        <span style="font-size:var(--text-xs);color:var(--text-tertiary);">${formatRelative(entry.createdAt)}</span>
-      </div>
-      <div style="font-size:var(--text-sm);color:var(--text-secondary);line-height:1.4;margin-bottom:6px;">${sanitize(previewOf(entry))}</div>
-      ${entry.reason ? `<div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-bottom:8px;">Motivo: ${sanitize(entry.reason)}</div>` : ''}
-      ${restored
-        ? `<span style="font-size:var(--text-xs);color:#16a34a;font-weight:600;">Restaurado ✓</span>`
-        : `<button class="btn btn-secondary btn-sm" data-restore-log="${entry.id}">Restaurar</button>`}
+  return card(`
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;">
+      <span class="badge">${sanitize(label)}</span>
+      <span style="font-size:var(--text-xs);color:var(--text-tertiary);">${formatRelative(entry.createdAt)}</span>
     </div>
+    <div style="font-size:var(--text-sm);color:var(--text-secondary);line-height:1.4;margin-bottom:6px;">${sanitize(previewOf(entry))}</div>
+    ${entry.reason ? `<div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-bottom:8px;">Motivo: ${sanitize(entry.reason)}</div>` : ''}
+    ${restored
+      ? `<span style="font-size:var(--text-xs);color:#16a34a;font-weight:600;">Restaurado ✓</span>`
+      : `<button class="btn btn-secondary btn-sm" data-restore-log="${entry.id}">Restaurar</button>`}
+  `, restored);
+}
+
+// =====================================================================
+// MODERACIÓN — reportes + tickets de soporte
+// =====================================================================
+async function renderModeration(el) {
+  el.innerHTML = `<div id="m-reports">${loadingHTML()}</div><h3 style="margin:var(--space-lg) 0 var(--space-sm);font-size:var(--text-md);font-weight:700;">🎟️ Tickets de soporte</h3><div id="m-tickets">${loadingHTML()}</div>`;
+  const reportsEl = el.querySelector('#m-reports');
+  const ticketsEl = el.querySelector('#m-tickets');
+
+  // ---- Reports (grouped by post) ----
+  try {
+    const reports = await listAdminReports();
+    if (!reports.length) {
+      reportsEl.innerHTML = `<h3 style="margin:0 0 var(--space-sm);font-size:var(--text-md);font-weight:700;">🚩 Reportes</h3>` + emptyHTML('✅', 'Sin reportes', 'No hay publicaciones reportadas.');
+    } else {
+      const byPost = {};
+      for (const r of reports) { (byPost[r.post_id] ||= []).push(r); }
+      const items = Object.entries(byPost).map(([postId, rs]) => card(`
+        <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:6px;">
+          <span class="badge" style="background:rgba(220,38,38,0.18);color:#dc2626;">${rs.length} reporte${rs.length > 1 ? 's' : ''}</span>
+          <span style="font-size:var(--text-xs);color:var(--text-tertiary);">${formatRelative(new Date(rs[0].created_at))}</span>
+        </div>
+        <div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-bottom:8px;">Post ${postId.slice(0, 8)}… · Razones: ${sanitize([...new Set(rs.map(r => r.reason))].join(', '))}</div>
+        <button class="btn btn-sm" data-del-post="${postId}" style="color:#dc2626;">Eliminar publicación</button>
+      `)).join('');
+      reportsEl.innerHTML = `<h3 style="margin:0 0 var(--space-sm);font-size:var(--text-md);font-weight:700;">🚩 Reportes</h3>` + items;
+    }
+  } catch (err) { reportsEl.innerHTML = errorHTML('No se pudieron cargar los reportes.'); console.warn('[admin] reports', err); }
+
+  reportsEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-del-post]');
+    if (!btn) return;
+    const postId = btn.dataset.delPost;
+    confirmAdminDelete({ title: 'Eliminar publicación reportada', message: 'Se ocultará para todos y queda en la papelera.', confirmLabel: 'Eliminar',
+      onConfirm: async (reason) => { await adminSoftDeletePost(postId, reason); showToast('Publicación eliminada', 'success'); renderModeration(el); } });
+  });
+
+  // ---- Tickets ----
+  try {
+    const tickets = await listAdminTickets();
+    if (!tickets.length) { ticketsEl.innerHTML = emptyHTML('📭', 'Sin tickets', 'No hay tickets de soporte.'); }
+    else {
+      ticketsEl.innerHTML = tickets.map(t => card(`
+        <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:4px;">
+          <span style="font-weight:600;font-size:var(--text-sm);">${sanitize(t.name)} <span class="badge" style="${t.status === 'closed' ? 'background:rgba(22,163,74,0.18);color:#16a34a;' : ''}">${sanitize(t.status)}</span></span>
+          <span style="font-size:var(--text-xs);color:var(--text-tertiary);">${formatRelative(new Date(t.created_at))}</span>
+        </div>
+        <div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-bottom:6px;">${sanitize(t.email)}</div>
+        <div style="font-size:var(--text-sm);color:var(--text-secondary);line-height:1.4;white-space:pre-wrap;margin-bottom:8px;">${sanitize(t.message)}</div>
+        ${t.status === 'closed'
+          ? `<button class="btn btn-sm" data-ticket="${t.id}" data-status="open">Reabrir</button>`
+          : `<button class="btn btn-secondary btn-sm" data-ticket="${t.id}" data-status="closed">Marcar resuelto</button>`}
+      `, t.status === 'closed')).join('');
+    }
+  } catch (err) { ticketsEl.innerHTML = errorHTML('No se pudieron cargar los tickets.'); console.warn('[admin] tickets', err); }
+
+  ticketsEl.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-ticket]');
+    if (!btn) return;
+    btn.disabled = true;
+    try { await setTicketStatus(btn.dataset.ticket, btn.dataset.status); showToast('Ticket actualizado', 'success'); renderModeration(el); }
+    catch (err) { btn.disabled = false; showToast('No se pudo actualizar el ticket.', 'error'); console.warn('[admin] ticket', err); }
+  });
+}
+
+// =====================================================================
+// Q&A — bandeja de FeedBack + moderación global
+// =====================================================================
+async function renderQA(el) {
+  const meId = store.getState().currentUser?.id;
+  el.innerHTML = `
+    <div class="tab-bar" id="qa-sub" style="margin-bottom:var(--space-md);">
+      <button class="tab-item active" type="button" data-sub="mine">Para FeedBack</button>
+      <button class="tab-item" type="button" data-sub="all">Todas</button>
+    </div>
+    <div id="qa-content">${loadingHTML()}</div>
   `;
+  const subEl = el.querySelector('#qa-sub');
+  const contentEl = el.querySelector('#qa-content');
+
+  let questions = [];
+  try { questions = await listQuestions(); }
+  catch (err) { contentEl.innerHTML = errorHTML('No se pudieron cargar las preguntas.'); console.warn('[admin] questions', err); return; }
+
+  function paint(sub) {
+    subEl.querySelectorAll('.tab-item').forEach(b => b.classList.toggle('active', b.dataset.sub === sub));
+    const list = sub === 'mine' ? questions.filter(q => q.targetUserId === meId) : questions;
+    if (!list.length) { contentEl.innerHTML = emptyHTML('❓', 'Sin preguntas', sub === 'mine' ? 'No tienes preguntas dirigidas a FeedBack.' : 'No hay preguntas.'); return; }
+    contentEl.innerHTML = list.map(q => qaItem(q, sub === 'mine')).join('');
+  }
+
+  subEl.addEventListener('click', (e) => { const b = e.target.closest('[data-sub]'); if (b) paint(b.dataset.sub); });
+
+  // Answer (mine) + delete (any) delegation.
+  contentEl.addEventListener('click', async (e) => {
+    const ansBtn = e.target.closest('[data-answer]');
+    if (ansBtn) {
+      const id = ansBtn.dataset.answer;
+      const ta = contentEl.querySelector(`textarea[data-answer-for="${id}"]`);
+      const text = ta?.value.trim();
+      if (!text) { showToast('Escribe una respuesta.', 'error'); return; }
+      ansBtn.disabled = true;
+      try {
+        await answerQuestion(id, text);
+        showToast('Respuesta publicada 💬', 'success');
+        const q = questions.find(x => x.id === id); if (q) { q.answer = text; q.answeredAt = new Date(); }
+        paint('mine');
+      } catch (err) { ansBtn.disabled = false; showToast('No se pudo responder.', 'error'); console.warn('[admin] answer', err); }
+      return;
+    }
+    const delBtn = e.target.closest('[data-del-q]');
+    if (delBtn) {
+      const id = delBtn.dataset.delQ;
+      confirmAdminDelete({ title: 'Eliminar pregunta', message: 'Se ocultará para todos y queda en la papelera.', confirmLabel: 'Eliminar',
+        onConfirm: async (reason) => { await adminSoftDeleteQuestion(id, reason); showToast('Pregunta eliminada', 'success'); questions = questions.filter(x => x.id !== id); paint(subEl.querySelector('.tab-item.active')?.dataset.sub || 'mine'); } });
+    }
+  });
+
+  paint('mine');
+}
+
+function qaItem(q, mine) {
+  const answered = !!q.answer;
+  return card(`
+    <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:4px;">
+      <span class="badge">${answered ? 'respondida' : 'pendiente'}</span>
+      <span style="font-size:var(--text-xs);color:var(--text-tertiary);">${formatRelative(q.createdAt)}</span>
+    </div>
+    <div style="font-size:var(--text-sm);font-weight:600;margin-bottom:6px;">${sanitize(q.question)}</div>
+    ${answered ? `<div style="font-size:var(--text-sm);color:var(--text-secondary);line-height:1.4;margin-bottom:8px;">↳ ${sanitize(q.answer)}</div>` : ''}
+    ${mine && !answered ? `
+      <textarea class="input textarea" data-answer-for="${q.id}" placeholder="Tu respuesta…" maxlength="1000" style="min-height:60px;margin-bottom:6px;"></textarea>
+      <button class="btn btn-primary btn-sm" data-answer="${q.id}">Responder</button>
+    ` : ''}
+    <button class="btn btn-sm" data-del-q="${q.id}" style="color:#dc2626;margin-left:6px;">Eliminar</button>
+  `);
 }

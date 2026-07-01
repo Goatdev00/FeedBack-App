@@ -35,7 +35,14 @@ export function currentUserIsAdmin() {
  *        modal stays open and shows an error toast. On success the modal
  *        closes automatically.
  */
-export function confirmAdminDelete({ title, message, confirmLabel = 'Eliminar', onConfirm }) {
+export function confirmAdminDelete({
+  title,
+  message,
+  confirmLabel = 'Eliminar',
+  errorLabel = 'No se pudo completar la acción.',
+  durationField = false,
+  onConfirm,
+}) {
   const overlay = createModal(`
     <div class="modal" style="max-width:420px;">
       <div class="modal-handle"></div>
@@ -48,6 +55,12 @@ export function confirmAdminDelete({ title, message, confirmLabel = 'Eliminar', 
         <label class="input-label">Motivo (opcional, queda en el registro)</label>
         <input type="text" class="input" id="admin-del-reason" maxlength="200" placeholder="Ej: spam, contenido ofensivo…" />
       </div>
+      ${durationField ? `
+        <div class="input-group mb-md">
+          <label class="input-label">Duración en días (vacío = permanente)</label>
+          <input type="number" class="input" id="admin-del-days" min="1" placeholder="Permanente" />
+        </div>
+      ` : ''}
       <div style="display:flex;gap:var(--space-sm);">
         <button type="button" class="btn btn-secondary" id="admin-del-cancel" style="flex:1;">Cancelar</button>
         <button type="button" class="btn" id="admin-del-confirm" style="flex:1;background:#dc2626;color:white;border:none;">${confirmLabel}</button>
@@ -60,18 +73,28 @@ export function confirmAdminDelete({ title, message, confirmLabel = 'Eliminar', 
   const confirmBtn = overlay.querySelector('#admin-del-confirm');
   confirmBtn.addEventListener('click', async () => {
     const reason = overlay.querySelector('#admin-del-reason').value.trim() || null;
+    let days = null;
+    if (durationField) {
+      const n = parseInt(overlay.querySelector('#admin-del-days').value, 10);
+      days = Number.isFinite(n) && n > 0 ? n : null;
+    }
     confirmBtn.disabled = true;
     try {
-      await onConfirm(reason);
+      await onConfirm(reason, days);
       overlay.close();
     } catch (err) {
       confirmBtn.disabled = false;
+      // Map known server reasons to friendly text; fall back to the
+      // action-specific errorLabel. (Edge-function errors are unwrapped to
+      // their JSON `error` by the api.js invoke wrappers, so these match.)
       const msg = String(err?.message || '');
-      showToast(
-        msg.includes('forbidden') ? 'No tienes permiso (solo admin).' : 'No se pudo eliminar.',
-        'error',
-      );
-      console.warn('[admin-delete]', err);
+      let text = errorLabel;
+      if (msg.includes('forbidden')) text = 'No tienes permiso (solo admin).';
+      else if (msg.includes('cannot_target_admin')) text = 'No puedes moderar a otro admin.';
+      else if (msg.includes('cannot_target_self')) text = 'No puedes aplicarte esto a ti mismo.';
+      else if (msg.includes('already_restored')) text = 'Ya estaba restaurado.';
+      showToast(text, 'error');
+      console.warn('[admin-action]', err);
     }
   });
 }
