@@ -150,6 +150,7 @@ async function buildEmailMap(admin: SupabaseClient, ids: string[]): Promise<Map<
 }
 
 Deno.serve(async (req: Request) => {
+  console.log('[admin-broadcast] hit', req.method);
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
   if (req.method !== 'POST') return json(405, { error: 'method_not_allowed' });
 
@@ -223,6 +224,7 @@ Deno.serve(async (req: Request) => {
     console.error('[admin-broadcast] recipient resolution failed', e);
     return json(500, { error: 'recipient_resolution_failed' });
   }
+  console.log('[admin-broadcast] recipients', ids.length, { wantPush, wantEmail, dryRun, target: target.type });
   if (ids.length === 0) return json(200, { recipients: 0, push: { sent: 0, removed: 0 }, email: { sent: 0 } });
 
   // Count push subscriptions for these recipients (chunked .in()).
