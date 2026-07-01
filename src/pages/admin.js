@@ -196,7 +196,7 @@ function userRow(u) {
   const untilDate = (status !== 'active' && u.moderation_until) ? new Date(u.moderation_until) : null;
   const untilLabel = untilDate ? `hasta ${untilDate.toLocaleDateString()}` : (status !== 'active' ? 'permanente' : '');
   const roleSelect = protectedRow
-    ? `<span class="badge">${sanitize(u.role)}</span>`
+    ? `<span class="badge" style="background:rgba(255,255,255,0.08);color:var(--text-secondary);border:1px solid var(--border-subtle);">${sanitize(u.role)}</span>`
     : `<select class="input" data-act="role" data-user-id="${u.id}" style="width:auto;padding:4px 8px;font-size:var(--text-xs);text-align:center;text-align-last:center;">
          ${['raver', 'dj', 'promotor'].map(r => `<option value="${r}" ${r === u.role ? 'selected' : ''}>${r}</option>`).join('')}
        </select>`;
@@ -403,7 +403,7 @@ function broadcastHistoryItem(b) {
     </div>
     <div style="font-size:var(--text-sm);color:var(--text-secondary);line-height:1.45;word-break:break-word;white-space:pre-wrap;margin-bottom:8px;">${sanitize(b.body)}</div>
     <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
-      <span class="badge">${sanitize(N_TARGET_LABEL[b.targetType] || b.targetType)}</span>
+      <span class="badge" style="background:rgba(255,255,255,0.08);color:var(--text-secondary);border:1px solid var(--border-subtle);white-space:nowrap;">${sanitize(N_TARGET_LABEL[b.targetType] || b.targetType)}</span>
       ${channels.length ? `<span style="font-size:var(--text-xs);color:var(--text-tertiary);">${channels.join(' + ')}</span>` : ''}
       <span style="font-size:var(--text-xs);color:var(--text-tertiary);">· ${stats.join(' · ')}</span>
     </div>
@@ -487,7 +487,7 @@ function trashItem(entry, nameOf) {
   const ownerName = owner.id && nameOf ? nameOf(owner.id) : null;
   return card(`
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
-      <span class="badge">${sanitize(label)}</span>
+      <span class="badge" style="background:rgba(255,255,255,0.08);color:var(--text-secondary);border:1px solid var(--border-subtle);white-space:nowrap;">${sanitize(label)}</span>
       <span style="font-size:var(--text-xs);color:var(--text-tertiary);flex-shrink:0;">${formatRelative(entry.createdAt)}</span>
     </div>
     ${ownerName ? `<div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-bottom:6px;">${owner.label}: <strong style="color:var(--text-secondary);font-weight:600;">${sanitize(ownerName)}</strong></div>` : ''}
@@ -544,7 +544,7 @@ async function renderModeration(el) {
     else {
       ticketsEl.innerHTML = tickets.map(t => card(`
         <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:4px;">
-          <span style="font-weight:600;font-size:var(--text-sm);">${sanitize(t.name)} <span class="badge" style="${t.status === 'closed' ? 'background:rgba(22,163,74,0.18);color:#16a34a;' : ''}">${sanitize(t.status)}</span></span>
+          <span style="font-weight:600;font-size:var(--text-sm);">${sanitize(t.name)} <span class="badge" style="${t.status === 'closed' ? 'background:rgba(22,163,74,0.18);color:#16a34a;' : 'background:rgba(255,255,255,0.08);color:var(--text-secondary);border:1px solid var(--border-subtle);'}">${sanitize(t.status)}</span></span>
           <span style="font-size:var(--text-xs);color:var(--text-tertiary);">${formatRelative(new Date(t.created_at))}</span>
         </div>
         <div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-bottom:6px;">${sanitize(t.email)}</div>
@@ -705,7 +705,7 @@ function qaItem(q, mine, targetNameStr = 'Usuario') {
   const canAnswer = mine && !answered;
   return card(`
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
-      <span class="badge" style="${answered ? 'background:rgba(22,163,74,0.18);color:#16a34a;' : ''}">${answered ? 'respondida' : 'pendiente'}</span>
+      <span class="badge" style="white-space:nowrap;${answered ? 'background:rgba(22,163,74,0.18);color:#16a34a;' : 'background:rgba(234,179,8,0.18);color:#eab308;'}">${answered ? 'respondida' : 'pendiente'}</span>
       <span style="font-size:var(--text-xs);color:var(--text-tertiary);flex-shrink:0;">${formatRelative(q.createdAt)}</span>
     </div>
     <div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-bottom:6px;">Para: <strong style="color:var(--text-secondary);font-weight:600;">${sanitize(targetNameStr)}</strong></div>
