@@ -93,7 +93,14 @@ export function confirmAdminDelete({
       else if (msg.includes('cannot_target_admin')) text = 'No puedes moderar a otro admin.';
       else if (msg.includes('cannot_target_self')) text = 'No puedes aplicarte esto a ti mismo.';
       else if (msg.includes('already_restored')) text = 'Ya estaba restaurado.';
-      showToast(text, 'error');
+      else if (msg.includes('invalid_uuid')) text = 'Destinatario inválido.';
+      else if (msg.includes('no_channel')) text = 'Elegí al menos un canal (push o correo).';
+      else if (msg.includes('recipient_resolution_failed')) text = 'No se pudieron resolver los destinatarios.';
+      // Non-2xx with no JSON body (or the generic invoke message) usually
+      // means the Edge Function isn't deployed / is named differently.
+      else if (msg.includes('non-2xx') || msg === 'edge_error') text = `${errorLabel} ¿La función está desplegada en Supabase con el nombre correcto?`;
+      else if (msg && msg !== 'supabase_not_configured') text = `${errorLabel} (${msg})`;
+      showToast(text, 'error', 6000);
       console.warn('[admin-action]', err);
     }
   });
