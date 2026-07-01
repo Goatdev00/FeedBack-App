@@ -206,7 +206,7 @@ function renderProfileView(container, user, isOwn, initialTab) {
         <!-- Centered in the gap between the edit-profile actions and the
              profile search. Solid silver (no gradient) per request. -->
         <div style="margin:var(--space-md) 0;">
-          <button class="btn btn-full btn-sm" id="superuser-btn" style="background:#c7c8cd;color:#1b1b22;border:1px solid rgba(0,0,0,0.18);gap:8px;font-weight:700;">
+          <button class="btn btn-full btn-sm btn-shine" id="superuser-btn" style="background:#c7c8cd;color:#1b1b22;border:1px solid rgba(0,0,0,0.18);gap:8px;font-weight:700;">
             <span style="width:16px;height:16px;display:inline-flex;">${ICONS.shield}</span>
             SUPERUSUARIO
           </button>
