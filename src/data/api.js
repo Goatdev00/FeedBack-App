@@ -315,6 +315,102 @@ export async function adminRestore(logId) {
 }
 
 // =====================================================================
+// ADMIN — user management + broadcast + moderation queues (FASE 2)
+// =====================================================================
+// RPCs are SECURITY DEFINER + is_admin-gated (0034); Edge Functions
+// JWT-auth + service-role is_admin re-check. UI gate stays cosmetic.
+export async function adminListUsers({ search = null, role = null, status = null, limit = 50, offset = 0 } = {}) {
+  if (!isSupabaseConfigured()) return [];
+  const { data, error } = await supabase.rpc('admin_list_users', {
+    p_search: search, p_role: role, p_status: status, p_limit: limit, p_offset: offset,
+  });
+  if (error) throw error;
+  return data || [];
+}
+
+export async function adminSetRole(userId, role) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { error } = await supabase.rpc('admin_set_role', { p_user: userId, p_role: role });
+  if (error) throw error;
+}
+
+export async function adminSetModeration(userId, status, reason = null, until = null) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { error } = await supabase.rpc('admin_set_moderation', {
+    p_user: userId, p_status: status, p_reason: reason, p_until: until,
+  });
+  if (error) throw error;
+}
+
+export async function adminAnonymizeUser(userId) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { error } = await supabase.rpc('admin_anonymize_user', { p_user: userId });
+  if (error) throw error;
+}
+
+// Edge functions (need auth.admin / push / email).
+// supabase.functions.invoke yields a FunctionsHttpError whose .message is a
+// generic "non-2xx status code" — the real { error } reason lives in the
+// response body. Unwrap it so the UI can show/match the actual reason.
+async function invokeError(error) {
+  let detail = '';
+  try { detail = (await error?.context?.json())?.error || ''; } catch { /* body not JSON */ }
+  return new Error(detail || error?.message || 'edge_error');
+}
+
+export async function adminBroadcast(payload) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data, error } = await supabase.functions.invoke('admin-broadcast', { body: payload });
+  if (error) throw await invokeError(error);
+  return data;
+}
+
+export async function adminModerateUser(userId, action, { reason = null, durationDays = null } = {}) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data, error } = await supabase.functions.invoke('admin-moderate', {
+    body: { userId, action, reason, durationDays },
+  });
+  if (error) throw await invokeError(error);
+  return data;
+}
+
+export async function adminDeleteUser(userId) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data, error } = await supabase.functions.invoke('admin-delete-user', {
+    body: { userId, confirm: true },
+  });
+  if (error) throw await invokeError(error);
+  return data;
+}
+
+// Moderation-queue reads (admin-only via the 0034 RLS policies).
+export async function listAdminReports() {
+  if (!isSupabaseConfigured()) return [];
+  const { data, error } = await supabase
+    .from('post_reports')
+    .select('post_id, reporter_id, reason, created_at')
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
+export async function listAdminTickets() {
+  if (!isSupabaseConfigured()) return [];
+  const { data, error } = await supabase
+    .from('support_tickets')
+    .select('id, user_id, name, email, message, status, created_at')
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
+export async function setTicketStatus(ticketId, status) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { error } = await supabase.from('support_tickets').update({ status }).eq('id', ticketId);
+  if (error) throw error;
+}
+
+// =====================================================================
 // POINTS — atomic, server-side persisted award
 // =====================================================================
 // The store bumps points optimistically in memory; this persists the
