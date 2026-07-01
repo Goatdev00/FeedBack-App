@@ -433,7 +433,16 @@ async function renderTrash(el) {
   const deletions = entries.filter(e => e.action === 'soft_delete');
   if (!deletions.length) { el.innerHTML = emptyHTML('🗑️', 'Papelera vacía', 'Lo que elimines aparecerá aquí para restaurarlo.'); return; }
 
-  el.innerHTML = deletions.map(trashItem).join('');
+  // Resolve the owner of each deleted item (from its before_state snapshot)
+  // so every card says whose content it was. Names not already cached in the
+  // store are fetched in one chunked call.
+  const ownerIds = [...new Set(deletions.map(e => ownerOf(e).id).filter(Boolean))];
+  const uncached = ownerIds.filter(id => !store.getUserById(id));
+  const nameMap = uncached.length ? await getProfileNames(uncached).catch(() => ({})) : {};
+  if (!document.contains(el)) return;
+  const nameOf = (id) => { const u = store.getUserById(id); return u ? (u.name || u.username || 'Usuario') : (nameMap[id] || 'Usuario'); };
+
+  el.innerHTML = deletions.map(e => trashItem(e, nameOf)).join('');
   el.onclick = async (e) => {
     const btn = e.target.closest('[data-restore-log]');
     if (!btn) return;
@@ -441,6 +450,20 @@ async function renderTrash(el) {
     try { await adminRestore(btn.dataset.restoreLog); showToast('Restaurado ✓', 'success'); renderTrash(el); }
     catch (err) { btn.disabled = false; const m = String(err?.message || ''); showToast(m.includes('already_restored') ? 'Ya estaba restaurado.' : 'No se pudo restaurar.', 'error'); console.warn('[admin] restore', err); }
   };
+}
+
+// Who the deleted content belonged to, read from the before_state snapshot
+// (raw DB columns). Label adapts per type.
+function ownerOf(entry) {
+  const b = entry.beforeState || {};
+  switch (entry.targetType) {
+    case 'post':
+    case 'comment':
+    case 'chat_message': return { id: b.user_id || null, label: 'De' };
+    case 'party':        return { id: b.promoter_id || null, label: 'Organiza' };
+    case 'question':     return { id: b.target_user_id || null, label: 'Dirigida a' };
+    default:             return { id: null, label: 'De' };
+  }
 }
 function previewOf(entry) {
   const b = entry.beforeState || {};
@@ -454,14 +477,17 @@ function previewOf(entry) {
   if (!t) return '(sin vista previa)';
   return t.length > 140 ? t.slice(0, 140) + '…' : t;
 }
-function trashItem(entry) {
+function trashItem(entry, nameOf) {
   const label = TYPE_LABEL[entry.targetType] || entry.targetType;
   const restored = !!entry.restoredAt;
+  const owner = ownerOf(entry);
+  const ownerName = owner.id && nameOf ? nameOf(owner.id) : null;
   return card(`
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
       <span class="badge">${sanitize(label)}</span>
       <span style="font-size:var(--text-xs);color:var(--text-tertiary);flex-shrink:0;">${formatRelative(entry.createdAt)}</span>
     </div>
+    ${ownerName ? `<div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-bottom:6px;">${owner.label}: <strong style="color:var(--text-secondary);font-weight:600;">${sanitize(ownerName)}</strong></div>` : ''}
     <div style="font-size:var(--text-sm);color:var(--text-secondary);line-height:1.45;word-break:break-word;padding:8px 10px;background:rgba(255,255,255,0.03);border-left:2px solid var(--border-subtle);border-radius:6px;margin-bottom:${entry.reason ? '6px' : '10px'};">${sanitize(previewOf(entry))}</div>
     ${entry.reason ? `<div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-bottom:10px;">Motivo: ${sanitize(entry.reason)}</div>` : ''}
     <div style="display:flex;justify-content:flex-end;">
