@@ -41,6 +41,7 @@ export function confirmAdminDelete({
   confirmLabel = 'Eliminar',
   errorLabel = 'No se pudo completar la acción.',
   durationField = false,
+  hideReason = false,
   onConfirm,
 }) {
   const overlay = createModal(`
@@ -51,10 +52,11 @@ export function confirmAdminDelete({
         <h2 style="font-family:var(--font-display);font-size:var(--text-lg);font-weight:700;margin-bottom:var(--space-sm);">${title}</h2>
         <p style="font-size:var(--text-sm);color:var(--text-secondary);line-height:1.5;margin-bottom:var(--space-md);">${message}</p>
       </div>
+      ${hideReason ? '' : `
       <div class="input-group mb-md">
         <label class="input-label">Motivo (opcional, queda en el registro)</label>
         <input type="text" class="input" id="admin-del-reason" maxlength="200" placeholder="Ej: spam, contenido ofensivo…" />
-      </div>
+      </div>`}
       ${durationField ? `
         <div class="input-group mb-md">
           <label class="input-label">Duración en días (vacío = permanente)</label>
@@ -72,7 +74,7 @@ export function confirmAdminDelete({
 
   const confirmBtn = overlay.querySelector('#admin-del-confirm');
   confirmBtn.addEventListener('click', async () => {
-    const reason = overlay.querySelector('#admin-del-reason').value.trim() || null;
+    const reason = hideReason ? null : (overlay.querySelector('#admin-del-reason').value.trim() || null);
     let days = null;
     if (durationField) {
       const n = parseInt(overlay.querySelector('#admin-del-days').value, 10);

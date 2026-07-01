@@ -153,6 +153,10 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS });
   if (req.method !== 'POST') return json(405, { error: 'method_not_allowed' });
 
+  // Everything is wrapped so ANY throw still returns a CORS-bearing JSON
+  // response (otherwise the browser sees "Failed to send a request" with no
+  // detail) and the real error reaches the client + the logs.
+  try {
   // ---------------- AuthN ----------------
   const authHeader = req.headers.get('Authorization') ?? '';
   if (!authHeader.toLowerCase().startsWith('bearer ')) return json(401, { error: 'unauthorized' });
@@ -299,4 +303,9 @@ Deno.serve(async (req: Request) => {
     push: { sent: pushSent, removed: pushRemoved },
     email: { sent: emailSent },
   });
+  } catch (e) {
+    const detail = String((e as { message?: string })?.message || e);
+    console.error('[admin-broadcast] unhandled', detail, e);
+    return json(500, { error: `internal: ${detail}` });
+  }
 });
