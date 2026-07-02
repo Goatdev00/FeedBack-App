@@ -5,7 +5,7 @@
 import { store, ICONS, REPORT_CATEGORIES } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { showToast, showPointsToast } from '../utils/toast.js';
-import { avatarHTML, sanitize } from '../utils/helpers.js';
+import { avatarHTML, sanitize, safeImageSrc } from '../utils/helpers.js';
 import { fileToResizedDataURL } from '../utils/image.js';
 
 export function renderCreatePost(container, params = {}) {
@@ -44,7 +44,9 @@ export function renderCreatePost(container, params = {}) {
 
       <!-- Party tag (like Instagram location) -->
       <div class="card" style="display:flex;align-items:center;gap:var(--space-md);margin-bottom:var(--space-lg);padding:var(--space-sm) var(--space-md);">
-        <span style="font-size:1.2rem;">📍</span>
+        ${(() => { const f = safeImageSrc(party.flyer); return f
+          ? `<img src="${f}" alt="" loading="lazy" style="width:40px;height:40px;border-radius:var(--radius-sm);object-fit:cover;flex-shrink:0;" />`
+          : `<span style="font-size:1.2rem;">📍</span>`; })()}
         <div style="flex:1;">
           <div style="font-size:var(--text-sm);font-weight:600;">${sanitize(party.name)}</div>
           <div style="font-size:var(--text-xs);color:var(--text-tertiary);">${sanitize(party.venue)} · ${sanitize(party.city)}</div>

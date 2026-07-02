@@ -4,7 +4,7 @@
 
 import { store, ICONS } from '../data/mock-data.js';
 import { router } from '../router.js';
-import { debounce, sanitize } from '../utils/helpers.js';
+import { debounce, sanitize, safeImageSrc } from '../utils/helpers.js';
 
 export function renderSelectParty(container) {
   const state = store.getState();
@@ -53,9 +53,16 @@ export function renderSelectParty(container) {
 }
 
 function renderPartyOption(party) {
+  const flyer = safeImageSrc(party.flyer);
+  // Show the flyer as the thumbnail; fall back to the music-note tile when
+  // the party has no flyer (.party-selector-thumb already sets 48px, radius,
+  // object-fit:cover + a brand-gradient background for the empty case).
+  const thumb = flyer
+    ? `<img class="party-selector-thumb" src="${flyer}" alt="" loading="lazy" />`
+    : `<div class="party-selector-thumb" style="display:flex;align-items:center;justify-content:center;font-size:1.2rem;">🎵</div>`;
   return `
     <div class="party-selector-item" data-party-id="${party.id}">
-      <div class="party-selector-thumb" style="display:flex;align-items:center;justify-content:center;font-size:1.2rem;">🎵</div>
+      ${thumb}
       <div class="party-selector-info">
         <div class="party-selector-name">
           ${party.sponsored ? '⭐ ' : ''}${sanitize(party.name)}
