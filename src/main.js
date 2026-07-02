@@ -387,6 +387,29 @@ function schedulePushOffer() {
 // other modules (wall.js empty-state fallback, pull-to-refresh) can
 // import it without creating a cycle with main.js.
 
+// ---------------------------------------------------------------------
+// Resume refetch — hydration only ran at BOOT. When a suspended PWA/tab
+// comes back to the foreground (e.g. the user taps a push notification
+// and the service worker merely FOCUSES the already-open window),
+// realtime events missed during suspension are gone forever and every
+// list is stale: a question that arrived while the app slept simply
+// isn't in state ("me llegó el push pero no veo la pregunta").
+// refreshFromSupabaseInBackground coalesces concurrent calls and paints
+// once at the end; the throttle keeps rapid tab-switching cheap.
+// ---------------------------------------------------------------------
+let _lastResumeRefresh = Date.now(); // boot hydrates already — skip the first window
+function refreshOnResume() {
+  if (document.visibilityState !== 'visible') return;
+  if (!store.getState().currentUser?.id) return; // no session → nothing to fetch
+  const now = Date.now();
+  if (now - _lastResumeRefresh < 15_000) return;
+  _lastResumeRefresh = now;
+  refreshFromSupabaseInBackground();
+}
+document.addEventListener('visibilitychange', refreshOnResume);
+// bfcache restores (iOS back-forward) don't fire visibilitychange.
+window.addEventListener('pageshow', (e) => { if (e.persisted) refreshOnResume(); });
+
 function showSundayPrompt() {
   const overlay = createModal(`
     <div class="modal" style="text-align:center;padding:var(--space-2xl);">
