@@ -78,7 +78,7 @@ function renderPartyRow(party, state) {
   // being interpolated raw into src.
   const flyerSrc = safeImageSrc(party.flyer);
   const thumbInner = flyerSrc
-    ? `<img src="${flyerSrc}" alt="" loading="lazy" />`
+    ? `<img src="${flyerSrc}" alt="" />`
     : '🎵';
   const thumbClasses = ['chat-party-thumb'];
   if (flyerSrc) thumbClasses.push('chat-party-thumb-image');

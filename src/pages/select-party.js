@@ -58,7 +58,7 @@ function renderPartyOption(party) {
   // the party has no flyer (.party-selector-thumb already sets 48px, radius,
   // object-fit:cover + a brand-gradient background for the empty case).
   const thumb = flyer
-    ? `<img class="party-selector-thumb" src="${flyer}" alt="" loading="lazy" />`
+    ? `<img class="party-selector-thumb" src="${flyer}" alt="" />`
     : `<div class="party-selector-thumb" style="display:flex;align-items:center;justify-content:center;font-size:1.2rem;">🎵</div>`;
   return `
     <div class="party-selector-item" data-party-id="${party.id}">
