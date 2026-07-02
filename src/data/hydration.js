@@ -53,6 +53,10 @@ const DATA_DRIVEN_ROUTES = new Set([
   'notifications',
   'chat-hub',
   'chat-parties',
+  // The party picker reads flyers from state.parties; without a post-
+  // hydration repaint it keeps the music-note fallback for a flyer that
+  // only arrived after the page rendered ("¿A qué fiesta asististe?").
+  'select-party',
 ]);
 
 // Promise while a refresh is running, null otherwise. Returning it lets
