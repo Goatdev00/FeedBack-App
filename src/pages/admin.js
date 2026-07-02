@@ -659,16 +659,24 @@ async function renderQA(el) {
   askTargetEl.addEventListener('change', renderAskValue);
   renderAskValue();
 
-  el.querySelector('#qa-ask-send').addEventListener('click', async () => {
+  el.querySelector('#qa-ask-send').addEventListener('click', async (e) => {
+    const sendBtn = e.currentTarget;
     const text = el.querySelector('#qa-ask-text').value.trim();
     if (!text) { showToast('Escribe la pregunta.', 'error'); return; }
     const t = askTargetEl.value;
     let ids = [];
+    // Resolving "a todos" pages through EVERY user id — seconds of silence
+    // without feedback reads as a dead button. finally restores the label
+    // even on the early-return validation paths inside the try.
+    const origLabel = sendBtn.innerHTML;
+    sendBtn.disabled = true;
+    sendBtn.innerHTML = '<span class="btn-spinner"></span>&nbsp;Preparando…';
     try {
       if (t === 'all') ids = await listAllUserIds();
       else if (t === 'party') { const pid = el.querySelector('#qa-ask-party')?.value; if (!pid) { showToast('Elegí una fiesta.', 'error'); return; } ids = await listPartyAttendeeIds(pid); }
       else { ids = askPeople.map(u => u.id); if (!ids.length) { showToast('Elegí al menos una persona.', 'error'); return; } }
     } catch (err) { showToast('No se pudieron resolver los destinatarios.', 'error'); console.warn('[admin] ask resolve', err); return; }
+    finally { sendBtn.disabled = false; sendBtn.innerHTML = origLabel; }
     const recipients = ids.filter(id => id && id !== meId);
     if (!recipients.length) { showToast('No hay destinatarios.', 'error'); return; }
     confirmAdminDelete({
