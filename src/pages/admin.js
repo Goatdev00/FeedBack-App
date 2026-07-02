@@ -420,7 +420,12 @@ async function loadBroadcastHistory(el) {
     el.innerHTML = list.map(broadcastHistoryItem).join('');
   } catch (err) {
     if (!document.contains(el)) return;
-    el.innerHTML = errorHTML('No se pudo cargar el historial de notificaciones.');
+    // PGRST205 = PostgREST can't find the table → migration 0035 hasn't
+    // been applied to this project yet. Say so instead of a generic error.
+    const missingTable = err?.code === 'PGRST205' || /admin_broadcasts/i.test(String(err?.message || ''));
+    el.innerHTML = errorHTML(missingTable
+      ? 'El historial necesita la migración 0035 (tabla admin_broadcasts). Aplicala en el SQL Editor y redesplegá admin-broadcast.'
+      : 'No se pudo cargar el historial de notificaciones.');
     console.warn('[admin] broadcast history', err);
   }
 }
@@ -674,6 +679,20 @@ async function renderQA(el) {
       hideReason: true,
       onConfirm: async () => {
         const r = await adminAskQuestion(text, recipients);
+        // Push so recipients with the app CLOSED learn a question arrived —
+        // the rows alone only surface in-app on their next open. Reuses the
+        // deployed admin-broadcast (no per-sender rate caps); neutral body,
+        // never names the asker (anonymity). Best-effort: the questions are
+        // already inserted, so a push failure must not fail the flow.
+        try {
+          await adminBroadcast({
+            title: 'Tienes una pregunta nueva 📩',
+            body: 'Alguien te hizo una pregunta anónima. Entra a responderla.',
+            url: '/#/profile?tab=questions',
+            channels: { push: true, email: false },
+            target: { type: 'user', value: recipients },
+          });
+        } catch (err) { console.warn('[admin] ask push failed (questions already sent)', err); }
         showToast(`Pregunta enviada a ${r.inserted} persona(s).`, 'success', 5000);
         el.querySelector('#qa-ask-text').value = '';
       },
