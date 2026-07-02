@@ -27,7 +27,8 @@
 // user gets exactly one re-ask under the new policy).
 // =====================================================================
 
-import { isPushSupported, subscribeToPush } from './push.js';
+import { isPushSupported, subscribeToPush, resyncPushSubscription } from './push.js';
+import { showToast } from '../utils/toast.js';
 
 const DECISION_KEY = 'push-permission-decision';
 const REOFFER_DAYS = { dismissed: 14, 'ios-install': 3 };
@@ -69,19 +70,31 @@ function writeDecision(decision, extra = {}) {
   } catch { /* ignore */ }
 }
 
+// Wipe the device-scoped decision. Called on logout so the NEXT account
+// on this device gets a fresh ask instead of inheriting the previous
+// user's "dismissed"/install-guide backoff (which silently left brand-new
+// users with zero subscriptions).
+export function clearPushDecision() {
+  try { localStorage.removeItem(DECISION_KEY); } catch { /* ignore */ }
+}
+
 function decisionStillBlocks(d) {
   if (!d) return false;
   if (d.decision === 'granted') return true;
-  let days = REOFFER_DAYS[d.decision];
-  if (days == null) return true; // unknown decision: be conservative
+  const days = REOFFER_DAYS[d.decision];
+  // Unknown/corrupt decision value: do NOT block forever — nothing ever
+  // clears the key, so "be conservative" meant "never ask again". Re-offer
+  // and let the next real decision overwrite it.
+  if (days == null) return false;
+  let effectiveDays = days;
   // The iOS install guide backs off exponentially (3d → 6d → 12d → 24d,
   // capped at 30d): Safari-tab localStorage never learns about an
   // install (iOS partitions storage between tab and PWA), so without a
   // backoff the guide would nag forever at full cadence.
   if (d.decision === 'ios-install') {
-    days = Math.min(30, days * Math.pow(2, Math.max(0, (d.n || 1) - 1)));
+    effectiveDays = Math.min(30, days * Math.pow(2, Math.max(0, (d.n || 1) - 1)));
   }
-  return (Date.now() - (d.at || 0)) < days * DAY_MS;
+  return (Date.now() - (d.at || 0)) < effectiveDays * DAY_MS;
 }
 
 // Shared overlay scaffolding for both modals.
@@ -101,17 +114,29 @@ function mountOverlay(innerHtml) {
   return overlay;
 }
 
-export function showPermissionModal(userId) {
+// `force: true` (the manual "Notificaciones" entry in Configuración)
+// bypasses the decision snooze AND explains the states the automatic boot
+// offer handles silently — the user explicitly asked, so silence would
+// read as "the button is broken".
+export function showPermissionModal(userId, { force = false } = {}) {
   if (!userId) return;
-  if (decisionStillBlocks(readDecision())) return;
+  if (!force && decisionStillBlocks(readDecision())) return;
 
   // Browser-level states we can't act on from a modal.
   if (typeof Notification !== 'undefined') {
-    if (Notification.permission === 'denied') return;
+    if (Notification.permission === 'denied') {
+      if (force) showToast('Las notificaciones están bloqueadas en tu navegador. Actívalas desde los ajustes del sitio.', 'warning', 6000);
+      return;
+    }
     if (Notification.permission === 'granted') {
       // Granted out-of-band (or before this modal existed): record it
       // and let the boot resync own the subscription from here.
       writeDecision('granted');
+      if (force) {
+        // Self-heal: re-register this device's subscription right now.
+        resyncPushSubscription(userId);
+        showToast('Las notificaciones ya están activas en este dispositivo ✅', 'success');
+      }
       return;
     }
   }
@@ -123,7 +148,10 @@ export function showPermissionModal(userId) {
     return;
   }
 
-  if (!isPushSupported()) return;
+  if (!isPushSupported()) {
+    if (force) showToast('Este navegador no soporta notificaciones push.', 'warning');
+    return;
+  }
 
   const overlay = mountOverlay(`
     <div class="modal push-permission-modal"
@@ -194,7 +222,10 @@ export function showPermissionModal(userId) {
   }
 
   function onKey(e) {
-    if (e.key === 'Escape') dismiss();
+    // Escape is an accidental/ambivalent gesture — close WITHOUT writing
+    // the 14-day 'dismissed' snooze (that's reserved for the explicit
+    // "Ahora no" button). The offer simply comes back next boot.
+    if (e.key === 'Escape') close();
   }
 
   function dismiss() {
@@ -237,8 +268,10 @@ export function showPermissionModal(userId) {
   }
 
   overlay.addEventListener('click', (e) => {
-    // Click on the overlay (not on the modal box) = dismiss.
-    if (e.target === overlay) dismiss();
+    // A stray tap outside the modal box is NOT an informed "no" — close
+    // without recording a decision so the ask returns next boot. Only the
+    // explicit "Ahora no" button snoozes for 14 days.
+    if (e.target === overlay) close();
   });
   overlay.querySelector('#push-modal-activate').addEventListener('click', activate);
   overlay.querySelector('#push-modal-dismiss').addEventListener('click', dismiss);

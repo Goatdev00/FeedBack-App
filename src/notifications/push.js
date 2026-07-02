@@ -91,21 +91,36 @@ export async function subscribeToPush(userId) {
   if (!VAPID_PUBLIC_KEY)  throw new Error('vapid_key_missing');
   if (!userId)            throw new Error('user_id_required');
 
-  // The SW is registered at app boot in main.js. getSwRegistration()
-  // re-registers if that failed, and never hangs (unlike `.ready`).
-  const registration = await getSwRegistration();
-  if (!registration) throw new Error('sw_unavailable');
-
+  // Ask for permission FIRST, before any await that could outlive the
+  // tap's transient user activation. On iOS standalone, requestPermission
+  // must run under a live user gesture: if the first-ever launch is still
+  // registering the SW and we await that first, the gesture is consumed
+  // and WebKit auto-resolves 'denied' WITHOUT showing a prompt — the new
+  // user gets "permiso denegado" having never been asked.
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') {
     return { granted: false, permission };
   }
+
+  // The SW is registered at app boot in main.js. getSwRegistration()
+  // re-registers if that failed, and never hangs (unlike `.ready`).
+  const registration = await getSwRegistration();
+  if (!registration) throw new Error('sw_unavailable');
 
   // Re-use the existing subscription when there is one. The browser
   // tracks it across sessions; calling subscribe() again would return
   // the same one, but checking first avoids a needless prompt on some
   // engines.
   let sub = await registration.pushManager.getSubscription();
+  // Same VAPID-rotation guard as the boot resync: a leftover subscription
+  // bound to an OLD public key looks alive but every send 403s forever.
+  if (sub) {
+    const liveKey = sub.options?.applicationServerKey;
+    if (liveKey && bufToB64url(liveKey) !== VAPID_PUBLIC_KEY.replace(/=+$/, '')) {
+      try { await sub.unsubscribe(); } catch { /* ignore */ }
+      sub = null;
+    }
+  }
   if (!sub) {
     sub = await registration.pushManager.subscribe({
       userVisibleOnly: true,
