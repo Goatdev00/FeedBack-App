@@ -144,17 +144,31 @@ function renderLiveParties(state) {
   const recent = parties.filter(p => !isOld(p)).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   const old = parties.filter(isOld).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
-  const partyCard = (party, faded) => `
-    <div class="card" style="min-width:140px;max-width:160px;padding:var(--space-sm) var(--space-md);cursor:pointer;flex-shrink:0;${faded ? 'opacity:0.6;' : ''}"
+  const partyCard = (party, faded) => {
+    // Flyer as a soft backdrop: blurred + dimmed (blur/saturate/brightness
+    // + a dark veil) so the photo reads as ambience, not competition for
+    // the text. scale(1.15) hides the blur's transparent edge bleed;
+    // overflow:hidden + .card's radius clip it to the card shape.
+    const flyer = safeImageSrc(party.flyer);
+    return `
+    <div class="card" style="min-width:140px;max-width:160px;padding:var(--space-sm) var(--space-md);cursor:pointer;flex-shrink:0;position:relative;overflow:hidden;${faded ? 'opacity:0.6;' : ''}"
          data-action="view-party" data-party-id="${party.id}">
-      <div style="font-size:1.2rem;margin-bottom:4px;">${faded ? '🕓' : '🔴'}</div>
-      <div style="font-size:var(--text-xs);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${sanitize(party.name)}</div>
-      <div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-top:2px;">${sanitize(party.venue)}</div>
-      <div style="display:flex;align-items:center;gap:4px;margin-top:6px;">
-        <span style="font-size:var(--text-xs);color:var(--orange);">⚡ ${party.reports?.energia || 0}%</span>
+      ${flyer ? `
+        <img src="${flyer}" alt="" aria-hidden="true" loading="lazy"
+             style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:blur(3px) saturate(0.85) brightness(0.55);transform:scale(1.15);pointer-events:none;" />
+        <div style="position:absolute;inset:0;background:rgba(10,10,16,0.35);pointer-events:none;"></div>
+      ` : ''}
+      <div style="position:relative;">
+        <div style="font-size:1.2rem;margin-bottom:4px;">${faded ? '🕓' : '🔴'}</div>
+        <div style="font-size:var(--text-xs);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${sanitize(party.name)}</div>
+        <div style="font-size:var(--text-xs);color:${flyer ? 'rgba(255,255,255,0.8)' : 'var(--text-tertiary)'};margin-top:2px;">${sanitize(party.venue)}</div>
+        <div style="display:flex;align-items:center;gap:4px;margin-top:6px;">
+          <span style="font-size:var(--text-xs);color:var(--orange);">⚡ ${party.reports?.energia || 0}%</span>
+        </div>
       </div>
     </div>
   `;
+  };
 
   const oldDivider = `
     <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;flex-shrink:0;align-self:stretch;padding:0 8px;">
