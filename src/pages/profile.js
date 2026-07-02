@@ -14,6 +14,7 @@ import { signOut } from '../data/auth.js';
 import { clearLocalSession, requireCurrentUser, patchProfile } from '../data/profile-sync.js';
 import { flushCloudSave } from '../data/cloud-state.js';
 import { unsubscribeFromPush } from '../notifications/push.js';
+import { showPermissionModal, clearPushDecision } from '../notifications/permission-modal.js';
 import { fileToResizedDataURL } from '../utils/image.js';
 
 const CITY_OPTIONS = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena', 'Otra'];
@@ -767,6 +768,15 @@ function showSettingsModal() {
       <h2 class="modal-title">Configuración</h2>
 
       <div style="display:flex;flex-direction:column;gap:var(--space-sm);">
+        <button class="btn btn-secondary btn-full" id="btn-notifications" style="justify-content:flex-start;align-items:flex-start;flex-direction:column;gap:3px;height:auto;padding:12px 16px;text-align:left;">
+          <span style="display:inline-flex;align-items:center;gap:8px;font-weight:600;">
+            <span style="width:18px;display:inline-flex;justify-content:center;">🔔</span>
+            Notificaciones
+          </span>
+          <span style="font-size:0.78rem;color:var(--text-tertiary);font-weight:400;line-height:1.35;padding-left:26px;">
+            Activa las notificaciones push en este dispositivo
+          </span>
+        </button>
         <button class="btn btn-secondary btn-full" id="btn-support" style="justify-content:flex-start;align-items:flex-start;flex-direction:column;gap:3px;height:auto;padding:12px 16px;text-align:left;">
           <span style="display:inline-flex;align-items:center;gap:8px;font-weight:600;">
             <span style="width:18px;height:18px;display:inline-flex;">${ICONS.help}</span>
@@ -783,6 +793,14 @@ function showSettingsModal() {
       </div>
     </div>
   `);
+
+  overlay.querySelector('#btn-notifications').addEventListener('click', () => {
+    overlay.close();
+    // force: the user explicitly asked — bypass the "Ahora no" snooze and
+    // explain blocked/already-active states instead of returning silently.
+    const uid = store.getState().currentUser?.id;
+    if (uid) showPermissionModal(uid, { force: true });
+  });
 
   overlay.querySelector('#btn-support').addEventListener('click', () => {
     overlay.close();
@@ -803,6 +821,10 @@ function showSettingsModal() {
       try { await unsubscribeFromPush(); } catch { /* best-effort */ }
       await signOut();
     }
+    // The push decision is device-scoped: without this, the NEXT account
+    // on this device inherits the previous user's "Ahora no" snooze /
+    // install-guide backoff and never gets offered notifications.
+    clearPushDecision();
     clearLocalSession();
     router.navigate('login');
   });
