@@ -150,8 +150,12 @@ function renderLiveParties(state) {
     // the text. scale(1.15) hides the blur's transparent edge bleed;
     // overflow:hidden + .card's radius clip it to the card shape.
     const flyer = safeImageSrc(party.flyer);
+    // These cards sit on a dark-dimmed photo (or a dark base when there's
+    // no flyer), so the text is ALWAYS white — hardcoded, not themed:
+    // in light mode the theme's dark text over the dark backdrop was
+    // unreadable.
     return `
-    <div class="card" style="min-width:140px;max-width:160px;padding:var(--space-sm) var(--space-md);cursor:pointer;flex-shrink:0;position:relative;overflow:hidden;${faded ? 'opacity:0.6;' : ''}"
+    <div class="card" style="min-width:140px;max-width:160px;padding:var(--space-sm) var(--space-md);cursor:pointer;flex-shrink:0;position:relative;overflow:hidden;background:rgba(18,18,26,0.95);border-color:rgba(255,255,255,0.08);${faded ? 'opacity:0.6;' : ''}"
          data-action="view-party" data-party-id="${party.id}">
       ${flyer ? `
         <img src="${flyer}" alt="" aria-hidden="true" loading="lazy"
@@ -160,8 +164,8 @@ function renderLiveParties(state) {
       ` : ''}
       <div style="position:relative;">
         <div style="font-size:1.2rem;margin-bottom:4px;">${faded ? '🕓' : '🔴'}</div>
-        <div style="font-size:var(--text-xs);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${sanitize(party.name)}</div>
-        <div style="font-size:var(--text-xs);color:${flyer ? 'rgba(255,255,255,0.8)' : 'var(--text-tertiary)'};margin-top:2px;">${sanitize(party.venue)}</div>
+        <div style="font-size:var(--text-xs);font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${sanitize(party.name)}</div>
+        <div style="font-size:var(--text-xs);color:rgba(255,255,255,0.8);margin-top:2px;">${sanitize(party.venue)}</div>
         <div style="display:flex;align-items:center;gap:4px;margin-top:6px;">
           <span style="font-size:var(--text-xs);color:var(--orange);">⚡ ${party.reports?.energia || 0}%</span>
         </div>
