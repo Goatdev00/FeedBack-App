@@ -70,7 +70,8 @@ export function confirmAdminDelete({
     </div>
   `);
 
-  overlay.querySelector('#admin-del-cancel').addEventListener('click', () => overlay.close());
+  const cancelBtn = overlay.querySelector('#admin-del-cancel');
+  cancelBtn.addEventListener('click', () => overlay.close());
 
   const confirmBtn = overlay.querySelector('#admin-del-confirm');
   confirmBtn.addEventListener('click', async () => {
@@ -80,12 +81,21 @@ export function confirmAdminDelete({
       const n = parseInt(overlay.querySelector('#admin-del-days').value, 10);
       days = Number.isFinite(n) && n > 0 ? n : null;
     }
+    // Instant tap feedback: onConfirm can take seconds (bulk RPCs, edge
+    // functions) — a silently-disabled button reads as a dead tap and the
+    // modal looks frozen. Swap in a spinner and lock both buttons; restore
+    // on failure so the admin can retry.
+    const originalLabel = confirmBtn.innerHTML;
     confirmBtn.disabled = true;
+    cancelBtn.disabled = true;
+    confirmBtn.innerHTML = `<span class="btn-spinner"></span>&nbsp;${originalLabel}`;
     try {
       await onConfirm(reason, days);
       overlay.close();
     } catch (err) {
       confirmBtn.disabled = false;
+      cancelBtn.disabled = false;
+      confirmBtn.innerHTML = originalLabel;
       // Map known server reasons to friendly text; fall back to the
       // action-specific errorLabel. (Edge-function errors are unwrapped to
       // their JSON `error` by the api.js invoke wrappers, so these match.)

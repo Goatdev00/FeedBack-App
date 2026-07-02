@@ -2082,6 +2082,21 @@ span > svg {
   animation: spin 0.6s linear infinite;
 }
 
+/* Small inline spinner for a button in its loading state (admin confirm
+   modal, composer sends). currentColor adapts to the button's text color
+   (white on the red confirm, dark on secondary). */
+.btn-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  vertical-align: -2px;
+  flex-shrink: 0;
+}
+
 /* --- Pull-to-refresh indicator (Instagram-style) ---
    Floats above the page edge while the user pulls down. The transform
    and opacity are set inline from JS based on drag distance; when the
