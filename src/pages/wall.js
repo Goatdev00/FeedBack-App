@@ -155,11 +155,11 @@ function renderLiveParties(state) {
     // in light mode the theme's dark text over the dark backdrop was
     // unreadable.
     return `
-    <div class="card" style="min-width:140px;max-width:160px;padding:var(--space-sm) var(--space-md);cursor:pointer;flex-shrink:0;position:relative;overflow:hidden;background:rgba(18,18,26,0.95);border-color:rgba(255,255,255,0.08);${faded ? 'opacity:0.6;' : ''}"
+    <div class="card" style="min-width:140px;max-width:160px;padding:var(--space-sm) var(--space-md);cursor:pointer;flex-shrink:0;position:relative;overflow:hidden;-webkit-transform:translateZ(0);transform:translateZ(0);background:rgba(18,18,26,0.95);border-color:rgba(255,255,255,0.08);${faded ? 'opacity:0.6;' : ''}"
          data-action="view-party" data-party-id="${party.id}">
       ${flyer ? `
-        <img src="${flyer}" alt="" aria-hidden="true" loading="lazy"
-             style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:blur(3px) saturate(0.85) brightness(0.55);transform:scale(1.15);pointer-events:none;" />
+        <img src="${flyer}" alt="" aria-hidden="true"
+             style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;-webkit-filter:blur(3px) saturate(0.85) brightness(0.55);filter:blur(3px) saturate(0.85) brightness(0.55);-webkit-transform:scale(1.15);transform:scale(1.15);pointer-events:none;" />
         <div style="position:absolute;inset:0;background:rgba(10,10,16,0.35);pointer-events:none;"></div>
       ` : ''}
       <div style="position:relative;">
