@@ -602,7 +602,10 @@ class Store {
         //   * posts: cap at 50 most recent. Strip any base64 image data
         //     URLs (each can be MBs). Cap inline comments at 5/post.
         //   * users: store only fields the UI actually reads, drop big bio.
-        //   * parties / follows: untouched, the lists are small.
+        //   * parties: strip base64 flyers (a 1280px JPEG data URL can be
+        //     ~2M chars = ~4MB as UTF-16 — ONE flyer can blow the iPhone's
+        //     ~5MB quota; hydration re-fetches them every boot anyway).
+        //   * follows: untouched, the list is small.
         // Drop base64 data-URI images everywhere — a single camera photo
         // can be 12 MB and instantly blows the ~5 MB localStorage budget.
         const stripDataUri = (v) => (typeof v === 'string' && v.startsWith('data:') ? null : v);
@@ -611,6 +614,10 @@ class Store {
           currentUser: this.state.currentUser
             ? { ...this.state.currentUser, avatar: stripDataUri(this.state.currentUser.avatar) }
             : null,
+          parties: (this.state.parties || []).map(p => (
+            p.flyer && typeof p.flyer === 'string' && p.flyer.startsWith('data:')
+              ? { ...p, flyer: null } : p
+          )),
           posts: (this.state.posts || []).slice(0, 50).map(p => ({
             ...p,
             image: stripDataUri(p.image),
@@ -643,11 +650,13 @@ class Store {
           try {
             const lite = pruneHeavyState(this.state);
             localStorage.setItem(STORAGE_KEY, JSON.stringify(lite));
-            // Match in-memory state to what we actually persisted so the
-            // next setState doesn't re-inflate and re-throw.
-            this.state.parties = lite.parties;
-            this.state.posts = lite.posts;
-            this.state.chatRooms = lite.chatRooms;
+            // NOTE: do NOT copy `lite` back into this.state. Doing so nulled
+            // the LIVE in-memory flyers/images right after hydration fetched
+            // them — on iPhone (~5MB quota, so this catch fired every boot)
+            // parties rendered the gradient placeholder forever. The normal
+            // persisted path above now strips flyers/images anyway, so the
+            // "re-inflate and re-throw" loop this guarded against is gone;
+            // a cache-write failure must never degrade what's on screen.
           } catch (retryErr) {
             // Still no room even after purge+prune. Stop hammering
             // localStorage on every setState — that synchronous retry loop
