@@ -66,10 +66,13 @@ export function renderPartyDetail(container, params = {}) {
         </button>
       ` : ''}
 
-      <!-- Flyer / Hero -->
+      <!-- Flyer / Hero — tap to expand into the full-flyer lightbox. The
+           <img> is locked against save/select/drag (see below); tapping the
+           WRAPPER (pointer-events pass through the img) opens the viewer. -->
       ${safeImageSrc(party.flyer) ? `
-        <div style="position:relative;border-radius:var(--radius-lg);overflow:hidden;margin-bottom:var(--space-lg);">
-          <img src="${safeImageSrc(party.flyer)}" alt="${sanitize(party.name)}" style="width:100%;height:220px;object-fit:cover;display:block;" />
+        <div id="flyer-hero" role="button" tabindex="0" aria-label="Ampliar flyer" style="position:relative;border-radius:var(--radius-lg);overflow:hidden;margin-bottom:var(--space-lg);cursor:zoom-in;">
+          <img src="${safeImageSrc(party.flyer)}" alt="${sanitize(party.name)}" draggable="false" style="width:100%;height:220px;object-fit:cover;display:block;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-user-drag:none;user-drag:none;pointer-events:none;" />
+          <span style="position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,0.55);color:#fff;font-size:0.7rem;font-weight:600;padding:4px 9px;border-radius:var(--radius-full);pointer-events:none;">⤢ Ampliar</span>
         </div>
       ` : `
         <div class="party-flyer-placeholder" style="border-radius:var(--radius-lg);margin-bottom:var(--space-lg);height:220px;background:linear-gradient(135deg, hsl(${hashStr(party.name) % 360}, 60%, 25%), hsl(${(hashStr(party.name) + 60) % 360}, 50%, 15%));">
@@ -182,6 +185,18 @@ export function renderPartyDetail(container, params = {}) {
   // Back
   container.querySelector('#back-btn').addEventListener('click', () => router.navigate('parties'));
 
+  // Tap the flyer → full-flyer lightbox (locked against save/download).
+  const flyerHero = container.querySelector('#flyer-hero');
+  if (flyerHero) {
+    const openFlyer = () => showFlyerLightbox(safeImageSrc(party.flyer), sanitize(party.name));
+    flyerHero.addEventListener('click', openFlyer);
+    flyerHero.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openFlyer(); } });
+    // Match the lightbox: block the desktop right-click menu on the hero too
+    // (the img is pointer-events:none so "Guardar imagen" already never
+    // appears; this just suppresses the generic menu for consistency).
+    flyerHero.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
   // Attend
   container.querySelector('#attend-btn').addEventListener('click', () => {
     store.toggleAttendance(partyId);
@@ -249,6 +264,54 @@ export function renderPartyDetail(container, params = {}) {
       },
     }));
   }
+}
+
+// =====================================================================
+// Flyer lightbox — full-flyer viewer, locked against download/select
+// =====================================================================
+// Shows the WHOLE flyer (object-fit:contain) over a dark backdrop; tap
+// anywhere or the ✕ to close. The image is deliberately hard to save:
+//   * -webkit-touch-callout:none  → iOS long-press "Guardar imagen" menu
+//   * user-select / user-drag none + draggable=false → no drag-to-save
+//   * pointer-events:none on the img → long-press/right-click land on the
+//     backdrop (which closes), never on the <img>, so no image context menu
+//   * contextmenu preventDefault → blocks desktop right-click "Save image"
+// (base64 bytes are still in the DOM — this stops casual saving, not a
+// determined user with devtools; that's inherent to any web image.)
+function showFlyerLightbox(src, name) {
+  if (!src) return;
+  // Re-entrancy guard: a fast double-tap on the hero must not stack two
+  // overlays (each with its own document keydown listener).
+  if (document.querySelector('.flyer-lightbox-overlay')) return;
+  const overlay = document.createElement('div');
+  // The `modal-overlay` class opts this body-appended overlay into the
+  // router's teardown (router removes .modal-overlay on every navigation),
+  // so a back-gesture with the viewer open doesn't leave it stuck over the
+  // next page. We ALSO close() on hashchange so the keydown listener is
+  // removed too (node removal alone would leak it).
+  overlay.className = 'modal-overlay flyer-lightbox-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.92);display:flex;align-items:center;justify-content:center;padding:16px;-webkit-user-select:none;user-select:none;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);';
+  overlay.innerHTML = `
+    <button type="button" class="flyer-lightbox-close" aria-label="Cerrar"
+            style="position:absolute;top:calc(env(safe-area-inset-top, 0px) + 12px);right:16px;width:40px;height:40px;border-radius:50%;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.25);color:#fff;font-size:1.3rem;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;">✕</button>
+    <img src="${src}" alt="${name}" draggable="false"
+         style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,0.6);-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-user-drag:none;user-drag:none;pointer-events:none;" />
+  `;
+  const close = () => {
+    document.removeEventListener('keydown', onKey);
+    window.removeEventListener('hashchange', close);
+    overlay.remove();
+  };
+  function onKey(e) { if (e.key === 'Escape') close(); }
+  // Tap anywhere (backdrop or ✕) closes; the img is pointer-events:none so
+  // taps on it fall through to the overlay too.
+  overlay.addEventListener('click', close);
+  overlay.addEventListener('contextmenu', (e) => e.preventDefault());
+  document.addEventListener('keydown', onKey);
+  // Close on navigation (back-gesture / route change) so nothing is left
+  // orphaned; close() removes this listener whichever way we exit.
+  window.addEventListener('hashchange', close);
+  document.body.appendChild(overlay);
 }
 
 // =====================================================================
