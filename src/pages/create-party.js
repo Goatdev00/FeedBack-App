@@ -20,7 +20,7 @@ const GENRES = [
   'Disco', 'Electro', 'Progressive', 'Ambient', 'Reggaeton', 'Guaracha',
 ];
 
-const PARTY_CITIES = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena', 'Yopal'];
+const PARTY_CITIES = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena', 'Yopal', 'Bucaramanga'];
 
 // Normaliza el contacto de boletería a una URL https:// (el constraint
 // parties_ticket_contact_url_ck exige https y ≤500 chars):

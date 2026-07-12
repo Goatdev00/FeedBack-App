@@ -23,7 +23,7 @@ import {
   getProfileNames, listAllUserIds, listPartyAttendeeIds, adminAskQuestion,
 } from '../data/api.js';
 
-const CITIES = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena', 'Yopal'];
+const CITIES = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena', 'Yopal', 'Bucaramanga'];
 const TYPE_LABEL = { post: 'Publicación', comment: 'Comentario', chat_message: 'Mensaje de chat', question: 'Pregunta', party: 'Fiesta' };
 
 const TABS = [
