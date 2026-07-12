@@ -22,13 +22,18 @@ function sectionSeparator(label) {
   `;
 }
 
+// La agenda de fiestas NO muestra remates: viven en su pestaña del muro.
+// Filas pre-0037 sin kind cuentan como fiesta.
+const isFiesta = (p) => (p.kind || 'party') !== 'remate';
+
 export function renderParties(container) {
   const state = store.getState();
   const user = state.currentUser;
   const selectedCity = state.selectedCity || 'Bogotá';
-  const parties = selectedCity === 'Todas'
+  const parties = (selectedCity === 'Todas'
     ? store.getRecommendedParties(user?.id)
-    : store.getPartiesByCity(selectedCity);
+    : store.getPartiesByCity(selectedCity)
+  ).filter(isFiesta);
 
   const todayStr = bogotaTodayStr();
   const todayParties = parties.filter(p => p.date === todayStr);
@@ -216,7 +221,9 @@ function bindPartiesEvents(container) {
   const searchInput = container.querySelector('#party-search');
   searchInput?.addEventListener('input', debounce((e) => {
     const query = e.target.value.trim();
-    const results = query ? store.searchParties(query) : store.getPartiesByCity(store.getState().selectedCity);
+    // Mismo filtro que el render principal: los remates no se cuelan en
+    // los resultados de búsqueda de la agenda de fiestas.
+    const results = (query ? store.searchParties(query) : store.getPartiesByCity(store.getState().selectedCity)).filter(isFiesta);
     const list = container.querySelector('#parties-list');
     list.innerHTML = results.length > 0
       ? results.map(p => renderPartyCard(p, store.getState())).join('')

@@ -27,6 +27,9 @@ export function renderPartyDetail(container, params = {}) {
   if (!party) { router.navigate('parties'); return; }
 
   const user = state.currentUser;
+  // Skin de remate: mismos bloques, labels contextuales. La lógica
+  // (asistencia, posts, lightbox, edición) es idéntica para ambos kinds.
+  const isRemate = (party.kind || 'party') === 'remate';
   const isAttending = user && party.attendees.includes(user.id);
   const promotor = party.promotor ? store.getUserById(party.promotor) : null;
   const djs = party.djs.map(id => store.getUserById(id)).filter(Boolean);
@@ -52,17 +55,31 @@ export function renderPartyDetail(container, params = {}) {
   // can delete ANY party, not only their own.
   const isAdmin = !!(user && user.isAdmin);
 
+  // Boletería (0037): solo fiestas de promotor (los remates no venden
+  // boletas) y solo si el enlace sigue siendo https — se RE-valida aquí
+  // aunque create-party ya normalizó, porque el valor viaja por el store
+  // y una fila vieja/manipulada no debe convertirse en un href arbitrario.
+  // sanitize() lo deja inerte en contexto de atributo (audit C1).
+  const rawTicketUrl = typeof party.ticketContactUrl === 'string' ? party.ticketContactUrl.trim() : '';
+  const ticketHref = (!isRemate && rawTicketUrl.startsWith('https://')) ? sanitize(rawTicketUrl) : null;
+
   container.innerHTML = `
     <div class="page" id="party-detail-page">
       <button class="back-btn" id="back-btn">
         ${ICONS.back}
-        <span>Fiestas</span>
+        <span>${isRemate ? 'Muro' : 'Fiestas'}</span>
       </button>
+
+      ${isRemate ? `
+        <!-- Badge contextual: deja claro que esto es un after, no una
+             fiesta de la agenda. -->
+        <div style="display:inline-flex;align-items:center;gap:6px;margin-bottom:var(--space-md);padding:4px 12px;background:rgba(255,106,0,0.12);border:1px solid var(--border-orange);border-radius:var(--radius-full);font-size:var(--text-xs);font-weight:700;color:var(--orange);text-transform:uppercase;letter-spacing:1px;">🔥 Remate</div>
+      ` : ''}
 
       ${isAdmin ? `
         <button class="btn btn-full btn-sm" id="admin-delete-party-btn" style="margin-bottom:var(--space-md);background:rgba(220,38,38,0.12);border:1px solid rgba(220,38,38,0.5);color:#dc2626;gap:6px;font-weight:600;">
           <span style="width:16px;height:16px;display:inline-flex;">${ICONS.trash}</span>
-          Eliminar fiesta (admin)
+          ${isRemate ? 'Eliminar remate (admin)' : 'Eliminar fiesta (admin)'}
         </button>
       ` : ''}
 
@@ -115,6 +132,17 @@ export function renderPartyDetail(container, params = {}) {
         </div>
       </div>
 
+      <!-- Boletería del promotor — anchor real (no button+JS): abre en
+           pestaña nueva con noopener/noreferrer. Va bajo la info grid,
+           visible sin scroll y sin tapar el flyer-hero (el lightbox sigue
+           siendo el tap del flyer). -->
+      ${ticketHref ? `
+        <a class="btn btn-primary btn-full btn-lg ticket-buy-btn" id="ticket-btn"
+           href="${ticketHref}" target="_blank" rel="noopener noreferrer">
+          🎟️ Comprar boletas
+        </a>
+      ` : ''}
+
       <!-- Genres -->
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:var(--space-lg);">
         ${party.genres.map(g => `<span class="tag active" style="pointer-events:none;">${sanitize(g)}</span>`).join('')}
@@ -156,7 +184,7 @@ export function renderPartyDetail(container, params = {}) {
 
       <!-- Attendance Button -->
       <button class="btn ${isAttending ? 'btn-secondary' : 'btn-primary'} btn-full btn-lg mb-lg" id="attend-btn">
-        ${isAttending ? '✓ Confirmo asistencia' : '🎉 Voy a esta fiesta'}
+        ${isAttending ? '✓ Confirmo asistencia' : (isRemate ? '🔥 Voy a este remate' : '🎉 Voy a esta fiesta')}
       </button>
 
       <!-- Thermometer / Live Reports -->
@@ -174,16 +202,24 @@ export function renderPartyDetail(container, params = {}) {
         </div>
         ${partyPosts.length > 0
           ? partyPosts.map(post => renderPostCard(post, state)).join('')
-          : `<div class="empty-state" style="padding:var(--space-lg);"><p class="empty-state-text">Aún no hay publicaciones de esta fiesta</p></div>`
+          : `<div class="empty-state" style="padding:var(--space-lg);"><p class="empty-state-text">Aún no hay publicaciones de ${isRemate ? 'este remate' : 'esta fiesta'}</p></div>`
         }
       </div>
 
-      ${isCreator ? renderCreatorPanel(party) : ''}
+      ${isCreator ? renderCreatorPanel(party, isRemate) : ''}
     </div>
   `;
 
-  // Back
-  container.querySelector('#back-btn').addEventListener('click', () => router.navigate('parties'));
+  // Back: los remates no están en la agenda de fiestas — se vuelve a su
+  // pestaña del muro.
+  container.querySelector('#back-btn').addEventListener('click', () => {
+    if (isRemate) {
+      store.setState({ wallTab: 'remates' });
+      router.navigate('wall');
+    } else {
+      router.navigate('parties');
+    }
+  });
 
   // Tap the flyer → full-flyer lightbox (locked against save/download).
   const flyerHero = container.querySelector('#flyer-hero');
@@ -204,10 +240,11 @@ export function renderPartyDetail(container, params = {}) {
     renderPartyDetail(container, params);
   });
 
-  // Post here
+  // Post here — con feed explícito en remates para que create-post no
+  // dependa solo del kind cacheado al decidir el modo.
   container.querySelector('#post-here-btn').addEventListener('click', () => {
     store.setState({ viewingPartyId: partyId });
-    router.navigate('create-post', { partyId });
+    router.navigate('create-post', isRemate ? { partyId, feed: 'remates' } : { partyId });
   });
 
   // Post-card actions (like / comment / report / view-profile / etc).
@@ -536,11 +573,11 @@ function renderThermometer(party) {
 // the gating happens at the call site (`${isCreator ? renderCreatorPanel
 // : ''}`). The buttons here are the ONLY surface that exposes edit /
 // delete; RLS would reject either action from anyone else regardless.
-function renderCreatorPanel(party) {
+function renderCreatorPanel(party, isRemate = false) {
   return `
     <div style="margin-top:var(--space-xl);padding-top:var(--space-xl);border-top:2px solid var(--border-orange);">
       <h3 style="font-family:var(--font-display);font-size:var(--text-base);font-weight:700;color:var(--orange);margin-bottom:var(--space-md);">
-        ✨ Panel de Promotor
+        ${isRemate ? '🔥 Panel del creador' : '✨ Panel de Promotor'}
       </h3>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-sm);">
         <div class="card" style="text-align:center;">

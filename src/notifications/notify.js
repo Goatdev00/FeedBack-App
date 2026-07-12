@@ -91,3 +91,12 @@ export function notifyQuestionReceived(toUserId, _fromUsername, questionId) {
 export function notifyPartyAttendance(toUserId, _fromUsername, partyId) {
   return callSendPush({ type: 'party-attendance', toUserId, partyId });
 }
+
+// Fired by the sender of a private-conversation message (DM or group)
+// right after the message row is confirmed. ONE call per message and NO
+// toUserId: send-push resolves the recipients server-side from
+// conversation_members (honoring each member's mute), so the client
+// never fans out — and never decides — who gets notified.
+export function notifyConversationMessage(conversationId, messageId) {
+  return callSendPush({ type: 'conversation', conversationId, messageId });
+}

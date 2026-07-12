@@ -18,6 +18,9 @@
 import { supabase, isSupabaseConfigured } from './supabase.js';
 import { registerApi } from './mock-data.js';
 import { router } from '../router.js';
+// Push de conversaciones: notify.js solo importa supabase.js, así que
+// este import no crea ciclo (mock-data.js ya lo importa igual).
+import { notifyConversationMessage } from '../notifications/notify.js';
 
 // ---------------------------------------------------------------------
 // Profile shape adapter (matches profile-sync.js so consumers can pass
@@ -36,6 +39,29 @@ function authorFromRow(p) {
     tier: p.membership_tier || 'general',
     points: p.points ?? 0,
   };
+}
+
+// ---------------------------------------------------------------------
+// Deploy-before-migrate: el frontend se despliega ANTES de que el usuario
+// corra las migraciones 0037/0038/0039 a mano en el SQL editor. Cuando
+// una query nombra una columna/tabla que el servidor aún no conoce,
+// PostgREST responde PGRST204/PGRST205 ("not in schema cache") y Postgres
+// crudo 42703/42P01. Estos helpers permiten degradar con elegancia
+// (reintentar con el shape viejo, devolver lista vacía) en vez de romper
+// el muro o la hidratación completa — mismo patrón ya probado del
+// fallback PGRST200 de listPosts (post_comment_likes, 0036).
+// ---------------------------------------------------------------------
+function isMissingColumnError(error, cols = []) {
+  if (!error) return false;
+  if (error.code === 'PGRST204' || error.code === '42703') return true;
+  const msg = error.message || '';
+  return /column|schema cache/i.test(msg) && cols.some((c) => msg.includes(c));
+}
+
+export function isMissingTableError(error) {
+  if (!error) return false;
+  if (error.code === 'PGRST205' || error.code === '42P01') return true;
+  return /could not find the table|relation .+ does not exist/i.test(error.message || '');
 }
 
 // =====================================================================
@@ -75,6 +101,11 @@ function partyFromRow(p) {
     description: p.description || '',
     sponsored: !!p.sponsored,
     status: p.status,
+    // Migración 0037: los selects de parties son `*`, así que si la
+    // migración no corrió estas claves simplemente no vienen — default a
+    // fiesta normal y sin boletería (filas viejas también carecen de kind).
+    kind: p.kind === 'remate' ? 'remate' : 'party',
+    ticketContactUrl: p.ticket_contact_url || null,
     attendees: [],    // filled by listAttendees()
     reports: {},      // legacy field, populated by ratings rollup later
     rating: {},
@@ -98,7 +129,28 @@ export async function createParty(input) {
     flyer_url: input.flyer || null,
     description: input.description || null,
   };
-  const { data, error } = await supabase.from('parties').insert(row).select('*').single();
+  // Columnas de la migración 0037 — solo se incluyen cuando difieren del
+  // default del servidor, para que un insert "clásico" (fiesta normal sin
+  // boletería) nunca dependa de la migración.
+  const newCols = {};
+  if (input.kind === 'remate') newCols.kind = 'remate';
+  if (input.ticketContactUrl) newCols.ticket_contact_url = input.ticketContactUrl;
+
+  const { data, error } = await supabase
+    .from('parties')
+    .insert({ ...row, ...newCols })
+    .select('*')
+    .single();
+  // Deploy-before-migrate (0037 pendiente): aquí NO hay strip-and-retry,
+  // a propósito. Reintentar sin `kind` publicaría el remate como fiesta
+  // normal — y de forma IRREVERSIBLE: al correr 0037, freeze_party_kind
+  // pina kind a OLD para no-admins, así que ni el dueño podría
+  // reclasificarlo. El mismo reintento tiraría ticket_contact_url en
+  // silencio. Como newCols solo se puebla en esos dos casos, el error
+  // debe SUBIR y verse ("Función aún no disponible…" vía describeApiError
+  // en store.addParty) — el mismo criterio que createPost aplica al
+  // video: mejor un error visible que un evento fantasma con el kind
+  // equivocado.
   if (error) throw error;
   return partyFromRow(data);
 }
@@ -126,6 +178,11 @@ export async function updateParty(partyId, patch) {
   if (patch.genres      !== undefined) row.genres       = patch.genres;
   if (patch.flyer       !== undefined) row.flyer_url    = patch.flyer;
   if (patch.description !== undefined) row.description  = patch.description;
+  // Migración 0037. kind se mapea pero el trigger freeze_party_kind lo
+  // pina a OLD para no-admins, así que enviarlo no reabre el gate de
+  // promotor; ticket_contact_url es editable por el owner normalmente.
+  if (patch.ticketContactUrl !== undefined) row.ticket_contact_url = patch.ticketContactUrl;
+  if (patch.kind             !== undefined) row.kind               = patch.kind;
 
   const { data, error } = await supabase
     .from('parties')
@@ -166,10 +223,35 @@ const POSTS_INITIAL_LIMIT = 50;
 const POST_COMMENTS_WITH_LIKES = 'post_comments(id, user_id, content, created_at, post_comment_likes(user_id))';
 const POST_COMMENTS_NO_LIKES   = 'post_comments(id, user_id, content, created_at)';
 
-function postsSelect(commentsEmbed) {
+// Columnas de las migraciones 0037 (wall) y 0039 (video_url). Se degradan
+// POR COLUMNA, no como bundle todo-o-nada: las migraciones se corren a
+// mano una por una, así que existe una ventana real con `wall` ya viva y
+// `video_url` aún ausente — quitar las dos porque falta UNA re-etiquetaría
+// los posts de remates como fiestas (postFromRow defaultea wall a
+// 'fiestas' cuando el select no la trae).
+const POSTS_NEW_COL_NAMES = ['wall', 'video_url'];
+
+// Fragmento de select con solo las columnas nuevas aún disponibles.
+// `cols` = { wall: bool, video_url: bool } (disponibilidad, no contenido).
+function postsNewColsFragment(cols) {
+  const present = POSTS_NEW_COL_NAMES.filter((c) => cols[c]);
+  return present.length ? `${present.join(', ')},` : '';
+}
+
+// ¿Qué columna señala el error como inexistente? PostgREST/Postgres la
+// nombran en el mensaje (PGRST204: "Could not find the 'video_url' column
+// of 'posts' in the schema cache"; 42703: «column "video_url" does not
+// exist»). null si el mensaje no permite identificarla — los callers
+// tratan ese caso de forma conservadora.
+function missingColumnName(error, candidates) {
+  const msg = error?.message || '';
+  return candidates.find((c) => msg.includes(c)) || null;
+}
+
+function postsSelect(commentsEmbed, cols) {
   return `
     id, user_id, party_id, content, image_url, type, created_at, expires_at,
-    hidden_at, hidden_reason,
+    hidden_at, hidden_reason, ${postsNewColsFragment(cols)}
     author:profiles!posts_user_id_fkey(id, name, username, role, city, avatar_url, membership_tier, points),
     post_likes(user_id),
     ${commentsEmbed}
@@ -178,9 +260,13 @@ function postsSelect(commentsEmbed) {
 
 export async function listPosts() {
   if (!isSupabaseConfigured()) return [];
+  // Disponibilidad POR COLUMNA (0037: wall / 0039: video_url) — ver la
+  // nota de POSTS_NEW_COL_NAMES. `run` cierra sobre `cols`, que el bucle
+  // de fallback va degradando.
+  const cols = { wall: true, video_url: true };
   const run = (commentsEmbed) => supabase
     .from('posts')
-    .select(postsSelect(commentsEmbed))
+    .select(postsSelect(commentsEmbed, cols))
     // Exclude admin-soft-deleted posts AND deleted comments nested under
     // live posts. The admin's is_admin() RLS override returns deleted rows,
     // so the browsing feed must filter them or moderated content reappears
@@ -191,14 +277,35 @@ export async function listPosts() {
     .order('created_at', { ascending: false })
     .limit(POSTS_INITIAL_LIMIT);
 
+  // Fallbacks INDEPENDIENTES de deploy-before-migrate: el embed de
+  // comment-likes (0036, PGRST200) y CADA columna 0037/0039 por separado
+  // (42703/PGRST204). Cada error identifica UNA carencia y el bucle
+  // reintenta quitando solo esa, así cualquier combinación de migraciones
+  // pendientes sigue pintando el muro — y la ventana 0037-aplicada/
+  // 0039-pendiente conserva `wall`, que es lo que mantiene los posts de
+  // remates en su pestaña. Máx 3 reintentos: video_url + wall + likes, la
+  // combinación completa.
+  let withLikes = true;
   let { data, error } = await run(POST_COMMENTS_WITH_LIKES);
-  // Deploy-ordering safety net: the client can ship before migration 0036
-  // runs. PGRST200 = "could not find a relationship" for the nested embed →
-  // retry without comment likes so the wall + images still load (comment
-  // like counts stay 0 until the table exists).
-  if (error && (error.code === 'PGRST200' || /post_comment_likes/i.test(error.message || ''))) {
-    console.warn('[api] post_comment_likes embed unavailable (migration 0036 not applied?) — falling back', error);
-    ({ data, error } = await run(POST_COMMENTS_NO_LIKES));
+  for (let attempt = 0; error && attempt < 3; attempt++) {
+    if ((cols.wall || cols.video_url) && isMissingColumnError(error, POSTS_NEW_COL_NAMES)) {
+      const missing = missingColumnName(error, POSTS_NEW_COL_NAMES.filter((c) => cols[c]));
+      console.warn(`[api] posts: columna ${missing || 'wall/video_url'} no disponible (¿migración 0037/0039 pendiente?) — fallback`, error);
+      if (missing) {
+        cols[missing] = false;
+      } else {
+        // Mensaje sin nombre de columna: en un READ degradar de más es
+        // aceptable (el muro tiene que pintar) — se quitan las dos.
+        cols.wall = false;
+        cols.video_url = false;
+      }
+    } else if (withLikes && (error.code === 'PGRST200' || /post_comment_likes/i.test(error.message || ''))) {
+      console.warn('[api] post_comment_likes embed unavailable (migration 0036 not applied?) — falling back', error);
+      withLikes = false;
+    } else {
+      break;
+    }
+    ({ data, error } = await run(withLikes ? POST_COMMENTS_WITH_LIKES : POST_COMMENTS_NO_LIKES));
   }
   if (error) throw error;
   return (data || []).map(postFromRow);
@@ -223,6 +330,10 @@ function postFromRow(p) {
     content: p.content,
     image: p.image_url,
     type: p.type,
+    // Migraciones 0037/0039: filas o selects viejos no traen wall ni
+    // video_url — default a la pestaña fiestas y sin video.
+    wall: p.wall === 'remates' ? 'remates' : 'fiestas',
+    videoUrl: p.video_url || null,
     likedBy: (p.post_likes || []).map(l => l.user_id),
     likes: (p.post_likes || []).length,
     comments,
@@ -235,25 +346,90 @@ function postFromRow(p) {
   };
 }
 
-export async function createPost({ partyId, content, image }) {
+// Select de retorno del insert de posts (y del re-fetch de realtime): el
+// autor va joineado para que la tarjeta pinte sin esperar a listProfiles.
+// `cols` = disponibilidad por columna, como en postsSelect.
+function postReturningSelect(cols) {
+  return `
+    id, user_id, party_id, content, image_url, type, created_at, expires_at, ${postsNewColsFragment(cols)}
+    author:profiles!posts_user_id_fkey(id, name, username, role, city, avatar_url, membership_tier, points)
+  `;
+}
+
+export async function createPost({ partyId, content, image, wall, videoUrl, type } = {}) {
   if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
   const { data: { session } } = await supabase.auth.getSession();
   const user = session?.user;
   if (!user) throw new Error('not_authenticated');
-  const { data, error } = await supabase
-    .from('posts')
-    .insert({
-      user_id: user.id,
-      party_id: partyId,
-      content,
-      image_url: image || null,
-      type: image ? 'photo' : 'text',
-    })
-    .select(`
-      id, user_id, party_id, content, image_url, type, created_at, expires_at,
-      author:profiles!posts_user_id_fkey(id, name, username, role, city, avatar_url, membership_tier, points)
-    `)
-    .single();
+
+  const baseRow = {
+    user_id: user.id,
+    // Posts libres (solo pestaña remates, 0037): party_id null.
+    party_id: partyId || null,
+    content,
+    image_url: image || null,
+    // 'video' gana si hay video; el resto conserva la heurística clásica.
+    type: type || (videoUrl ? 'video' : (image ? 'photo' : 'text')),
+  };
+  // Columnas 0037/0039 — solo cuando difieren del default del servidor.
+  const newCols = {};
+  if (wall === 'remates') newCols.wall = 'remates';
+  if (videoUrl) newCols.video_url = videoUrl;
+
+  // Disponibilidad POR COLUMNA (0037: wall / 0039: video_url). El
+  // RETURNING select también las nombra, así que incluso un post que no
+  // ENVÍA una columna nueva puede fallar porque el select la pide — la
+  // ventana real 0037-aplicada/0039-pendiente rompía así el posteo de
+  // texto/foto a remates.
+  const cols = { wall: true, video_url: true };
+  const run = () => {
+    const row = { ...baseRow };
+    if (cols.wall && newCols.wall) row.wall = newCols.wall;
+    if (cols.video_url && newCols.video_url) row.video_url = newCols.video_url;
+    return supabase
+      .from('posts')
+      .insert(row)
+      .select(postReturningSelect(cols))
+      .single();
+  };
+
+  let { data, error } = await run();
+  // Fallback deploy-before-migrate POR COLUMNA. Regla: una columna solo se
+  // quita del reintento cuando NO cambia el significado de ESTE post; si
+  // lo cambia, el error sube claro y visible. Concretamente:
+  //   * Falta video_url y el post lleva video → sin reintento: quitarla
+  //     publicaría un cascarón sin su video ("Función aún no disponible…"
+  //     vía describeApiError).
+  //   * Falta wall y el post va a remates → sin reintento y mensaje
+  //     propio: JAMÁS publicar un post de remates como fiesta en silencio
+  //     (y con 0037 a medias el reintento moriría igualmente en el trigger
+  //     check_post_party_kind con un error críptico).
+  //   * La columna que falta no afecta a este post (p.ej. falta video_url
+  //     en un post de texto a remates, o falta wall en un post de fiestas)
+  //     → se quita SOLO esa columna y se reintenta (máx 2 reintentos:
+  //     peor caso, faltan las dos y el post no usa ninguna).
+  //   * Mensaje sin nombre de columna identificable → conservador: solo
+  //     reintenta un post clásico de fiestas sin video; remates/video no
+  //     se degradan nunca a ciegas.
+  // Un post libre (party_id null) pre-0037 sigue fallando visiblemente:
+  // choca con el NOT NULL de party_id.
+  for (let attempt = 0; error && attempt < 2 && isMissingColumnError(error, POSTS_NEW_COL_NAMES); attempt++) {
+    const missing = missingColumnName(error, POSTS_NEW_COL_NAMES.filter((c) => cols[c]));
+    if (missing === 'video_url' && videoUrl) break;
+    if (missing === 'wall' && wall === 'remates') {
+      throw new Error('Los remates se están activando (actualización del servidor pendiente).');
+    }
+    if (missing) {
+      cols[missing] = false;
+    } else if (!videoUrl && wall !== 'remates') {
+      cols.wall = false;
+      cols.video_url = false;
+    } else {
+      break;
+    }
+    console.warn(`[api] createPost: columna ${missing || 'wall/video_url'} no disponible (¿migración 0037/0039 pendiente?) — reintentando sin ella`, error);
+    ({ data, error } = await run());
+  }
   if (error) throw error;
   return postFromRow({ ...data, post_likes: [], post_comments: [] });
 }
@@ -829,6 +1005,11 @@ async function resolveRoomMetaById(roomId) {
   return meta;
 }
 
+// video_url llegó en 0039 — se pide aparte para poder degradar el select
+// mientras la migración no corra (deploy-before-migrate).
+const CHAT_MSG_COLS_OLD = 'id, room_id, user_id, content, author_tier, author_role, is_host, status, created_at';
+const CHAT_MSG_COLS_NEW = CHAT_MSG_COLS_OLD + ', video_url';
+
 export async function listChatMessages(roomKey, limit = 100) {
   if (!isSupabaseConfigured()) return [];
   const roomId = await resolveChatRoomId(roomKey);
@@ -838,9 +1019,9 @@ export async function listChatMessages(roomKey, limit = 100) {
   // any room past 100 messages looked frozen in the past forever). The
   // reverse() below restores chronological order for rendering. Backed
   // by the chat_messages_room_idx (room_id, created_at desc) index.
-  const { data, error } = await supabase
+  const run = (cols) => supabase
     .from('chat_messages')
-    .select('id, room_id, user_id, content, author_tier, author_role, is_host, status, created_at')
+    .select(cols)
     .eq('room_id', roomId)
     .eq('status', 'visible')
     // admin_soft_delete_chat_message sets deleted_at (not status), and the
@@ -849,6 +1030,12 @@ export async function listChatMessages(roomKey, limit = 100) {
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
     .limit(limit);
+
+  let { data, error } = await run(CHAT_MSG_COLS_NEW);
+  if (error && isMissingColumnError(error, ['video_url'])) {
+    console.warn('[api] chat_messages.video_url no disponible (¿migración 0039 pendiente?) — fallback', error);
+    ({ data, error } = await run(CHAT_MSG_COLS_OLD));
+  }
   if (error) throw error;
   return (data || []).map(chatMsgFromRow).reverse();
 }
@@ -858,6 +1045,8 @@ function chatMsgFromRow(m) {
     id: m.id,
     userId: m.user_id,
     content: m.content,
+    // 0039: mensajes con video adjunto. Selects/filas viejos → null.
+    videoUrl: m.video_url || null,
     authorTier: m.author_tier,
     authorRole: m.author_role,
     isHost: !!m.is_host,
@@ -865,10 +1054,12 @@ function chatMsgFromRow(m) {
   };
 }
 
-export async function sendChatMessageDB(roomKey, content) {
+// Firma extendida y retrocompatible (0039): `content` puede ser null en
+// mensajes solo-video; los callers existentes (roomKey, text) no cambian.
+export async function sendChatMessageDB(roomKey, content, { videoUrl } = {}) {
   if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
   const text = (content || '').trim();
-  if (!text) return null;
+  if (!text && !videoUrl) return null;
   const { data: { session } } = await supabase.auth.getSession();
   const user = session?.user;
   if (!user) throw new Error('not_authenticated');
@@ -878,11 +1069,22 @@ export async function sendChatMessageDB(roomKey, content) {
   // author_tier / author_role / is_host are snapshotted by the
   // snapshot_message_meta() BEFORE INSERT trigger — we only send the
   // raw content + ids.
-  const { data, error } = await supabase
+  const row = { room_id: roomId, user_id: user.id, content: text || null };
+  if (videoUrl) row.video_url = videoUrl;
+
+  const run = (cols) => supabase
     .from('chat_messages')
-    .insert({ room_id: roomId, user_id: user.id, content: text })
-    .select('id, room_id, user_id, content, author_tier, author_role, is_host, status, created_at')
+    .insert(row)
+    .select(cols)
     .single();
+
+  let { data, error } = await run(CHAT_MSG_COLS_NEW);
+  // Sin video adjunto el select degrada tranquilo (0039 pendiente); CON
+  // video NO se reintenta — perder el adjunto en silencio sería mentirle
+  // al que envía. Ese error sube y la página lo muestra.
+  if (error && !videoUrl && isMissingColumnError(error, ['video_url'])) {
+    ({ data, error } = await run(CHAT_MSG_COLS_OLD));
+  }
   if (error) throw error;
   return chatMsgFromRow(data);
 }
@@ -914,6 +1116,292 @@ export function subscribeChatRoom(roomKey, onMessage) {
     cancelled = true;
     if (channel) supabase.removeChannel(channel);
   };
+}
+
+// =====================================================================
+// CONVERSACIONES — mensajería privada: DMs + grupos (migración 0038)
+// =====================================================================
+// Tablas dedicadas (conversations / conversation_members /
+// conversation_messages), NUNCA chat_rooms: las salas públicas y los
+// hilos privados tienen reglas de visibilidad opuestas. La creación va
+// por RPCs SECURITY DEFINER (create_dm / create_group) porque insertar
+// cabecera + member rows bajo RLS es un huevo-y-gallina.
+//
+// El shape cliente de una conversación (el que vive en
+// store.state.conversations) se deriva aquí con el uid propio:
+//   { id, kind:'dm'|'group', title, photo, createdBy, dmKey,
+//     otherUserId (solo DM), members:[{userId, role, muted, lastReadAt}],
+//     myRole, muted (MI flag), lastReadAt (MÍO), lastMessage|null,
+//     lastMessageAt:Date, createdAt:Date, unread:bool }
+// =====================================================================
+
+// UNA query trae cabecera + miembros + último mensaje visible por hilo.
+// El embed de mensajes va DESC + limit 1 (foreignTable) — el inbox solo
+// necesita el preview; el hilo completo lo pagina la página con
+// listConversationMessages.
+const CONVERSATIONS_SELECT = `
+  id, kind, title, photo_url, created_by, dm_key, last_message_at, created_at,
+  conversation_members(user_id, role, muted, last_read_at),
+  conversation_messages(id, conversation_id, user_id, content, image_url, video_url, created_at)
+`;
+
+function convMessageFromRow(m) {
+  return {
+    id: m.id,
+    conversationId: m.conversation_id,
+    userId: m.user_id,
+    content: m.content,
+    image: m.image_url || null,
+    videoUrl: m.video_url || null,
+    createdAt: new Date(m.created_at),
+  };
+}
+
+function conversationFromRow(c, meId) {
+  const members = (c.conversation_members || []).map((m) => ({
+    userId: m.user_id,
+    role: m.role,
+    muted: !!m.muted,
+    lastReadAt: m.last_read_at ? new Date(m.last_read_at) : null,
+  }));
+  const mine = members.find((m) => m.userId === meId) || null;
+  // En un DM el "otro" define avatar y nombre del hilo (title es null).
+  const other = c.kind === 'dm' ? members.find((m) => m.userId !== meId) : null;
+  // El embed viene DESC + limit 1 → [0] es el último mensaje visible.
+  const lastRow = (c.conversation_messages || [])[0] || null;
+  const lastMessage = lastRow
+    ? convMessageFromRow({ ...lastRow, conversation_id: lastRow.conversation_id || c.id })
+    : null;
+  return {
+    id: c.id,
+    kind: c.kind === 'group' ? 'group' : 'dm',
+    title: c.title || null,
+    photo: c.photo_url || null,
+    createdBy: c.created_by || null,
+    dmKey: c.dm_key || null,
+    otherUserId: other?.userId || null,
+    members,
+    myRole: mine?.role || 'member',
+    muted: !!mine?.muted,
+    lastReadAt: mine?.lastReadAt || null,
+    lastMessage,
+    lastMessageAt: c.last_message_at ? new Date(c.last_message_at) : new Date(c.created_at),
+    createdAt: new Date(c.created_at),
+    // Unread = último mensaje ajeno posterior a mi last_read_at. Solo se
+    // deriva aquí (hidratación); el realtime lo va marcando en vivo.
+    unread: !!(lastMessage && meId && lastMessage.userId !== meId
+      && (!mine?.lastReadAt || lastMessage.createdAt > mine.lastReadAt)),
+  };
+}
+
+// Acepta knownSession por lo mismo que loadCloudState: en boot un
+// getSession() extra puede serializar detrás de un token-refresh lento
+// (navigator.locks) y congelar el resto de queries.
+export async function listConversations(knownSession) {
+  if (!isSupabaseConfigured()) return [];
+  let user = knownSession?.user;
+  if (!user) {
+    const { data: { session } } = await supabase.auth.getSession();
+    user = session?.user;
+  }
+  if (!user) return [];
+  const { data, error } = await supabase
+    .from('conversations')
+    .select(CONVERSATIONS_SELECT)
+    // Soft-delete (0031/0038): un mensaje moderado no puede ser el preview.
+    .is('conversation_messages.deleted_at', null)
+    .order('created_at', { foreignTable: 'conversation_messages', ascending: false })
+    .limit(1, { foreignTable: 'conversation_messages' })
+    // RLS ya filtra a "mis" conversaciones; orden = actividad (bump del
+    // trigger de 0038), estilo inbox de WhatsApp.
+    .order('last_message_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).map((c) => conversationFromRow(c, user.id));
+}
+
+// Re-fetch de UNA conversación (realtime de un hilo que no está en el
+// store, post-create_dm/create_group). null si RLS no me deja verla.
+export async function getConversation(conversationId) {
+  if (!isSupabaseConfigured()) return null;
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
+  if (!user) return null;
+  const { data, error } = await supabase
+    .from('conversations')
+    .select(CONVERSATIONS_SELECT)
+    .eq('id', conversationId)
+    .is('conversation_messages.deleted_at', null)
+    .order('created_at', { foreignTable: 'conversation_messages', ascending: false })
+    .limit(1, { foreignTable: 'conversation_messages' })
+    .maybeSingle();
+  if (error) throw error;
+  return data ? conversationFromRow(data, user.id) : null;
+}
+
+// Historial de un hilo — plantilla listChatMessages: DESC + limit +
+// reverse() para traer los ÚLTIMOS `limit` en orden cronológico.
+export async function listConversationMessages(conversationId, limit = 100) {
+  if (!isSupabaseConfigured()) return [];
+  const { data, error } = await supabase
+    .from('conversation_messages')
+    .select('id, conversation_id, user_id, content, image_url, video_url, created_at')
+    .eq('conversation_id', conversationId)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data || []).map(convMessageFromRow).reverse();
+}
+
+// Enviar mensaje a un hilo. El push (send-push tipo 'conversation') se
+// dispara AQUÍ y no en el store, para que tanto la página del hilo (que
+// llama a la api directo, buffer page-scoped como chat.js) como el store
+// generen exactamente UN push por mensaje. El fan-out a los miembros no
+// silenciados es 100% server-side.
+export async function sendConversationMessage(conversationId, { content, image, videoUrl } = {}) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const text = (content || '').trim();
+  if (!text && !image && !videoUrl) return null;
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
+  if (!user) throw new Error('not_authenticated');
+  const { data, error } = await supabase
+    .from('conversation_messages')
+    .insert({
+      conversation_id: conversationId,
+      user_id: user.id,
+      content: text || null,
+      image_url: image || null,
+      video_url: videoUrl || null,
+    })
+    .select('id, conversation_id, user_id, content, image_url, video_url, created_at')
+    .single();
+  if (error) throw error;
+  const msg = convMessageFromRow(data);
+  // Fire-and-forget (notify.js se traga sus propios errores): el mensaje
+  // ya está persistido y el realtime lo entrega aunque el push falle.
+  notifyConversationMessage(conversationId, msg.id);
+  return msg;
+}
+
+// --- Creación (RPCs SECURITY DEFINER de 0038) ---
+export async function createDM(otherUserId) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data, error } = await supabase.rpc('create_dm', { p_other: otherUserId });
+  if (error) throw error;
+  return data; // uuid del hilo (existente o recién creado — dedupe por dm_key)
+}
+
+export async function createGroup({ title, photo, memberIds } = {}) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data, error } = await supabase.rpc('create_group', {
+    p_title: title,
+    p_photo: photo || null,
+    p_members: memberIds || [],
+  });
+  if (error) throw error;
+  return data; // uuid del grupo
+}
+
+export async function addGroupMembers(conversationId, memberIds) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { error } = await supabase.rpc('add_group_members', {
+    p_conv: conversationId,
+    p_members: memberIds || [],
+  });
+  if (error) throw error;
+}
+
+// --- Mi fila de miembro (mute / read) ---
+// RLS conversation_members_update_self limita el UPDATE a user_id =
+// auth.uid(); el .eq() extra es el mismo cinturón-y-tirantes de siempre.
+export async function setConversationMuted(conversationId, muted) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
+  if (!user) throw new Error('not_authenticated');
+  const { error } = await supabase
+    .from('conversation_members')
+    .update({ muted: !!muted })
+    .eq('conversation_id', conversationId)
+    .eq('user_id', user.id);
+  if (error) throw error;
+}
+
+export async function markConversationRead(conversationId) {
+  if (!isSupabaseConfigured()) return;
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
+  if (!user) return;
+  const { error } = await supabase
+    .from('conversation_members')
+    .update({ last_read_at: new Date().toISOString() })
+    .eq('conversation_id', conversationId)
+    .eq('user_id', user.id);
+  if (error) throw error;
+}
+
+// Renombrar / cambiar foto del grupo — RLS: solo owner y solo grupos.
+export async function updateGroupMeta(conversationId, { title, photo } = {}) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const row = {};
+  if (title !== undefined) row.title = title;
+  if (photo !== undefined) row.photo_url = photo;
+  if (!Object.keys(row).length) return null;
+  const { data, error } = await supabase
+    .from('conversations')
+    .update(row)
+    .eq('id', conversationId)
+    .select('id, title, photo_url')
+    .single();
+  if (error) throw error;
+  return { id: data.id, title: data.title || null, photo: data.photo_url || null };
+}
+
+// Salir del hilo (RLS: borrar MI fila; el owner puede expulsar, pero esa
+// UI no existe todavía).
+export async function leaveConversation(conversationId) {
+  if (!isSupabaseConfigured()) throw new Error('supabase_not_configured');
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
+  if (!user) throw new Error('not_authenticated');
+  const { error } = await supabase
+    .from('conversation_members')
+    .delete()
+    .eq('conversation_id', conversationId)
+    .eq('user_id', user.id);
+  if (error) throw error;
+}
+
+// --- Conversación activa ---
+// La página del hilo registra qué conversación tiene abierta para que el
+// handler global de 'conversations-feed' NO la marque como no-leída (el
+// usuario la está mirando; el canal por-hilo pinta el mensaje).
+let _activeConversationId = null;
+export function setActiveConversation(conversationId) {
+  _activeConversationId = conversationId || null;
+}
+export function getActiveConversation() {
+  return _activeConversationId;
+}
+
+/**
+ * Canal filtrado POR HILO para la página de conversación (clon de
+ * subscribeChatRoom, sin resolución async porque el id ya es la clave).
+ * Devuelve la función de unsubscribe.
+ */
+export function subscribeConversation(conversationId, onMessage) {
+  if (!isSupabaseConfigured()) return () => {};
+  const channel = supabase
+    .channel(`conversation:${conversationId}`)
+    .on('postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'conversation_messages', filter: `conversation_id=eq.${conversationId}` },
+      (payload) => {
+        if (!payload.new) return;
+        onMessage(convMessageFromRow(payload.new));
+      })
+    .subscribe();
+  return () => { supabase.removeChannel(channel); };
 }
 
 // =====================================================================
@@ -1100,6 +1588,16 @@ registerApi({
   createQuestion,
   answerQuestion,
   deleteQuestion,
+  // Mensajería privada (0038)
+  sendConversationMessage,
+  createDM,
+  createGroup,
+  addGroupMembers,
+  setConversationMuted,
+  markConversationRead,
+  updateGroupMeta,
+  leaveConversation,
+  getConversation,
 });
 
 // =====================================================================
@@ -1124,14 +1622,28 @@ export function subscribeRealtime(store) {
       async (payload) => {
         const id = payload.new?.id;
         if (!id) return;
-        const { data, error } = await supabase
+        // Re-fetch con wall/video_url (0037/0039), degradando POR COLUMNA
+        // mientras las migraciones no corran: quitar las dos porque falta
+        // una (0037 aplicada, 0039 pendiente) re-etiquetaría un post de
+        // remates como fiesta al prepend. Es un READ, así que si el
+        // mensaje no nombra la columna se quitan las que queden.
+        const cols = { wall: true, video_url: true };
+        const fetchOne = () => supabase
           .from('posts')
-          .select(`
-            id, user_id, party_id, content, image_url, type, created_at, expires_at,
-            author:profiles!posts_user_id_fkey(id, name, username, role, city, avatar_url, membership_tier, points)
-          `)
+          .select(postReturningSelect(cols))
           .eq('id', id)
           .single();
+        let { data, error } = await fetchOne();
+        for (let attempt = 0; error && attempt < 2 && isMissingColumnError(error, POSTS_NEW_COL_NAMES); attempt++) {
+          const missing = missingColumnName(error, POSTS_NEW_COL_NAMES.filter((c) => cols[c]));
+          if (missing) {
+            cols[missing] = false;
+          } else {
+            cols.wall = false;
+            cols.video_url = false;
+          }
+          ({ data, error } = await fetchOne());
+        }
         if (error || !data) return;
         const fresh = postFromRow({ ...data, post_likes: [], post_comments: [] });
         const state = store.getState();
@@ -1440,6 +1952,135 @@ export function unsubscribeRealtime() {
   if (!_realtimeChannel) return;
   supabase.removeChannel(_realtimeChannel);
   _realtimeChannel = null;
+}
+
+// =====================================================================
+// REALTIME PRIVADO — canal 'conversations-feed' (mensajería 0038)
+// =====================================================================
+// SEPARADO de 'public-feed' A PROPÓSITO: ese canal es la manguera pública
+// sin filtro y los mensajes privados jamás deben viajar por él (mismo
+// precedente de privacidad por el que party_attendees salió de la
+// publicación — ver la nota de arriba). Aquí WALRUS evalúa la policy de
+// SELECT de conversation_messages POR SUSCRIPTOR, así que cada cliente
+// solo recibe mensajes de conversaciones donde es miembro.
+//
+// El handler NO pinta hilos: actualiza la METADATA del inbox en el store
+// (lastMessage/orden/unread) — el hilo abierto tiene su propio canal
+// filtrado (subscribeConversation) y su buffer page-scoped, como chat.js.
+// =====================================================================
+let _convFeedChannel = null;
+// Warn de CHANNEL_ERROR transitorio UNA sola vez por caída (el rejoin
+// automático de supabase-js dispara el callback en cada reintento y sin
+// flag la consola se llenaría en bucle). Se rearma al re-suscribir.
+let _convFeedWarned = false;
+// Coalescing de getConversation() por hilo: dos INSERTs seguidos de una
+// conversación que aún no está en el store (el clásico "hola" + pregunta
+// de un primer DM) dispararían dos fetches paralelos — y dos prepends.
+const _convFetchInflight = new Map();
+
+export function subscribeConversationsFeed(store) {
+  if (!isSupabaseConfigured()) return () => {};
+  if (_convFeedChannel) {
+    // Ya suscrito; idempotencia barata (igual que subscribeRealtime).
+    return () => unsubscribeConversationsFeed();
+  }
+
+  _convFeedChannel = supabase
+    .channel('conversations-feed')
+    .on('postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'conversation_messages' },
+      async (payload) => {
+        const row = payload.new;
+        if (!row) return;
+        const msg = convMessageFromRow(row);
+        const state = store.getState();
+        const meId = state.currentUser?.id;
+
+        // Conversación que aún no está en el store (p.ej. el primer DM
+        // que alguien me abre): re-fetch de esa única cabecera. Si RLS no
+        // me la muestra (carrera rara), la próxima hidratación la trae.
+        let conv = (state.conversations || []).find((c) => c.id === msg.conversationId);
+        if (!conv) {
+          // Un solo fetch en vuelo por conversación: sin esto, dos
+          // mensajes rápidos duplicarían la fila en el inbox y la copia
+          // extra dejaría un badge imborrable (markConversationRead /
+          // touchConversation mutan solo la PRIMERA coincidencia por id).
+          let fetching = _convFetchInflight.get(msg.conversationId);
+          if (!fetching) {
+            fetching = getConversation(msg.conversationId)
+              .catch(() => null)
+              .finally(() => _convFetchInflight.delete(msg.conversationId));
+            _convFetchInflight.set(msg.conversationId, fetching);
+          }
+          conv = await fetching;
+          if (!conv) return;
+          // Dedupe por id contra el estado FRESCO tras el await: la
+          // hidratación (o el otro handler coalescido) pudo haberla metido
+          // mientras tanto — si ya está, NO se prepende otra copia; el
+          // touchConversation de abajo actualiza preview/orden/unread
+          // sobre la existente. Mismo patrón que _ensureConversationInStore.
+          const current = store.getState().conversations || [];
+          if (!current.some((c) => c.id === conv.id)) {
+            store.setState({ conversations: [conv, ...current] });
+          }
+        }
+
+        const own = !!meId && msg.userId === meId;
+        // El hilo abierto no genera unread: el usuario lo está mirando
+        // (su canal por-hilo pinta el mensaje y la página marca leído).
+        const active = _activeConversationId === msg.conversationId;
+        // touchConversation actualiza preview + reorden y, con unread,
+        // marca el hilo y enciende hasUnreadConversations (si no está
+        // silenciado). Toda la mutación vive en el store.
+        store.touchConversation(msg.conversationId, msg, { unread: !own && !active });
+
+        // Repaint solo en rutas que consumen estas señales (el inbox, el
+        // hub y el badge del muro). El hilo abierto se repinta solo.
+        const route = router.getCurrentRoute();
+        if (route === 'chats-private' || route === 'chat-hub' || route === 'wall') {
+          router.refreshCurrentRoute();
+        }
+      })
+    .subscribe((status, err) => {
+      if (status === 'SUBSCRIBED') {
+        // Canal arriba: rearma el warn para la próxima caída real.
+        _convFeedWarned = false;
+        return;
+      }
+      if (status !== 'CHANNEL_ERROR' || !_convFeedChannel) return;
+      // Deploy-before-migrate: si conversation_messages no existe todavía
+      // (0038 pendiente) el join del canal falla SIEMPRE; ahí sí se cierra
+      // el canal para no reintentar en bucle (la próxima hidratación,
+      // post-migración, vuelve a intentarlo). PERO realtime-js también
+      // reporta CHANNEL_ERROR por causas transitorias (socket caído,
+      // cambio WiFi→datos, heartbeat perdido) — desmontar ahí dejaría el
+      // inbox congelado hasta la próxima hidratación, mientras el rejoin
+      // automático con backoff lo habría recuperado solo. Solo se desmonta
+      // con señal REAL de tabla inexistente: el flag que la hidratación ya
+      // derivó de listConversations, o un error del join que nombra la
+      // relación.
+      const msg = err?.message || String(err || '');
+      const migrationPending = store.getState().conversationsUnavailable
+        || isMissingTableError({ message: msg })
+        || /conversation_messages/i.test(msg);
+      if (migrationPending) {
+        console.warn('[realtime] conversations-feed no disponible (¿migración 0038 pendiente?)');
+        const ch = _convFeedChannel;
+        _convFeedChannel = null;
+        supabase.removeChannel(ch);
+      } else if (!_convFeedWarned) {
+        _convFeedWarned = true;
+        console.warn('[realtime] conversations-feed CHANNEL_ERROR transitorio — se deja el rejoin automático', err);
+      }
+    });
+
+  return () => unsubscribeConversationsFeed();
+}
+
+export function unsubscribeConversationsFeed() {
+  if (!_convFeedChannel) return;
+  supabase.removeChannel(_convFeedChannel);
+  _convFeedChannel = null;
 }
 
 // =====================================================================

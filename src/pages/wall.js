@@ -36,11 +36,18 @@ function sectionSeparator(label) {
 export function renderWall(container) {
   const state = store.getState();
   const user = state.currentUser;
-  const posts = sortFeed(state.posts);
+  // Pestaña activa (fiestas | remates). Normalizada aquí porque estados
+  // persistidos viejos pueden traer wallTab undefined.
+  const wallTab = state.wallTab === 'remates' ? 'remates' : 'fiestas';
+  const isRematesTab = wallTab === 'remates';
+  // Un post pertenece a remates SOLO si wall === 'remates'; cualquier otra
+  // cosa (legacy sin campo, 'fiestas') pinta en la pestaña fiestas.
+  const posts = sortFeed(state.posts.filter(p => (p.wall === 'remates') === isRematesTab));
   const unreadNotifs = user ? store.getUnreadNotificationCount() : 0;
   // Split "current" (posts whose party is today/upcoming) from "old" (posts
   // whose party date already passed, still inside the 7-day window). Old
-  // ones sink below a "Publicaciones antiguas" divider.
+  // ones sink below a "Publicaciones antiguas" divider. Posts libres
+  // (partyId null, solo remates) no tienen fecha de evento → current.
   const _todayStr = bogotaTodayStr();
   const isOldPost = (p) => { const pty = store.getPartyById(p.partyId); return !!(pty && pty.date && pty.date < _todayStr); };
   const currentPosts = posts.filter(p => !isOldPost(p));
@@ -60,7 +67,7 @@ export function renderWall(container) {
           // Single dot on the wall icon if EITHER chat type has unread —
           // the breakdown (which type) is shown inside chat-hub on its
           // per-card dots.
-          const anyUnread = state.hasUnreadChatGeneral || state.hasUnreadChatParty;
+          const anyUnread = state.hasUnreadChatGeneral || state.hasUnreadChatParty || state.hasUnreadConversations;
           return `
         <button class="chat-trigger ${anyUnread ? 'has-unread' : ''}"
                 id="chat-btn" title="Chats en vivo" aria-label="Abrir chats">
@@ -68,6 +75,15 @@ export function renderWall(container) {
           ${anyUnread ? `<span class="chat-dot"></span>` : ''}
         </button>`;
         })()}
+        <!-- Control segmentado Fiestas | Remates. El estado vive en el
+             store (wallTab) para sobrevivir a los repaints de hydration/
+             realtime; cambiar de pestaña repinta localmente sin refetch. -->
+        <div class="wall-tabs" role="tablist" aria-label="Secciones del muro">
+          <button class="wall-tab ${isRematesTab ? '' : 'wall-tab-active'}" role="tab"
+                  aria-selected="${!isRematesTab}" data-wall-tab="fiestas">🎉 Fiestas</button>
+          <button class="wall-tab ${isRematesTab ? 'wall-tab-active' : ''}" role="tab"
+                  aria-selected="${isRematesTab}" data-wall-tab="remates">🔥 Remates</button>
+        </div>
         <button class="notifications-trigger ${unreadNotifs > 0 ? 'has-unread' : ''}"
                 id="notifications-btn" title="Notificaciones" aria-label="Ver notificaciones">
           ${ICONS.heart}
@@ -75,13 +91,19 @@ export function renderWall(container) {
         </button>
       </div>
 
-      <!-- Title -->
-      <div class="wall-title-block">
-        <p class="page-subtitle">Lo que está pasando ahora</p>
+      <!-- Title (+ acceso permanente a crear remate en su pestaña: crear
+           remates es de TODOS los usuarios, no solo promotores) -->
+      <div class="wall-title-block" style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm);">
+        <p class="page-subtitle">${isRematesTab ? 'Lo que está pasando en los remates' : 'Lo que está pasando ahora'}</p>
+        ${isRematesTab && user ? `
+          <button class="btn btn-primary btn-sm" id="create-remate-btn" style="flex-shrink:0;">
+            ${ICONS.plus} Crear remate
+          </button>
+        ` : ''}
       </div>
 
-      <!-- Stories-like party thermometer -->
-      ${renderLiveParties(state)}
+      <!-- Stories-like party thermometer (filtrado por pestaña) -->
+      ${renderLiveParties(state, wallTab)}
 
       <!-- Feed -->
       <div id="feed-container">
@@ -93,7 +115,15 @@ export function renderWall(container) {
           const currentHtml = currentPosts.map(post => renderPostCard(post, state)).join('');
           const oldHtml = oldPosts.map(post => renderPostCard(post, state)).join('');
           if (!currentHtml.trim() && !oldHtml.trim()) {
-            return state.hydrated ? renderEmptyWall() : renderWallSkeleton();
+            if (!state.hydrated) return renderWallSkeleton();
+            if (isRematesTab) {
+              // Dos vacíos distintos: sin NINGÚN remate (ni evento ni post)
+              // el CTA es crear el primer remate; si ya hay remates activos
+              // pero nadie ha publicado, el CTA es publicar.
+              const hasRemates = state.parties.some(p => p.kind === 'remate');
+              return renderEmptyRemates(hasRemates);
+            }
+            return renderEmptyWall();
           }
           return currentHtml + (oldHtml.trim() ? sectionSeparator('Publicaciones antiguas') + oldHtml : '');
         })()}
@@ -125,14 +155,31 @@ export function renderWall(container) {
         node.scrollIntoView({ block: 'center' });
         node.classList.add('post-card-highlight');
       });
+    } else {
+      // El post está cargado pero vive en la OTRA pestaña (deep link a un
+      // post de remates con fiestas activa, o viceversa) → cambia de
+      // pestaña y repinta; el param sigue vivo para que el segundo pase
+      // haga el scroll+highlight. Sin riesgo de bucle: el segundo render
+      // ya filtra con la pestaña correcta y encuentra el nodo.
+      const p = state.posts.find(x => x.id === targetPost);
+      const targetTab = p ? (p.wall === 'remates' ? 'remates' : 'fiestas') : null;
+      if (targetTab && targetTab !== wallTab) {
+        store.setState({ wallTab: targetTab });
+        renderWall(container);
+        return;
+      }
     }
     // If the post isn't in the initial 50, leave the param: the post-
     // hydration repaint gets one more chance to find it.
   }
 }
 
-function renderLiveParties(state) {
-  const parties = store.getTodayParties(state.selectedCity);
+function renderLiveParties(state, wallTab = 'fiestas') {
+  // Cada pestaña tiene su propia tira: fiestas muestra eventos normales,
+  // remates solo los kind='remate' (filas pre-0037 sin kind → fiesta).
+  const wantRemates = wallTab === 'remates';
+  const parties = store.getTodayParties(state.selectedCity)
+    .filter(p => ((p.kind || 'party') === 'remate') === wantRemates);
   if (parties.length === 0) return '';
 
   // getTodayParties returns every non-finished party regardless of calendar
@@ -163,7 +210,7 @@ function renderLiveParties(state) {
         <div style="position:absolute;inset:0;background:rgba(10,10,16,0.35);pointer-events:none;"></div>
       ` : ''}
       <div style="position:relative;">
-        <div style="font-size:1.2rem;margin-bottom:4px;">${faded ? '🕓' : '🔴'}</div>
+        <div style="font-size:1.2rem;margin-bottom:4px;">${faded ? '🕓' : (wantRemates ? '🔥' : '🔴')}</div>
         <div style="font-size:var(--text-xs);font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${sanitize(party.name)}</div>
         <div style="font-size:var(--text-xs);color:rgba(255,255,255,0.8);margin-top:2px;">${sanitize(party.venue)}</div>
         <div style="display:flex;align-items:center;gap:4px;margin-top:6px;">
@@ -327,14 +374,29 @@ export function renderPostCard(post, state) {
               ${ICONS.location}
               ${sanitize(party.name)}
             </div>
-          ` : ''}
+          ` : (post.wall === 'remates' ? `
+            <!-- Post libre del muro de remates: sin evento vinculado, el
+                 tag identifica la sección en lugar de omitirse. -->
+            <div class="post-party-tag">🔥 Remate</div>
+          ` : '')}
         </div>
         <span class="post-time">${formatRelative(new Date(post.createdAt))}</span>
       </div>
 
       <div class="post-content">${sanitize(post.content)}</div>
 
-      ${safeImageSrc(post.image) ? `<img src="${safeImageSrc(post.image)}" alt="Post image" class="post-image" loading="lazy" />` : ''}
+      ${(() => {
+        // Media del post: video (0039) gana sobre foto — un post tiene un
+        // solo slot de media y create-post los hace excluyentes. La URL
+        // del video pasa por safeImageSrc igual que la foto (las https de
+        // Storage pasan; javascript:/data:text jamás). SIN autoplay y con
+        // playsinline (+ prefijo webkit legacy): en iOS un video sin
+        // playsinline secuestra a fullscreen al tocar play.
+        const vid = safeImageSrc(post.videoUrl);
+        if (vid) return `<video class="post-video" controls playsinline webkit-playsinline preload="metadata" src="${vid}"></video>`;
+        const img = safeImageSrc(post.image);
+        return img ? `<img src="${img}" alt="Post image" class="post-image" loading="lazy" />` : '';
+      })()}
 
       <div class="post-actions">
         <button class="post-action ${isLiked ? 'liked' : ''}" data-action="like" data-post-id="${post.id}">
@@ -393,6 +455,34 @@ function renderEmptyWall() {
         ¡Sé el primero en publicar! Selecciona una fiesta y comparte lo que está pasando.
       </p>
       <button class="btn btn-primary mt-lg" id="empty-create-post">Crear publicación</button>
+    </div>
+  `;
+}
+
+// Vacío de la pestaña Remates. Con remates activos pero sin posts, el CTA
+// es publicar; sin ningún remate, el CTA es crear el primero (cualquier
+// usuario puede — es LA feature, no hay gate de promotor).
+function renderEmptyRemates(hasRemates) {
+  if (hasRemates) {
+    return `
+      <div class="empty-state">
+        <div class="empty-state-icon">🔥</div>
+        <h3 class="empty-state-title">Nadie ha publicado aún</h3>
+        <p class="empty-state-text">
+          Los remates están activos. Cuenta qué está pasando en el after.
+        </p>
+        <button class="btn btn-primary mt-lg" id="empty-create-post">Crear publicación</button>
+      </div>
+    `;
+  }
+  return `
+    <div class="empty-state">
+      <div class="empty-state-icon">🔥</div>
+      <h3 class="empty-state-title">Aún no hay remates</h3>
+      <p class="empty-state-text">
+        ¿La fiesta no se acaba? Comparte tu after con la comunidad.
+      </p>
+      <button class="btn btn-primary mt-lg" id="empty-create-remate">🔥 Crea el primer remate</button>
     </div>
   `;
 }
@@ -573,18 +663,40 @@ function bindWallEvents(container) {
   const root = container.querySelector('#wall-page');
   if (!root) return;
 
+  // Pestañas Fiestas | Remates: estado en el store (sobrevive a los
+  // repaints de hydration/realtime) + repintado local, sin refetch.
+  container.querySelectorAll('.wall-tab').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.wallTab === 'remates' ? 'remates' : 'fiestas';
+      if ((store.getState().wallTab === 'remates' ? 'remates' : 'fiestas') === tab) return;
+      store.setState({ wallTab: tab });
+      renderWall(container);
+    });
+  });
+
+  // select-party hereda el modo de la pestaña activa: en remates el
+  // selector lista solo remates + la opción "Publicar sin evento".
+  const selectPartyParams = () =>
+    (store.getState().wallTab === 'remates' ? { feed: 'remates' } : {});
+
   container.querySelector('#fab-create-post')?.addEventListener('click', () => {
     const state = store.getState();
     if (!store.canUserPost(state.currentUser.id)) {
       showToast('Has alcanzado el límite de 5 publicaciones diarias', 'warning');
       return;
     }
-    router.navigate('select-party');
+    router.navigate('select-party', selectPartyParams());
   });
 
   container.querySelector('#empty-create-post')?.addEventListener('click', () => {
-    router.navigate('select-party');
+    router.navigate('select-party', selectPartyParams());
   });
+
+  // Crear remate: abierto a cualquier usuario logueado (create-party en
+  // modo remate no tiene gate de promotor).
+  const goCreateRemate = () => router.navigate('create-party', { kind: 'remate' });
+  container.querySelector('#create-remate-btn')?.addEventListener('click', goCreateRemate);
+  container.querySelector('#empty-create-remate')?.addEventListener('click', goCreateRemate);
 
   container.querySelector('#notifications-btn')?.addEventListener('click', () => {
     router.navigate('notifications');

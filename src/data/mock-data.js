@@ -18,7 +18,7 @@ import {
 // without this the optimistic-pending → real-post swap never updates the
 // DOM (the post stays visibly "pending"/transparent until manual refresh).
 // Scoped to data-driven routes so re-render is cheap and idempotent.
-const UI_ROUTES_TO_REPAINT = new Set(['wall', 'parties', 'profile', 'profile-other']);
+const UI_ROUTES_TO_REPAINT = new Set(['wall', 'parties', 'profile', 'profile-other', 'chats-private']);
 function repaintIfNeeded() {
   if (UI_ROUTES_TO_REPAINT.has(router.getCurrentRoute())) {
     router.refreshCurrentRoute();
@@ -430,6 +430,9 @@ function pruneHeavyState(state) {
   // Chat messages live in the in-memory page buffer now; the legacy
   // state.chatRooms is only a fallback. Safe to drop on quota pressure.
   lite.chatRooms = {};
+  // Las conversaciones nunca se persisten (fotos de grupo/preview con
+  // imagen son base64) — mismo criterio que el clon de saveState.
+  lite.conversations = [];
   return lite;
 }
 
@@ -470,6 +473,21 @@ const defaultState = {
   // that "some" party chat is. hasUnreadChatParty stays as the rolled-up
   // "any?" flag that powers the wall and chat-hub indicators.
   unreadChatRooms: {},
+  // --- Mensajería privada (migración 0038) ---
+  // Inbox de DMs + grupos, hidratado por listConversations() y mantenido
+  // al día por el canal 'conversations-feed'. NUNCA se persiste: ni a
+  // localStorage (el clon de saveState lo vacía — las fotos de grupo son
+  // base64) ni al cloud blob (EXCLUDED_FROM_CLOUD) — vive en memoria +
+  // servidor, como los mensajes de chat.
+  conversations: [],
+  // Flag ligero rolled-up para el badge del muro / chat-hub ("¿hay algún
+  // hilo privado sin leer?"). Este SÍ persiste (boolean barato) para que
+  // el dot sobreviva un reload mientras la hidratación lo re-deriva.
+  hasUnreadConversations: false,
+  // Deploy-before-migrate: true cuando listConversations() falla porque
+  // la tabla aún no existe (0038 sin aplicar). chats-private lo usa para
+  // distinguir "no tienes conversaciones" de "migración pendiente".
+  conversationsUnavailable: false,
   // Flat log of every attendance event we know about. Used by
   // getNotifications() to surface "X confirmó asistencia" rows on the
   // promoter's notifications page. The same data is also folded into
@@ -491,6 +509,12 @@ const defaultState = {
   viewingUserId: null,
   viewingPartyId: null,
   selectedCity: 'Bogotá',
+  // Pestaña activa del muro ('fiestas' | 'remates'). Vive en el STORE y no
+  // en el DOM ni en una variable de página: router.refreshCurrentRoute()
+  // (hydration + realtime) re-renderiza el muro entero con currentParams,
+  // así que cualquier selección de pestaña fuera del store se resetearía
+  // en cada repaint. Persiste como string barato (igual que selectedCity).
+  wallTab: 'fiestas',
 };
 
 class Store {
@@ -563,7 +587,9 @@ class Store {
           parsed.parties = [];
           parsed.posts = [];
         }
-        if (parsed.posts?.some(p => !isUuid(p.partyId) || !isUuid(p.userId))) {
+        // partyId null es legítimo (posts libres de Remates) — solo un
+        // partyId PRESENTE y no-UUID delata caché legacy.
+        if (parsed.posts?.some(p => (p.partyId != null && !isUuid(p.partyId)) || !isUuid(p.userId))) {
           parsed.posts = [];
         }
         // Same for chatRooms keys that reference legacy party IDs.
@@ -634,6 +660,13 @@ class Store {
             premium: u.premium,
             points: u.points,
           })),
+          // Conversaciones: NUNCA a localStorage. Las fotos de grupo y los
+          // previews con imagen son base64 (quota) y el contenido privado
+          // no debe quedar cacheado en el dispositivo — se rehidratan del
+          // servidor en cada boot. OJO: esto es una COPIA; el invariante
+          // sagrado de este método (ver el NOTE del catch de abajo) manda:
+          // this.state.conversations queda intacto en memoria.
+          conversations: [],
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
       } catch (e) {
@@ -785,6 +818,13 @@ class Store {
     const newPost = {
       id: tempId,
       ...post,
+      // Normalización 0037/0039 DESPUÉS del spread: la pestaña por defecto
+      // es fiestas (posts legacy sin wall pintan ahí), partyId puede ser
+      // null (post libre de remates) y 'video' gana si hay video adjunto.
+      partyId: post.partyId || null,
+      wall: post.wall === 'remates' ? 'remates' : 'fiestas',
+      videoUrl: post.videoUrl || null,
+      type: post.type || (post.videoUrl ? 'video' : (post.image ? 'photo' : 'text')),
       author: inlineAuthor,
       likes: 0,
       replies: 0,
@@ -809,7 +849,14 @@ class Store {
     // Async: persist to Supabase, then swap the optimistic row for the
     // server-truth row.
     if (_api?.createPost) {
-      _api.createPost({ partyId: post.partyId, content: post.content, image: post.image })
+      _api.createPost({
+        partyId: newPost.partyId,
+        content: post.content,
+        image: post.image,
+        wall: newPost.wall,
+        videoUrl: newPost.videoUrl,
+        type: newPost.type,
+      })
         .then((real) => this._replacePost(tempId, real))
         .catch((err) => {
           // Detailed log so we can diagnose remotely (FK violation, RLS,
@@ -1190,6 +1237,11 @@ class Store {
     const newParty = {
       id: tempId,
       ...party,
+      // Normalización 0037 tras el spread: el temp row lleva kind y
+      // boletería explícitos para que el filtro por pestaña y el
+      // echo-swap del realtime vean el mismo shape que partyFromRow.
+      kind: party.kind === 'remate' ? 'remate' : 'party',
+      ticketContactUrl: party.ticketContactUrl || null,
       attendees: [],
       rating: {},
       reports: {},
@@ -1220,6 +1272,9 @@ class Store {
           this.state.parties = this.state.parties.filter(p => p.id !== tempId);
           this.saveState();
           this.notify();
+          // Con remates cualquier usuario crea eventos: el fallo (RLS,
+          // mute, migración pendiente) debe verse, no evaporarse.
+          _surfaceError?.('No se pudo crear el evento. ' + describeApiError(err));
         });
     }
     return newParty;
@@ -1664,6 +1719,263 @@ class Store {
     this.notify();
   }
 
+  // --- Mensajería privada (DMs + grupos, migración 0038) ---
+  // El store solo guarda la METADATA del inbox (state.conversations); los
+  // mensajes de cada hilo viven page-scoped en la página, como chat.js.
+  // Los DMs NO entran a getNotifications(): su señal es push + unread.
+  getConversationById(id) {
+    return (this.state.conversations || []).find(c => c.id === id);
+  }
+
+  // Recomputa el flag rolled-up del badge. Los hilos silenciados no
+  // encienden el badge global (es justo lo que promete el mute) aunque
+  // conserven su dot por-fila.
+  _recomputeUnreadConversations(list = this.state.conversations) {
+    return (list || []).some(c => c.unread && !c.muted);
+  }
+
+  // Método ligero para el realtime y la página del hilo: refresca el
+  // preview (lastMessage), reordena el inbox por actividad y, con
+  // { unread: true }, marca el hilo y enciende hasUnreadConversations.
+  touchConversation(conversationId, message, { unread = false } = {}) {
+    const list = this.state.conversations || [];
+    const conv = list.find(c => c.id === conversationId);
+    if (!conv) return;
+    if (message) {
+      conv.lastMessage = message;
+      conv.lastMessageAt = message.createdAt instanceof Date
+        ? message.createdAt
+        : new Date(message.createdAt || Date.now());
+    }
+    if (unread) conv.unread = true;
+    const sorted = [...list].sort(
+      (a, b) => (b.lastMessageAt?.getTime?.() || 0) - (a.lastMessageAt?.getTime?.() || 0)
+    );
+    const partial = { conversations: sorted };
+    if (unread && !conv.muted && !this.state.hasUnreadConversations) {
+      partial.hasUnreadConversations = true;
+    }
+    this.setState(partial);
+  }
+
+  // Enviar mensaje vía store: SOLO toca la metadata del inbox de forma
+  // optimista y delega en la api (que dispara el push ella misma, así el
+  // hilo — que llama api.sendConversationMessage directo — no lo duplica).
+  // Devuelve la promesa del mensaje real (null si falla; el error ya se
+  // surfaceó con toast).
+  sendConversationMessage(conversationId, { content, image, videoUrl } = {}) {
+    if (!this.state.currentUser) return Promise.resolve(null);
+    const conv = this.getConversationById(conversationId);
+    const prevLast = conv?.lastMessage || null;
+    const prevAt = conv?.lastMessageAt || null;
+    if (conv) {
+      this.touchConversation(conversationId, {
+        id: 'pending_' + Date.now(),
+        conversationId,
+        userId: this.state.currentUser.id,
+        content: (content || '').trim() || null,
+        image: image || null,
+        videoUrl: videoUrl || null,
+        createdAt: new Date(),
+        _pending: true,
+      });
+    }
+    if (!_api?.sendConversationMessage) return Promise.resolve(null);
+    return _api.sendConversationMessage(conversationId, { content, image, videoUrl })
+      .then((real) => {
+        if (real) this.touchConversation(conversationId, real);
+        return real;
+      })
+      .catch((err) => {
+        console.error('[store] sendConversationMessage failed', {
+          code: err?.code, message: err?.message, conversationId,
+        });
+        // Rollback de la metadata optimista (el hilo maneja su buffer).
+        const c = this.getConversationById(conversationId);
+        if (c) {
+          c.lastMessage = prevLast;
+          c.lastMessageAt = prevAt;
+          this.setState({ conversations: [...this.state.conversations] });
+          repaintIfNeeded();
+        }
+        _surfaceError?.('No se pudo enviar el mensaje. ' + describeApiError(err));
+        return null;
+      });
+  }
+
+  // Mute optimista con rollback (afecta solo el push server-side y el
+  // badge; el usuario sigue viendo el hilo normalmente).
+  toggleConversationMute(conversationId) {
+    const conv = this.getConversationById(conversationId);
+    if (!conv) return;
+    const meId = this.state.currentUser?.id;
+    const next = !conv.muted;
+    const apply = (val) => {
+      conv.muted = val;
+      const m = conv.members?.find(x => x.userId === meId);
+      if (m) m.muted = val;
+      this.setState({
+        conversations: [...this.state.conversations],
+        hasUnreadConversations: this._recomputeUnreadConversations(),
+      });
+      repaintIfNeeded();
+    };
+    apply(next);
+
+    if (_api?.setConversationMuted) {
+      _api.setConversationMuted(conversationId, next).catch((err) => {
+        console.warn('[store] setConversationMuted failed', err);
+        apply(!next);
+        _surfaceError?.('No se pudo cambiar el silencio. ' + describeApiError(err));
+      });
+    }
+  }
+
+  // Marcar leído: optimista sin rollback — un read-marker fallido es
+  // benigno (el servidor lo re-deriva en la próxima hidratación).
+  markConversationRead(conversationId) {
+    const conv = this.getConversationById(conversationId);
+    if (!conv) return;
+    const now = new Date();
+    conv.unread = false;
+    conv.lastReadAt = now;
+    const meId = this.state.currentUser?.id;
+    const m = conv.members?.find(x => x.userId === meId);
+    if (m) m.lastReadAt = now;
+    this.setState({
+      conversations: [...this.state.conversations],
+      hasUnreadConversations: this._recomputeUnreadConversations(),
+    });
+
+    if (_api?.markConversationRead) {
+      _api.markConversationRead(conversationId)
+        .catch((err) => console.warn('[store] markConversationRead failed', err));
+    }
+  }
+
+  // Abrir (o reusar) un DM con otro usuario. Sin optimismo: navegamos al
+  // hilo con el uuid REAL que devuelve la RPC (dedupe por dm_key).
+  async createDM(otherUserId) {
+    if (!_api?.createDM) return null;
+    try {
+      const id = await _api.createDM(otherUserId);
+      await this._ensureConversationInStore(id);
+      return id;
+    } catch (err) {
+      console.error('[store] createDM failed', err);
+      _surfaceError?.('No se pudo abrir el chat. ' + describeApiError(err));
+      return null;
+    }
+  }
+
+  async createGroup({ title, photo, memberIds } = {}) {
+    if (!_api?.createGroup) return null;
+    try {
+      const id = await _api.createGroup({ title, photo, memberIds });
+      await this._ensureConversationInStore(id);
+      return id;
+    } catch (err) {
+      console.error('[store] createGroup failed', err);
+      _surfaceError?.('No se pudo crear el grupo. ' + describeApiError(err));
+      return null;
+    }
+  }
+
+  async addGroupMembers(conversationId, memberIds) {
+    if (!_api?.addGroupMembers) return false;
+    try {
+      await _api.addGroupMembers(conversationId, memberIds);
+      // Re-fetch de la cabecera para refrescar members[] con lo que el
+      // servidor realmente aceptó (duplicados/inexistentes se descartan).
+      await this._ensureConversationInStore(conversationId, { forceRefresh: true });
+      return true;
+    } catch (err) {
+      console.error('[store] addGroupMembers failed', err);
+      _surfaceError?.('No se pudieron añadir miembros. ' + describeApiError(err));
+      return false;
+    }
+  }
+
+  // Salir del hilo — optimista con rollback (reaparece si el DELETE falla).
+  leaveConversation(conversationId) {
+    const conv = this.getConversationById(conversationId);
+    if (!conv) return;
+    const remaining = (this.state.conversations || []).filter(c => c.id !== conversationId);
+    this.setState({
+      conversations: remaining,
+      hasUnreadConversations: this._recomputeUnreadConversations(remaining),
+    });
+    repaintIfNeeded();
+
+    if (_api?.leaveConversation) {
+      _api.leaveConversation(conversationId).catch((err) => {
+        console.warn('[store] leaveConversation failed', err);
+        const restored = [conv, ...(this.state.conversations || [])].sort(
+          (a, b) => (b.lastMessageAt?.getTime?.() || 0) - (a.lastMessageAt?.getTime?.() || 0)
+        );
+        this.setState({
+          conversations: restored,
+          hasUnreadConversations: this._recomputeUnreadConversations(restored),
+        });
+        repaintIfNeeded();
+        _surfaceError?.('No se pudo salir de la conversación. ' + describeApiError(err));
+      });
+    }
+  }
+
+  // Nombre / foto del grupo — optimista con rollback (RLS: solo owner).
+  updateGroupMeta(conversationId, patch = {}) {
+    const conv = this.getConversationById(conversationId);
+    if (!conv) return;
+    const prev = { title: conv.title, photo: conv.photo };
+    if (patch.title !== undefined) conv.title = patch.title;
+    if (patch.photo !== undefined) conv.photo = patch.photo;
+    this.setState({ conversations: [...this.state.conversations] });
+    repaintIfNeeded();
+
+    if (_api?.updateGroupMeta) {
+      _api.updateGroupMeta(conversationId, patch)
+        .then((real) => {
+          if (!real) return;
+          const c = this.getConversationById(conversationId);
+          if (!c) return;
+          c.title = real.title;
+          c.photo = real.photo;
+          this.setState({ conversations: [...this.state.conversations] });
+        })
+        .catch((err) => {
+          console.warn('[store] updateGroupMeta failed', err);
+          const c = this.getConversationById(conversationId);
+          if (c) {
+            c.title = prev.title;
+            c.photo = prev.photo;
+            this.setState({ conversations: [...this.state.conversations] });
+            repaintIfNeeded();
+          }
+          _surfaceError?.('No se pudo actualizar el grupo. ' + describeApiError(err));
+        });
+    }
+  }
+
+  // Trae la cabecera de un hilo al store si falta (post-create_dm/grupo o
+  // tras mutar members). Falla en silencio: la hidratación lo reconcilia.
+  async _ensureConversationInStore(conversationId, { forceRefresh = false } = {}) {
+    if (!conversationId || !_api?.getConversation) return;
+    const existing = this.getConversationById(conversationId);
+    if (existing && !forceRefresh) return;
+    try {
+      const conv = await _api.getConversation(conversationId);
+      if (!conv) return;
+      const rest = (this.state.conversations || []).filter(c => c.id !== conversationId);
+      const sorted = [conv, ...rest].sort(
+        (a, b) => (b.lastMessageAt?.getTime?.() || 0) - (a.lastMessageAt?.getTime?.() || 0)
+      );
+      this.setState({ conversations: sorted });
+    } catch (err) {
+      console.warn('[store] _ensureConversationInStore failed', err);
+    }
+  }
+
   // --- Live chat (Phase 2: localStorage, Phase 4: Supabase Realtime) ---
   // Room keys: 'general' for the global room, `party:<partyId>` per fiesta.
   getChatMessages(roomKey) {
@@ -1793,6 +2105,14 @@ export function describeApiError(err) {
   if (code === '23503') return 'Referencia inválida (recarga la app).';
   if (code === '42501' || /row-level security|permission/i.test(msg)) {
     return 'Permiso denegado por el servidor.';
+  }
+  // Deploy-before-migrate: tabla/columna/RPC que el servidor aún no tiene
+  // (migraciones 0037-0039 pendientes de correr a mano). PGRST204/42703 =
+  // columna, PGRST205/42P01 = tabla, PGRST202 = función RPC.
+  if (code === 'PGRST204' || code === 'PGRST205' || code === 'PGRST202'
+      || code === '42703' || code === '42P01'
+      || /schema cache/i.test(msg)) {
+    return 'Función aún no disponible (actualización del servidor pendiente).';
   }
   if (/network|fetch|timeout/i.test(msg)) return 'Sin conexión al servidor.';
   return msg.length > 80 ? msg.slice(0, 80) + '...' : msg;

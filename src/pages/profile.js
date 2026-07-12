@@ -195,6 +195,11 @@ function renderProfileView(container, user, isOwn, initialTab) {
               <button class="btn ${isFollowing ? 'btn-secondary following' : 'btn-primary'} follow-btn" id="follow-btn" style="flex:1;" data-user-id="${user.id}">
                 ${isFollowing ? 'Siguiendo ✓' : 'Seguir'}
               </button>
+              ${currentUser ? `
+                <button class="btn btn-outline btn-sm" id="dm-btn" data-user-id="${user.id}" title="Enviar mensaje">
+                  💬 Mensaje
+                </button>
+              ` : ''}
               <button class="btn btn-outline btn-sm" id="ask-btn" data-user-id="${user.id}">
                 ${ICONS.question}
               </button>
@@ -513,6 +518,27 @@ function bindProfileEvents(container, user, isOwn) {
       } else {
         showToast(isNowFollowing ? `Siguiendo a ${user.name}` : `Dejaste de seguir a ${user.name}`, 'info');
       }
+    });
+  }
+
+  // Mensaje privado (perfil ajeno): create_dm dedupea por dm_key, así que
+  // abrir el chat con alguien con quien ya hablas reutiliza el hilo. El
+  // spinner evita el doble-tap mientras la RPC responde; el error ya sale
+  // en toast desde el store (createDM devuelve null).
+  const dmBtn = container.querySelector('#dm-btn');
+  if (dmBtn) {
+    dmBtn.addEventListener('click', async () => {
+      if (dmBtn.disabled) return;
+      dmBtn.disabled = true;
+      const originalLabel = dmBtn.innerHTML;
+      dmBtn.innerHTML = '<span class="btn-spinner"></span>';
+      const conversationId = await store.createDM(user.id);
+      if (conversationId) {
+        router.navigate('chat-conversation', { conversationId });
+        return;
+      }
+      dmBtn.disabled = false;
+      dmBtn.innerHTML = originalLabel;
     });
   }
 

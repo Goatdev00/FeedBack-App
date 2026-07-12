@@ -19,7 +19,10 @@ export function renderChatHub(container) {
   // `hasUnreadChatParty`). Keeping the dots visible here is the whole
   // point of breaking them down per type.
 
-  // Today's parties count → shown on the per-party card as social proof.
+  // Today's events count → shown on the per-event card as social proof.
+  // getTodayParties no filtra por kind: incluye fiestas Y remates, igual
+  // que la página destino (chat-parties, 'Chat por evento') — por eso la
+  // copy habla de "eventos", no de "fiestas".
   const todayParties = store.getTodayParties(state.selectedCity);
 
   container.innerHTML = `
@@ -31,8 +34,18 @@ export function renderChatHub(container) {
 
       <h1 class="page-title">Chats en vivo</h1>
       <p class="page-subtitle" style="margin-bottom:var(--space-xl);">
-        Conéctate con la escena o únete al chat de una fiesta específica
+        Conéctate con la escena o únete al chat de un evento específico
       </p>
+
+      <button class="chat-option-card chat-option-messages" data-route="chats-private">
+        <div class="chat-option-icon">💬</div>
+        <div class="chat-option-body">
+          <div class="chat-option-title">Mensajes</div>
+          <p class="chat-option-subtitle">Chats privados y grupos</p>
+        </div>
+        ${state.hasUnreadConversations ? `<span class="chat-dot chat-option-dot"></span>` : ''}
+        <span class="chat-option-arrow">→</span>
+      </button>
 
       <button class="chat-option-card chat-option-general" data-route="chat-general">
         <div class="chat-option-icon">🌐</div>
@@ -47,10 +60,10 @@ export function renderChatHub(container) {
       <button class="chat-option-card chat-option-party" data-route="chat-parties">
         <div class="chat-option-icon">🎉</div>
         <div class="chat-option-body">
-          <div class="chat-option-title">Chat por fiesta</div>
+          <div class="chat-option-title">Chat por evento</div>
           <p class="chat-option-subtitle">
             ${todayParties.length > 0
-              ? `${todayParties.length} fiesta${todayParties.length === 1 ? '' : 's'} activa${todayParties.length === 1 ? '' : 's'} hoy`
+              ? `${todayParties.length} evento${todayParties.length === 1 ? '' : 's'} activo${todayParties.length === 1 ? '' : 's'} hoy`
               : 'Únete al chat de un evento'}
           </p>
         </div>

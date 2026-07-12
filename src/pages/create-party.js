@@ -1,6 +1,12 @@
 // ============================================
-// FEEDBACK — Create Party (Promotor)
+// FEEDBACK — Create Party (Promotor) / Create Remate (cualquier usuario)
 // ============================================
+// Un solo formulario con dos "skins" según params.kind:
+//   * kind 'party' (default): flujo clásico de promotor (gate de rol) +
+//     campo opcional de venta de boletería (parties.ticket_contact_url).
+//   * kind 'remate': abierto a CUALQUIER usuario logueado (la política
+//     parties_create de 0037 permite kind='remate' sin rol promotor),
+//     sin CTA de patrocinio y sin boletería.
 
 import { store, ICONS } from '../data/mock-data.js';
 import { router } from '../router.js';
@@ -16,10 +22,69 @@ const GENRES = [
 
 const PARTY_CITIES = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena'];
 
-export function renderCreateParty(container) {
+// Normaliza el contacto de boletería a una URL https:// (el constraint
+// parties_ticket_contact_url_ck exige https y ≤500 chars):
+//   * número (dígitos con +, espacios, guiones, paréntesis) → wa.me
+//   * https:// → tal cual; http:// / www. / dominio pelado → forzar https
+//   * cualquier otra cosa → { ok:false } y NO se publica.
+// Devuelve url null cuando el campo quedó vacío (boletería es opcional).
+function normalizeTicketContact(raw) {
+  const value = (raw || '').trim();
+  if (!value) return { ok: true, url: null };
+
+  const compact = value.replace(/[\s\-().]/g, '');
+  if (/^\+?\d{7,15}$/.test(compact)) {
+    return { ok: true, url: `https://wa.me/${compact.replace(/\D/g, '')}` };
+  }
+
+  let candidate = value;
+  if (/^http:\/\//i.test(candidate)) candidate = 'https://' + candidate.slice(7);
+  else if (/^www\./i.test(candidate)) candidate = 'https://' + candidate;
+  else if (!/^https:\/\//i.test(candidate)) {
+    // "Parece dominio": algo.tld con path opcional y sin espacios.
+    if (/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(candidate)) candidate = 'https://' + candidate;
+    else return { ok: false, url: null };
+  }
+
+  try {
+    const u = new URL(candidate);
+    // u.href re-serializa con protocolo/host en minúsculas ("HTTPS://" no
+    // pasaría el LIKE 'https://%' del check de la migración 0037).
+    if (u.protocol !== 'https:' || /\s/.test(candidate) || u.href.length > 500) {
+      return { ok: false, url: null };
+    }
+    return { ok: true, url: u.href };
+  } catch {
+    return { ok: false, url: null };
+  }
+}
+
+// Duplicado por similitud de nombre, ámbito por kind: los remates suelen
+// llamarse como la fiesta madre ("NEXUS after"), así que compararlos
+// contra las fiestas (como hace store.detectDuplicate, que es global)
+// daría falsos positivos constantes — y viceversa.
+function detectDuplicateByKind(name, isRemate) {
+  const normalized = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return store.getState().parties
+    .filter(p => (((p.kind || 'party') === 'remate') === isRemate))
+    .find(p => {
+      const pNorm = p.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return pNorm === normalized || pNorm.includes(normalized) || normalized.includes(pNorm);
+    });
+}
+
+export function renderCreateParty(container, params = {}) {
+  const isRemate = params.kind === 'remate';
   const user = store.getState().currentUser;
 
-  if (!user || user.role !== 'promotor') {
+  if (!user) {
+    router.navigate('login');
+    return;
+  }
+  // El gate de promotor SOLO aplica a fiestas: los remates son de toda la
+  // comunidad (el server lo respalda: parties_create 0037 acepta
+  // kind='remate' con cualquier rol).
+  if (!isRemate && user.role !== 'promotor') {
     showToast('Solo promotores pueden crear fiestas', 'warning');
     router.navigate('parties');
     return;
@@ -32,19 +97,19 @@ export function renderCreateParty(container) {
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-lg);">
         <button class="back-btn" id="back-btn" style="margin-bottom:0;">
           ${ICONS.back}
-          <span>Fiestas</span>
+          <span>${isRemate ? 'Muro' : 'Fiestas'}</span>
         </button>
         <button class="btn btn-primary btn-sm" id="publish-party-btn">
-          Publicar evento
+          ${isRemate ? 'Publicar remate' : 'Publicar evento'}
         </button>
       </div>
 
-      <h1 class="page-title" style="margin-bottom:var(--space-xs);">Crear fiesta</h1>
-      <p class="page-subtitle" style="margin-bottom:var(--space-xl);">Sube tu evento y llega a la comunidad</p>
+      <h1 class="page-title" style="margin-bottom:var(--space-xs);">${isRemate ? 'Crear remate' : 'Crear fiesta'}</h1>
+      <p class="page-subtitle" style="margin-bottom:var(--space-xl);">${isRemate ? 'Comparte tu after con la comunidad' : 'Sube tu evento y llega a la comunidad'}</p>
 
       <!-- Flyer Upload -->
       <div class="form-section">
-        <div class="form-section-title">Flyer del evento</div>
+        <div class="form-section-title">${isRemate ? 'Flyer del remate' : 'Flyer del evento'}</div>
         <div class="flyer-upload" id="flyer-upload">
           ${ICONS.image}
           <span style="font-size:var(--text-sm);">Subir flyer</span>
@@ -59,21 +124,21 @@ export function renderCreateParty(container) {
 
       <!-- Event Info -->
       <div class="form-section">
-        <div class="form-section-title">Información del evento</div>
-        
+        <div class="form-section-title">${isRemate ? 'Información del remate' : 'Información del evento'}</div>
+
         <div class="input-group mb-md">
-          <label class="input-label">Nombre del evento *</label>
-          <input type="text" class="input" id="party-name" placeholder="Ej: NEXUS Underground Session" maxlength="50" />
+          <label class="input-label">${isRemate ? 'Nombre del remate *' : 'Nombre del evento *'}</label>
+          <input type="text" class="input" id="party-name" placeholder="${isRemate ? 'Ej: After NEXUS' : 'Ej: NEXUS Underground Session'}" maxlength="50" />
         </div>
 
         <div class="input-group mb-md">
           <label class="input-label">Descripción</label>
-          <textarea class="input textarea" id="party-description" placeholder="Describe tu evento..." maxlength="300" style="min-height:80px;"></textarea>
+          <textarea class="input textarea" id="party-description" placeholder="${isRemate ? 'Describe tu remate...' : 'Describe tu evento...'}" maxlength="300" style="min-height:80px;"></textarea>
         </div>
 
         <div class="input-group mb-md">
           <label class="input-label">Venue / Lugar *</label>
-          <input type="text" class="input" id="party-venue" placeholder="Ej: Warehouse Club" />
+          <input type="text" class="input" id="party-venue" placeholder="${isRemate ? 'Ej: Casa del after, terraza...' : 'Ej: Warehouse Club'}" />
         </div>
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-md);">
@@ -92,11 +157,11 @@ export function renderCreateParty(container) {
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-md);">
           <div class="input-group mb-md">
             <label class="input-label">Inicio</label>
-            <input type="time" class="input" id="party-start" value="22:00" />
+            <input type="time" class="input" id="party-start" value="${isRemate ? '06:00' : '22:00'}" />
           </div>
           <div class="input-group mb-md">
             <label class="input-label">Fin</label>
-            <input type="time" class="input" id="party-end" value="06:00" />
+            <input type="time" class="input" id="party-end" value="${isRemate ? '14:00' : '06:00'}" />
           </div>
         </div>
       </div>
@@ -111,25 +176,46 @@ export function renderCreateParty(container) {
         </div>
       </div>
 
-      <!-- Premium CTA -->
-      <div class="card" style="background:linear-gradient(135deg, rgba(255,200,0,0.05), rgba(255,106,0,0.05));border-color:rgba(255,200,0,0.2);margin-top:var(--space-lg);">
-        <div style="display:flex;align-items:center;gap:var(--space-md);">
-          <span style="font-size:1.5rem;">⭐</span>
-          <div style="flex:1;">
-            <h4 style="font-size:var(--text-sm);font-weight:600;color:#FFC800;">Evento Patrocinado</h4>
-            <p style="font-size:var(--text-xs);color:var(--text-tertiary);">Destaca tu evento para mayor visibilidad</p>
+      ${isRemate ? '' : `
+        <!-- Venta de boletería (solo fiestas de promotor) -->
+        <div class="form-section">
+          <div class="form-section-title">🎟️ Venta de boletería (opcional)</div>
+          <div class="input-group">
+            <input type="text" class="input" id="party-ticket" placeholder="WhatsApp o enlace de venta" maxlength="200" autocomplete="off" />
+            <p style="font-size:var(--text-xs);color:var(--text-muted);margin-top:6px;">
+              Número de WhatsApp o enlace https:// donde vendes las boletas.
+            </p>
           </div>
-          <button class="btn btn-ghost btn-sm" style="color:#FFC800;border:1px solid rgba(255,200,0,0.3);">PRO</button>
         </div>
-      </div>
+
+        <!-- Premium CTA -->
+        <div class="card" style="background:linear-gradient(135deg, rgba(255,200,0,0.05), rgba(255,106,0,0.05));border-color:rgba(255,200,0,0.2);margin-top:var(--space-lg);">
+          <div style="display:flex;align-items:center;gap:var(--space-md);">
+            <span style="font-size:1.5rem;">⭐</span>
+            <div style="flex:1;">
+              <h4 style="font-size:var(--text-sm);font-weight:600;color:#FFC800;">Evento Patrocinado</h4>
+              <p style="font-size:var(--text-xs);color:var(--text-tertiary);">Destaca tu evento para mayor visibilidad</p>
+            </div>
+            <button class="btn btn-ghost btn-sm" style="color:#FFC800;border:1px solid rgba(255,200,0,0.3);">PRO</button>
+          </div>
+        </div>
+      `}
     </div>
   `;
 
   let selectedGenres = [];
   let flyerData = null;
 
-  // Back
-  container.querySelector('#back-btn').addEventListener('click', () => router.navigate('parties'));
+  // Back: el remate nace en la pestaña Remates del muro; la fiesta, en la
+  // agenda de fiestas.
+  container.querySelector('#back-btn').addEventListener('click', () => {
+    if (isRemate) {
+      store.setState({ wallTab: 'remates' });
+      router.navigate('wall');
+    } else {
+      router.navigate('parties');
+    }
+  });
 
   // Flyer upload
   const flyerUpload = container.querySelector('#flyer-upload');
@@ -184,11 +270,24 @@ export function renderCreateParty(container) {
     const endTime = container.querySelector('#party-end').value;
     const description = container.querySelector('#party-description').value.trim();
 
-    if (!name) { showToast('El nombre del evento es obligatorio', 'error'); return; }
+    if (!name) { showToast('El nombre es obligatorio', 'error'); return; }
     if (!venue) { showToast('El lugar es obligatorio', 'error'); return; }
 
-    // Check duplicate
-    const dup = store.detectDuplicate(name);
+    // Boletería: si el promotor escribió algo que no se puede normalizar
+    // a un enlace https válido, NO se publica (mejor corregir ahora que
+    // un botón "Comprar boletas" roto en el detalle).
+    let ticketContactUrl = null;
+    if (!isRemate) {
+      const ticket = normalizeTicketContact(container.querySelector('#party-ticket')?.value);
+      if (!ticket.ok) {
+        showToast('Enlace de boletería no válido. Usa un número de WhatsApp o un enlace https://', 'error');
+        return;
+      }
+      ticketContactUrl = ticket.url;
+    }
+
+    // Check duplicate (ámbito por kind — ver detectDuplicateByKind)
+    const dup = detectDuplicateByKind(name, isRemate);
     if (dup) {
       showToast(`⚠️ Ya existe "${dup.name}". Verifica que no sea duplicado.`, 'warning');
       return;
@@ -206,9 +305,19 @@ export function renderCreateParty(container) {
       djs: [],
       flyer: flyerData,
       description,
+      kind: isRemate ? 'remate' : 'party',
+      ticketContactUrl,
     });
 
-    showToast('¡Evento creado con éxito! 🎉', 'success');
-    router.navigate('parties');
+    if (isRemate) {
+      showToast('¡Remate publicado! 🔥', 'success');
+      // Aterriza en la pestaña Remates, donde el nuevo remate ya aparece
+      // en la tira "Lo que está pasando".
+      store.setState({ wallTab: 'remates' });
+      router.navigate('wall');
+    } else {
+      showToast('¡Evento creado con éxito! 🎉', 'success');
+      router.navigate('parties');
+    }
   });
 }

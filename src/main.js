@@ -49,6 +49,8 @@ import { renderNotifications } from './pages/notifications.js';
 import { renderChatHub } from './pages/chat-hub.js';
 import { renderChatParties } from './pages/chat-parties.js';
 import { renderChatGeneral, renderChatParty } from './pages/chat.js';
+import { renderChatsPrivate } from './pages/chats-private.js';
+import { renderChatConversation } from './pages/chat-conversation.js';
 import { renderAdmin } from './pages/admin.js';
 
 // --- Register Routes ---
@@ -72,8 +74,12 @@ router.register('sunday-rating', (c, p) => { renderSundayRating(c, p);   setBott
 router.register('notifications', (c, p) => { renderNotifications(c, p);  setBottomNav('');       });
 router.register('chat-hub',      (c, p) => { renderChatHub(c, p);        setBottomNav('');       });
 router.register('chat-parties',  (c, p) => { renderChatParties(c, p);    setBottomNav('');       });
+router.register('chats-private', (c, p) => { renderChatsPrivate(c, p);   setBottomNav('');       });
 router.register('chat-general',  (c, p) => { renderChatGeneral(c, p);    setBottomNav(null);     });
 router.register('chat-party',    (c, p) => { renderChatParty(c, p);      setBottomNav(null);     });
+// El hilo privado esconde la bottom nav (composer pegado al borde inferior,
+// igual que las salas de chat).
+router.register('chat-conversation', (c, p) => { renderChatConversation(c, p); setBottomNav(null); });
 router.register('admin',         (c, p) => { renderAdmin(c, p);          setBottomNav('');       });
 
 // Hash routing (back button / deep links / refresh). Must come AFTER all
@@ -316,7 +322,7 @@ function consumePendingDeepLink() {
 // (they bounce to a list page when the row is missing). On a cold boot,
 // navigating to them BEFORE hydration means the bounce — paint the wall
 // first and jump once the data lands.
-const DATA_DEEPLINK_ROUTES = new Set(['party-detail', 'chat-party', 'profile-other', 'create-post']);
+const DATA_DEEPLINK_ROUTES = new Set(['party-detail', 'chat-party', 'profile-other', 'create-post', 'chat-conversation']);
 
 /**
  * Resolve the landing route once the session is settled. Priority:

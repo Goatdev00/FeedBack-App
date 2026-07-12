@@ -7,7 +7,9 @@
 
 import { store, ICONS, formatRelative, describeApiError } from '../data/mock-data.js';
 import { router } from '../router.js';
-import { avatarHTML, roleBadgeClass, roleTitle, sanitize } from '../utils/helpers.js';
+import { avatarHTML, roleBadgeClass, roleTitle, sanitize, safeImageSrc } from '../utils/helpers.js';
+import { replaceListener, detachListener } from '../utils/dom.js';
+import { validateVideoFile, uploadVideoToStorage, removeUploadedVideo } from '../utils/video.js';
 import {
   listChatMessages,
   sendChatMessageDB,
@@ -90,7 +92,20 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
         <div class="chat-empty"><div class="chat-empty-icon">💬</div><p>Cargando mensajes...</p></div>
       </div>
 
+      <!-- Preview del video adjunto (mismo patrón que el composer de DMs:
+           tira sobre el input con miniatura + quitar). muted+playsinline:
+           es solo una miniatura, jamás debe sonar ni ir a fullscreen. -->
+      <div class="chat-attach-preview" id="video-attach-preview" hidden>
+        <video id="video-attach-thumb" class="chat-attach-video-thumb" playsinline webkit-playsinline muted preload="metadata"></video>
+        <span class="chat-attach-label">Video listo para enviar</span>
+        <button type="button" class="chat-attach-remove" id="video-attach-remove" aria-label="Quitar video">✕</button>
+      </div>
+
       <form class="chat-input-row" id="chat-form">
+        <button type="button" class="chat-attach-btn chat-attach-btn-emoji" id="video-attach-btn" title="Adjuntar video" aria-label="Adjuntar video">🎬</button>
+        <!-- Sin capture: en iOS capture fuerza solo-cámara y esconde la
+             fototeca. accept = los 3 mime que admite el bucket videos. -->
+        <input type="file" id="video-attach-file" accept="video/mp4,video/quicktime,video/webm" hidden />
         <input type="text" class="chat-input" id="chat-input"
                placeholder="Escribe un mensaje..." maxlength="500"
                autocomplete="off" />
@@ -104,6 +119,7 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
   const messagesEl = container.querySelector('#chat-messages');
   const form = container.querySelector('#chat-form');
   const input = container.querySelector('#chat-input');
+  const sendBtn = form.querySelector('.chat-send');
 
   // ====== Local in-memory message buffer (this page only) ======
   // We don't push chat into the global store because (a) the volume can
@@ -116,11 +132,46 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
   //   userCache          — id → user lookup for foreign authors we haven't
   //                        seen in state.users yet (fills lazily).
   let messages = [];
-  const pendingByContent = new Map(); // contentKey → tempId
+  const pendingByContent = new Map(); // contentKey → [tempId, ...] (FIFO — ver pendingPush)
   const userCache = new Map();
 
   let lastRenderedSig = '';
+  // paint() reconstruye la lista entera vía innerHTML, y eso DESTRUYE
+  // cualquier <video> en reproducción (el elemento se recrea pausado en
+  // frame 0): en una sala activa, el mensaje de cualquier otro usuario
+  // mataba un video a mitad de play. Si hay un video del hilo sonando,
+  // el repintado se DIFIERE a su pause/ended (flag pendingPaint); los
+  // mensajes siguen acumulándose en el buffer y entran todos juntos.
+  let pendingPaint = false;
+  let paintDeferCleanup = null;
+  function deferPaint(video) {
+    pendingPaint = true;
+    // Si ya había un defer colgado, soltarlo antes: aunque el repintado
+    // se posponga N veces, sobre el video vive UN solo par de listeners.
+    if (paintDeferCleanup) paintDeferCleanup();
+    const onDone = () => {
+      cleanup();
+      if (pendingPaint) paint();
+    };
+    const cleanup = () => {
+      video.removeEventListener('pause', onDone);
+      video.removeEventListener('ended', onDone);
+      if (paintDeferCleanup === cleanup) paintDeferCleanup = null;
+    };
+    paintDeferCleanup = cleanup;
+    video.addEventListener('pause', onDone);
+    video.addEventListener('ended', onDone);
+  }
+
   function paint() {
+    const playing = Array.from(messagesEl.querySelectorAll('video'))
+      .find(v => !v.paused && !v.ended && v.readyState > 2);
+    if (playing) {
+      deferPaint(playing);
+      return;
+    }
+    pendingPaint = false;
+
     const sig = messages.length + ':' + (messages.at(-1)?.id || '');
     if (sig === lastRenderedSig) return;
     lastRenderedSig = sig;
@@ -138,6 +189,18 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
   }
+
+  // Un <video preload="metadata"> pinta primero a la altura por defecto
+  // del replaced element y CRECE cuando llega la metadata (un 9:16 a
+  // 240px de ancho pasa de ~120px a ~427px de alto) — si estábamos
+  // pegados al fondo, el último mensaje quedaba bajo el pliegue. Los
+  // VIDEO nunca disparan 'load': su señal es 'loadedmetadata' (no
+  // burbujea → captura), y ahí re-pegamos el scroll si procede.
+  messagesEl.addEventListener('loadedmetadata', (e) => {
+    if (e.target.tagName !== 'VIDEO') return;
+    const nearBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 160;
+    if (nearBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
+  }, true);
 
   // ====== Hydrate history from Supabase + subscribe to new inserts ======
   let unsubscribeRealtime = () => {};
@@ -164,6 +227,8 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
       // Disable input so the user doesn't keep trying.
       input.disabled = true;
       input.placeholder = 'Chat no disponible';
+      const attach = container.querySelector('#video-attach-btn');
+      if (attach) attach.disabled = true;
       return;
     }
 
@@ -183,23 +248,79 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
   unsubscribeRealtime = subscribeChatRoom(roomKey, async (msg) => {
     // Drop the realtime echo of our own optimistic insert.
     const key = optimisticKey(msg);
-    if (pendingByContent.has(key)) {
-      const tempId = pendingByContent.get(key);
-      // Replace the optimistic row with the canonical server row.
+    if (messages.some(m => m.id === msg.id)) {
+      // Ya está en el buffer (el POST resolvió antes que su eco y ya
+      // swapeó su burbuja) — no tocar nada, y sobre todo NO consumir un
+      // tempId de otra burbuja pendiente con la misma clave.
+    } else if (pendingByContent.has(key)) {
+      // Eco de nuestro propio insert optimista. FIFO: el eco más viejo
+      // casa con el tempId más viejo de esa clave (dos envíos idénticos
+      // rápidos comparten clave — con un valor escalar el segundo send
+      // pisaba el tempId del primero y quedaba una burbuja huérfana).
+      const tempId = pendingShift(pendingByContent, key);
       const idx = messages.findIndex(m => m.id === tempId);
       if (idx !== -1) messages[idx] = msg;
-      pendingByContent.delete(key);
+      else messages.push(msg); // el temp ya no está — no perder la fila real
+      lastRenderedSig = ''; // el swap no cambia length+lastId: forzar repintado
     } else {
-      // Foreign message — append unless we already have it.
-      if (!messages.some(m => m.id === msg.id)) {
-        messages.push(msg);
-      }
+      // Foreign message.
+      messages.push(msg);
     }
     if (!userCache.has(msg.userId) && !store.getUserById(msg.userId)) {
       await fetchUserInto(msg.userId, userCache);
     }
     paint();
   });
+
+  // ====== Adjuntar video (0039) ======
+  // El File validado se sube a Storage RECIÉN al enviar: el optimistic
+  // row necesita la URL pública definitiva (es la que pinta la burbuja y
+  // la que dedupea el eco realtime).
+  const videoAttachBtn = container.querySelector('#video-attach-btn');
+  const videoAttachFile = container.querySelector('#video-attach-file');
+  const videoAttachPreview = container.querySelector('#video-attach-preview');
+  const videoAttachThumb = container.querySelector('#video-attach-thumb');
+  let pendingVideo = null;      // File validado, aún sin subir
+  let pendingVideoBlobUrl = null;
+
+  function clearVideoAttachment() {
+    pendingVideo = null;
+    // Revocar SIEMPRE el blob del preview (presión de memoria en iOS).
+    if (pendingVideoBlobUrl) { URL.revokeObjectURL(pendingVideoBlobUrl); pendingVideoBlobUrl = null; }
+    videoAttachThumb.removeAttribute('src');
+    videoAttachThumb.load();
+    videoAttachPreview.hidden = true;
+  }
+
+  videoAttachBtn.addEventListener('click', () => videoAttachFile.click());
+  videoAttachFile.addEventListener('change', async () => {
+    const f = videoAttachFile.files && videoAttachFile.files[0];
+    videoAttachFile.value = ''; // volver a elegir el mismo archivo debe re-disparar change
+    if (!f) return;
+    const res = await validateVideoFile(f);
+    if (!res.ok) {
+      showToast(res.error, 'error', 5000);
+      return;
+    }
+    clearVideoAttachment();
+    pendingVideo = f;
+    pendingVideoBlobUrl = URL.createObjectURL(f);
+    videoAttachThumb.src = pendingVideoBlobUrl;
+    videoAttachPreview.hidden = false;
+    input.focus();
+  });
+  const videoAttachRemove = container.querySelector('#video-attach-remove');
+  videoAttachRemove.addEventListener('click', clearVideoAttachment);
+
+  // Bloqueo TOTAL del composer durante la subida: además de send+input,
+  // adjuntar/quitar. Sin esto, adjuntar un video de reemplazo mid-upload
+  // era destruido en silencio por el clearVideoAttachment() post-subida.
+  const setComposerLock = (locked) => {
+    sendBtn.disabled = locked;
+    input.disabled = locked;
+    videoAttachBtn.disabled = locked;
+    videoAttachRemove.disabled = locked;
+  };
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -208,7 +329,35 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
       return;
     }
     const text = input.value.trim();
-    if (!text) return;
+    const videoToSend = pendingVideo;
+    if (!text && !videoToSend) return;
+
+    // Subida ANTES del insert optimista: spinner en el send + composer
+    // bloqueado por completo. Si falla, el adjunto sigue puesto para
+    // reintentar. Conservamos el path del objeto subido para poder
+    // borrarlo si luego el insert del mensaje falla (huérfanos en el
+    // bucket videos).
+    let videoUrl = null;
+    let videoPath = null;
+    if (videoToSend) {
+      setComposerLock(true);
+      const prevSendHtml = sendBtn.innerHTML;
+      sendBtn.innerHTML = '<span class="btn-spinner"></span>';
+      try {
+        const uploaded = await uploadVideoToStorage(videoToSend, user.id);
+        videoUrl = uploaded.url;
+        videoPath = uploaded.path;
+      } catch (err) {
+        setComposerLock(false);
+        sendBtn.innerHTML = prevSendHtml;
+        showToast('No se subió el video: ' + (err?.message || 'error desconocido'), 'error', 5000);
+        return;
+      }
+      setComposerLock(false);
+      sendBtn.innerHTML = prevSendHtml;
+      clearVideoAttachment();
+    }
+
     input.value = '';
     input.focus();
 
@@ -218,7 +367,8 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
     const optimistic = {
       id: tempId,
       userId: user.id,
-      content: text,
+      content: text || null,
+      videoUrl,
       authorTier: user.tier || 'general',
       authorRole: user.role || 'raver',
       isHost: false,
@@ -226,15 +376,23 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
       _pending: true,
     };
     messages.push(optimistic);
-    pendingByContent.set(optimisticKey(optimistic), tempId);
+    pendingPush(pendingByContent, optimisticKey(optimistic), tempId);
     paint();
 
     try {
-      const real = await sendChatMessageDB(roomKey, text);
+      const real = await sendChatMessageDB(roomKey, text || null, { videoUrl });
       if (real) {
+        pendingRemove(pendingByContent, optimisticKey(optimistic), tempId);
         const idx = messages.findIndex(m => m.id === tempId);
-        if (idx !== -1) messages[idx] = real;
-        pendingByContent.delete(optimisticKey(optimistic));
+        // El eco realtime pudo ganarle al POST y haber colocado ya la
+        // fila real — nunca escribirla dos veces (misma data-msg-id en
+        // dos burbujas).
+        if (idx !== -1 && !messages.some(m => m.id === real.id)) {
+          messages[idx] = real;
+        } else if (idx !== -1) {
+          messages.splice(idx, 1); // la real ya está: retirar la optimista sobrante
+        }
+        lastRenderedSig = ''; // swap in situ: length+lastId no cambian
         paint();
       }
     } catch (err) {
@@ -252,7 +410,11 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
         m._pending = false;
         m._syncFailed = true;
       }
-      pendingByContent.delete(optimisticKey(optimistic));
+      pendingRemove(pendingByContent, optimisticKey(optimistic), tempId);
+      // El insert falló pero la subida triunfó: sin mensaje que lo
+      // referencie, el video quedaría huérfano en el bucket — borrado
+      // best-effort (la burbuja local _syncFailed no sobrevive la sesión).
+      removeUploadedVideo(videoPath);
       paint();
 
       // Special-case: the message bubbled up as 'room_not_found' from
@@ -265,8 +427,34 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
     }
   });
 
-  container.querySelector('#back-btn').addEventListener('click', () => {
+  // ====== Salida de la sala ======
+  // Limpieza única para TODAS las rutas de salida (botón back, tap a un
+  // perfil, back-gesture/hashchange): cierra el canal realtime, revoca el
+  // blob URL del preview pendiente (sin esto cada video adjuntado y
+  // abandonado quedaba pinneado en memoria de por vida — la SPA nunca se
+  // descarga) y suelta el defer de paint + el listener de hashchange.
+  const cleanupRoom = () => {
+    clearVideoAttachment();
+    if (paintDeferCleanup) paintDeferCleanup();
     unsubscribeRealtime();
+    detachListener(window, HASH_CLEANUP_KEY);
+  };
+
+  // El router no avisa al salir de una ruta: el back-gesture / un deep
+  // link cambian el hash sin pasar por nuestros botones (mismo patrón que
+  // chat-conversation.js). Ojo con el eco del _syncHash de NUESTRA propia
+  // entrada: si el hash sigue apuntando a esta misma sala, no desmontar.
+  replaceListener(window, 'hashchange', () => {
+    const match = router.matchHash(window.location.hash);
+    if (match && (
+      (isGeneral && match.name === 'chat-general') ||
+      (!isGeneral && match.name === 'chat-party' && match.params.partyId === roomKey.slice('party:'.length))
+    )) return;
+    cleanupRoom();
+  }, HASH_CLEANUP_KEY);
+
+  container.querySelector('#back-btn').addEventListener('click', () => {
+    cleanupRoom();
     router.navigate(backRoute);
   });
 
@@ -299,17 +487,71 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
     if (!trigger) return;
     const userId = trigger.dataset.userId;
     if (!userId) return;
-    unsubscribeRealtime();
+    // profile-other resuelve EXCLUSIVAMENTE vía store.getUserById y con un
+    // miss rebota al muro. Un autor que solo vive en el userCache local
+    // (perfil creado después de la hidratación) se inyecta al store antes
+    // de navegar; si tampoco está en cache, ignorar el tap.
+    if (!ensureUserInStore(userId, userCache)) return;
+    cleanupRoom();
     store.setState({ viewingUserId: userId });
     router.navigate('profile-other', { userId });
   });
 }
 
+// Clave del listener de hashchange del desmontaje (ver replaceListener).
+const HASH_CLEANUP_KEY = 'chat-room-cleanup';
+
+// Garantiza que profile-other pueda resolver al usuario: si no está en
+// state.users pero sí en el cache de la página, se inyecta con el mismo
+// shape que produce la hidratación de perfiles. Devuelve false cuando no
+// hay datos en ningún lado (mejor ignorar el tap que rebotar al muro).
+function ensureUserInStore(userId, userCache) {
+  if (store.getUserById(userId)) return true;
+  const cached = userCache.get(userId);
+  if (!cached) return false;
+  store.setState({ users: [...(store.getState().users || []), cached] });
+  return true;
+}
+
 function optimisticKey(msg) {
-  // userId+content is enough to dedupe within a small time window — we
-  // delete the entry as soon as the server echo lands so collisions are
-  // virtually impossible.
-  return `${msg.userId}::${msg.content}`;
+  // userId+content dedupes within a small time window — we delete the
+  // entry as soon as the server echo lands so collisions are virtually
+  // impossible. Con video el content puede ser null (dos videos sin texto
+  // colisionarían siempre): la URL del video entra en la clave, igual que
+  // en chat-conversation.js.
+  return `${msg.userId}::${msg.content || ''}::${msg.videoUrl || ''}`;
+}
+
+// ---------------------------------------------------------------------
+// pendingByContent es Map<key, tempId[]> y NO Map<key, tempId>: dos
+// envíos idénticos rápidos ("jaja" Enter, "jaja" Enter) comparten clave,
+// y con un valor escalar el segundo set() pisaba el tempId del primero —
+// el eco realtime casaba entonces con la burbuja equivocada y el POST
+// re-escribía la fila real en la otra: mensaje duplicado en pantalla.
+// FIFO: push al enviar, shift cuando llega el eco (el eco más viejo casa
+// con el tempId más viejo), remove puntual cuando resuelve/falla el POST.
+// La clave se borra al vaciarse el array.
+// ---------------------------------------------------------------------
+function pendingPush(map, key, tempId) {
+  const arr = map.get(key) || [];
+  arr.push(tempId);
+  map.set(key, arr);
+}
+
+function pendingShift(map, key) {
+  const arr = map.get(key);
+  if (!arr || arr.length === 0) return null;
+  const tempId = arr.shift();
+  if (arr.length === 0) map.delete(key);
+  return tempId;
+}
+
+function pendingRemove(map, key, tempId) {
+  const arr = map.get(key);
+  if (!arr) return;
+  const i = arr.indexOf(tempId);
+  if (i !== -1) arr.splice(i, 1);
+  if (arr.length === 0) map.delete(key);
 }
 
 async function fillUserCache(messages, cache) {
@@ -358,6 +600,18 @@ function renderMessage(m, prev, currentUserId, userCache, isAdmin = false) {
   // (their id is a temp id the RPC can't resolve).
   const canModerate = isAdmin && !m._pending && !m._syncFailed;
 
+  // Burbuja de video (0039) — mismas clases que chat-conversation.js
+  // (.chat-msg-media-bubble/.chat-msg-video). La URL pasa por
+  // safeImageSrc (https de Storage pasa; nunca interpolar cruda). SIN
+  // autoplay + playsinline: iOS secuestra a fullscreen sin él.
+  const vid = m.videoUrl ? safeImageSrc(m.videoUrl) : null;
+  const bubble = vid
+    ? `<div class="chat-msg-bubble chat-msg-media-bubble">
+         <video class="chat-msg-video" controls playsinline webkit-playsinline preload="metadata" src="${vid}"></video>
+         ${m.content ? `<div class="chat-msg-caption">${sanitize(m.content)}</div>` : ''}
+       </div>`
+    : `<div class="chat-msg-bubble">${sanitize(m.content)}</div>`;
+
   return `
     <div class="chat-msg ${isMine ? 'chat-msg-mine' : ''} ${sameAsPrev ? 'chat-msg-stacked' : ''}" data-msg-id="${m.id}">
       ${sameAsPrev
@@ -374,7 +628,7 @@ function renderMessage(m, prev, currentUserId, userCache, isAdmin = false) {
         `}
         <div style="display:flex;align-items:center;gap:6px;">
           ${isMine && canModerate ? `<button data-action="admin-del-msg" data-msg-id="${m.id}" title="Eliminar (admin)" aria-label="Eliminar (admin)" style="background:transparent;border:none;color:#dc2626;cursor:pointer;padding:0;font-size:0.95em;line-height:1;flex-shrink:0;">🗑️</button>` : ''}
-          <div class="chat-msg-bubble">${sanitize(m.content)}</div>
+          ${bubble}
           ${!isMine && canModerate ? `<button data-action="admin-del-msg" data-msg-id="${m.id}" title="Eliminar (admin)" aria-label="Eliminar (admin)" style="background:transparent;border:none;color:#dc2626;cursor:pointer;padding:0;font-size:0.95em;line-height:1;flex-shrink:0;">🗑️</button>` : ''}
         </div>
       </div>
