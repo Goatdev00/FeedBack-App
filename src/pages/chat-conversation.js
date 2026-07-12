@@ -110,7 +110,7 @@ export function renderChatConversation(container, params = {}) {
           ${ICONS.camera}
         </button>
         <input type="file" id="attach-file" accept="image/*" hidden />
-        <button type="button" class="chat-attach-btn chat-attach-btn-emoji" id="video-attach-btn" title="Adjuntar video" aria-label="Adjuntar video">🎬</button>
+        <button type="button" class="chat-attach-btn" id="video-attach-btn" title="Adjuntar video" aria-label="Adjuntar video">${ICONS.video}</button>
         <!-- Sin capture (iOS lo forzaría a solo-cámara); accept = los 3
              mime del bucket videos (0039). -->
         <input type="file" id="video-attach-file" accept="video/mp4,video/quicktime,video/webm" hidden />
@@ -185,8 +185,9 @@ export function renderChatConversation(container, params = {}) {
     headSubEl.textContent = isGroup
       ? `${(c.members || []).length} miembro${(c.members || []).length === 1 ? '' : 's'}`
       : (other?.username || '');
-    muteBtn.textContent = c.muted ? '🔕' : '🔔';
+    muteBtn.innerHTML = c.muted ? ICONS.bellOff : ICONS.bell;
     muteBtn.title = c.muted ? 'Activar notificaciones' : 'Silenciar notificaciones';
+    muteBtn.setAttribute('aria-label', muteBtn.title);
   }
   updateHeader();
 
@@ -617,7 +618,7 @@ export function renderChatConversation(container, params = {}) {
         <div class="group-member-row" ${!isMe ? `data-action="view-profile" data-user-id="${m.userId}"` : ''}>
           ${avatarHTML(u, 'avatar-sm')}
           <span class="group-member-name">${sanitize(u.name)}${isMe ? ' (tú)' : ''}</span>
-          ${m.role === 'owner' ? '<span class="group-owner-badge" title="Creador del grupo">👑</span>' : ''}
+          ${m.role === 'owner' ? '<span class="badge badge-orange group-owner-badge" title="Creador del grupo">Owner</span>' : ''}
         </div>
       `;
     }).join('');
@@ -638,12 +639,12 @@ export function renderChatConversation(container, params = {}) {
         <div class="group-members-list">${membersHTML}</div>
 
         <div style="display:flex;flex-direction:column;gap:var(--space-sm);margin-top:var(--space-md);">
-          ${isOwner ? `<button type="button" class="btn btn-secondary btn-full btn-sm" id="grp-add">➕ Añadir miembros</button>` : ''}
-          ${isOwner ? `<button type="button" class="btn btn-secondary btn-full btn-sm" id="grp-edit">✏️ Cambiar nombre/foto</button>` : ''}
+          ${isOwner ? `<button type="button" class="btn btn-secondary btn-full btn-sm" id="grp-add">Añadir miembros</button>` : ''}
+          ${isOwner ? `<button type="button" class="btn btn-secondary btn-full btn-sm" id="grp-edit">Cambiar nombre/foto</button>` : ''}
           <button type="button" class="btn btn-secondary btn-full btn-sm" id="grp-mute">
-            ${c.muted ? '🔔 Activar notificaciones' : '🔕 Silenciar notificaciones'}
+            ${c.muted ? 'Activar notificaciones' : 'Silenciar notificaciones'}
           </button>
-          <button type="button" class="btn btn-full btn-sm conv-danger-btn" id="grp-leave">🚪 Salir del grupo</button>
+          <button type="button" class="btn btn-full btn-sm conv-danger-btn" id="grp-leave">Salir del grupo</button>
         </div>
       </div>
     `);
@@ -689,7 +690,7 @@ export function renderChatConversation(container, params = {}) {
       updateHeader();
       const cc = store.getConversationById(conversationId);
       overlay.querySelector('#grp-mute').textContent =
-        cc?.muted ? '🔔 Activar notificaciones' : '🔕 Silenciar notificaciones';
+        cc?.muted ? 'Activar notificaciones' : 'Silenciar notificaciones';
     });
 
     const leaveBtn = overlay.querySelector('#grp-leave');

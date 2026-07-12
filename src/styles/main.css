@@ -4304,6 +4304,12 @@ span > svg {
   background: rgba(255, 255, 255, 0.05);
 }
 
+.chat-header-action svg {
+  width: 20px;
+  height: 20px;
+  color: var(--text-secondary);
+}
+
 /* --- Burbujas con media + estados optimistas --- */
 .chat-msg-pending { opacity: 0.55; }
 
@@ -4483,13 +4489,6 @@ span > svg {
   max-height: 300px;
   border-radius: var(--radius-md);
   background: #000;
-}
-
-/* Botón 🎬 del composer — el .chat-attach-btn base está dimensionado
-   para un svg; el emoji necesita su propio tamaño de fuente. */
-.chat-attach-btn-emoji {
-  font-size: 1.05rem;
-  line-height: 1;
 }
 
 .chat-attach-btn:disabled {

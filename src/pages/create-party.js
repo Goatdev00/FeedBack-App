@@ -179,7 +179,7 @@ export function renderCreateParty(container, params = {}) {
       ${isRemate ? '' : `
         <!-- Venta de boletería (solo fiestas de promotor) -->
         <div class="form-section">
-          <div class="form-section-title">🎟️ Venta de boletería (opcional)</div>
+          <div class="form-section-title">Venta de boletería (opcional)</div>
           <div class="input-group">
             <input type="text" class="input" id="party-ticket" placeholder="WhatsApp o enlace de venta" maxlength="200" autocomplete="off" />
             <p style="font-size:var(--text-xs);color:var(--text-muted);margin-top:6px;">
@@ -191,7 +191,6 @@ export function renderCreateParty(container, params = {}) {
         <!-- Premium CTA -->
         <div class="card" style="background:linear-gradient(135deg, rgba(255,200,0,0.05), rgba(255,106,0,0.05));border-color:rgba(255,200,0,0.2);margin-top:var(--space-lg);">
           <div style="display:flex;align-items:center;gap:var(--space-md);">
-            <span style="font-size:1.5rem;">⭐</span>
             <div style="flex:1;">
               <h4 style="font-size:var(--text-sm);font-weight:600;color:#FFC800;">Evento Patrocinado</h4>
               <p style="font-size:var(--text-xs);color:var(--text-tertiary);">Destaca tu evento para mayor visibilidad</p>

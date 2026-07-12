@@ -428,7 +428,7 @@ function showSundayPrompt() {
       </p>
       <div style="display:flex;gap:var(--space-sm);">
         <button class="btn btn-ghost" id="sunday-later" style="flex:1;">Más tarde</button>
-        <button class="btn btn-primary" id="sunday-go" style="flex:1;">¡Vamos! 🎉</button>
+        <button class="btn btn-primary" id="sunday-go" style="flex:1;">¡Vamos!</button>
       </div>
     </div>
   `);

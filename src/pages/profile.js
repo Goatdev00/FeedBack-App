@@ -197,7 +197,7 @@ function renderProfileView(container, user, isOwn, initialTab) {
               </button>
               ${currentUser ? `
                 <button class="btn btn-outline btn-sm" id="dm-btn" data-user-id="${user.id}" title="Enviar mensaje">
-                  💬 Mensaje
+                  Mensaje
                 </button>
               ` : ''}
               <button class="btn btn-outline btn-sm" id="ask-btn" data-user-id="${user.id}">
@@ -349,11 +349,11 @@ function renderQuestionsTab(questions, isOwn, userId) {
   const deleteBtn = (q) => `
     <button class="question-delete-btn" data-question-id="${q.id}"
             title="Eliminar pregunta" aria-label="Eliminar pregunta"
-            style="background:none;border:none;cursor:pointer;padding:2px 6px;font-size:0.9rem;color:var(--text-tertiary);line-height:1;">🗑</button>
+            style="background:none;border:none;cursor:pointer;padding:2px 6px;color:var(--text-tertiary);line-height:1;"><span style="width:15px;height:15px;display:inline-flex;">${ICONS.trash}</span></button>
   `;
 
   if (isOwn && unansweredQ.length > 0) {
-    listHtml += sectionTitle('📩 Te han hecho', unansweredQ.length);
+    listHtml += sectionTitle('Te han hecho', unansweredQ.length);
     listHtml += unansweredQ.map(q => `
       <div class="question-card">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm);">
@@ -373,7 +373,7 @@ function renderQuestionsTab(questions, isOwn, userId) {
   if (answeredQ.length > 0) {
     if (listHtml) listHtml += divider;
     listHtml += sectionTitle(
-      isOwn ? '💬 Has respondido' : '💬 Respondidas',
+      isOwn ? 'Has respondido' : 'Respondidas',
       answeredQ.length,
       'var(--text-secondary)'
     );
@@ -796,7 +796,7 @@ function showSettingsModal() {
       <div style="display:flex;flex-direction:column;gap:var(--space-sm);">
         <button class="btn btn-secondary btn-full" id="btn-notifications" style="justify-content:flex-start;align-items:flex-start;flex-direction:column;gap:3px;height:auto;padding:12px 16px;text-align:left;">
           <span style="display:inline-flex;align-items:center;gap:8px;font-weight:600;">
-            <span style="width:18px;display:inline-flex;justify-content:center;">🔔</span>
+            <span style="width:18px;height:18px;display:inline-flex;">${ICONS.bell}</span>
             Notificaciones
           </span>
           <span style="font-size:0.78rem;color:var(--text-tertiary);font-weight:400;line-height:1.35;padding-left:26px;">

@@ -131,7 +131,7 @@ function renderPartyCard(party, state) {
   const djs = party.djs.map(id => store.getUserById(id)).filter(Boolean);
   const avgEnergy = party.reports?.energia || 0;
   const liveBadge = avgEnergy > 80
-    ? `<div style="position:absolute;top:12px;right:12px;padding:4px 10px;background:rgba(255,106,0,0.9);border-radius:var(--radius-full);font-size:0.625rem;font-weight:700;color:white;">🔥 EN VIVO</div>`
+    ? `<div style="position:absolute;top:12px;right:12px;padding:4px 10px;background:rgba(255,106,0,0.9);border-radius:var(--radius-full);font-size:0.625rem;font-weight:700;color:white;">EN VIVO</div>`
     : '';
 
   const flyerSrc = safeImageSrc(party.flyer);
@@ -156,7 +156,7 @@ function renderPartyCard(party, state) {
     <div class="party-card" data-party-id="${party.id}">
       ${party.sponsored ? `
         <div style="padding:6px 12px;background:rgba(255,200,0,0.1);display:flex;align-items:center;gap:6px;">
-          <span style="font-size:0.625rem;color:#FFC800;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">⭐ Evento patrocinado</span>
+          <span style="font-size:0.625rem;color:#FFC800;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Evento patrocinado</span>
         </div>
       ` : ''}
 

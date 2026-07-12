@@ -69,7 +69,7 @@ function renderStep(container) {
           <div class="role-card role-locked" data-role="promotor" aria-disabled="true">
             <span class="role-emoji">✨</span>
             <div class="role-info">
-              <h3>Promotor <span class="role-lock" aria-hidden="true">🔒</span></h3>
+              <h3>Promotor</h3>
               <p>Cuenta verificada por el equipo de FEEDBACK. Contáctanos para habilitar tu perfil.</p>
             </div>
           </div>
@@ -146,7 +146,7 @@ function renderStep(container) {
           : ''
         }
         <button class="btn btn-primary btn-full" id="onb-next">
-          ${currentStep === TOTAL_STEPS ? 'Empezar 🚀' : 'Siguiente'}
+          ${currentStep === TOTAL_STEPS ? 'Empezar' : 'Siguiente'}
         </button>
       </div>
     </div>
@@ -314,7 +314,7 @@ async function finishOnboarding(submitBtn) {
       if (submitBtn) {
         submitBtn.disabled = false;
         submitBtn.style.pointerEvents = '';
-        submitBtn.innerHTML = 'Empezar 🚀';
+        submitBtn.innerHTML = 'Empezar';
       }
       return;
     }

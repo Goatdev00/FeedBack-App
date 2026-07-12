@@ -45,8 +45,8 @@ export function renderChatsPrivate(container) {
       </p>
 
       <div class="conv-actions-bar">
-        <button class="btn btn-secondary btn-sm" id="new-chat-btn">💬 Nuevo chat</button>
-        <button class="btn btn-secondary btn-sm" id="new-group-btn">👥 Nuevo grupo</button>
+        <button class="btn btn-secondary btn-sm" id="new-chat-btn">Nuevo chat</button>
+        <button class="btn btn-secondary btn-sm" id="new-group-btn">Nuevo grupo</button>
       </div>
 
       ${state.conversationsUnavailable ? `
@@ -177,11 +177,11 @@ function openConvMenu(conv) {
       <div class="modal-handle"></div>
       <div class="modal-title">${sanitize(name)}</div>
       <button type="button" class="conv-menu-item" id="menu-mute">
-        ${conv.muted ? '🔔 Activar notificaciones' : '🔕 Silenciar notificaciones'}
+        ${conv.muted ? 'Activar notificaciones' : 'Silenciar notificaciones'}
       </button>
       ${isGroup ? `
         <button type="button" class="conv-menu-item conv-menu-danger" id="menu-leave">
-          🚪 Salir del grupo
+          Salir del grupo
         </button>
       ` : ''}
     </div>

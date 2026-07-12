@@ -102,7 +102,7 @@ function renderChatRoom(container, { roomKey, title, subtitle, backRoute }) {
       </div>
 
       <form class="chat-input-row" id="chat-form">
-        <button type="button" class="chat-attach-btn chat-attach-btn-emoji" id="video-attach-btn" title="Adjuntar video" aria-label="Adjuntar video">🎬</button>
+        <button type="button" class="chat-attach-btn" id="video-attach-btn" title="Adjuntar video" aria-label="Adjuntar video">${ICONS.video}</button>
         <!-- Sin capture: en iOS capture fuerza solo-cámara y esconde la
              fototeca. accept = los 3 mime que admite el bucket videos. -->
         <input type="file" id="video-attach-file" accept="video/mp4,video/quicktime,video/webm" hidden />
@@ -627,9 +627,9 @@ function renderMessage(m, prev, currentUserId, userCache, isAdmin = false) {
           </div>
         `}
         <div style="display:flex;align-items:center;gap:6px;">
-          ${isMine && canModerate ? `<button data-action="admin-del-msg" data-msg-id="${m.id}" title="Eliminar (admin)" aria-label="Eliminar (admin)" style="background:transparent;border:none;color:#dc2626;cursor:pointer;padding:0;font-size:0.95em;line-height:1;flex-shrink:0;">🗑️</button>` : ''}
+          ${isMine && canModerate ? `<button data-action="admin-del-msg" data-msg-id="${m.id}" title="Eliminar (admin)" aria-label="Eliminar (admin)" style="background:transparent;border:none;color:#dc2626;cursor:pointer;padding:0;line-height:1;flex-shrink:0;"><span style="width:15px;height:15px;display:inline-flex;">${ICONS.trash}</span></button>` : ''}
           ${bubble}
-          ${!isMine && canModerate ? `<button data-action="admin-del-msg" data-msg-id="${m.id}" title="Eliminar (admin)" aria-label="Eliminar (admin)" style="background:transparent;border:none;color:#dc2626;cursor:pointer;padding:0;font-size:0.95em;line-height:1;flex-shrink:0;">🗑️</button>` : ''}
+          ${!isMine && canModerate ? `<button data-action="admin-del-msg" data-msg-id="${m.id}" title="Eliminar (admin)" aria-label="Eliminar (admin)" style="background:transparent;border:none;color:#dc2626;cursor:pointer;padding:0;line-height:1;flex-shrink:0;"><span style="width:15px;height:15px;display:inline-flex;">${ICONS.trash}</span></button>` : ''}
         </div>
       </div>
     </div>

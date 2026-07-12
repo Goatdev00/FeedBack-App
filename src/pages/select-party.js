@@ -63,7 +63,7 @@ export function renderSelectParty(container, params = {}) {
 
       <!-- AI suggestion label -->
       <div style="display:flex;align-items:center;gap:var(--space-sm);margin-bottom:var(--space-md);">
-        <span style="font-size:var(--text-xs);color:var(--text-tertiary);">${isRemates ? `🔥 Remates activos en ${state.selectedCity}` : `🤖 Fiestas sugeridas para hoy en ${state.selectedCity}`}</span>
+        <span style="font-size:var(--text-xs);color:var(--text-tertiary);">${isRemates ? `Remates activos en ${state.selectedCity}` : `Fiestas sugeridas para hoy en ${state.selectedCity}`}</span>
       </div>
 
       <!-- Party list -->
@@ -100,7 +100,7 @@ function renderPartyOption(party) {
       ${thumb}
       <div class="party-selector-info">
         <div class="party-selector-name">
-          ${party.sponsored ? '⭐ ' : ''}${sanitize(party.name)}
+          ${sanitize(party.name)}
         </div>
         <div class="party-selector-detail">
           📍 ${sanitize(party.venue)} · ${sanitize(party.city)} · ${sanitize(party.startTime)}
