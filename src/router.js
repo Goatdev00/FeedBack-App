@@ -35,13 +35,21 @@ const ROUTE_PATHS = {
   'party-detail':  (p) => `/party/${encodeURIComponent(p?.partyId || '')}`,
   'select-party':  () => '/select-party',
   'create-post':   (p) => p?.partyId ? `/create-post/${encodeURIComponent(p.partyId)}` : '/create-post',
-  'create-party':  () => '/create-party',
+  // kind=remate viaja en el hash: sin él, un reload / re-entrada por
+  // historial a mitad de "Crear remate" perdía el modo y el gate de
+  // promotor rebotaba al usuario con un toast equivocado.
+  'create-party':  (p) => p?.kind === 'remate' ? '/create-party?kind=remate' : '/create-party',
   'sunday-rating': () => '/sunday-rating',
   notifications:   () => '/notifications',
   'chat-hub':      () => '/chats',
   'chat-parties':  () => '/chats/parties',
+  'chats-private': () => '/chats/private',
   'chat-general':  () => '/chat/general',
   'chat-party':    (p) => `/chat/party/${encodeURIComponent(p?.partyId || '')}`,
+  // Hilo privado (DM o grupo). El path /chat/conv/<uuid> es también el
+  // deep-link que manda el push tipo 'conversation' (send-push) — si se
+  // renombra aquí hay que renombrarlo allá.
+  'chat-conversation': (p) => `/chat/conv/${encodeURIComponent(p?.conversationId || '')}`,
   admin:           () => '/admin',
 };
 
@@ -85,6 +93,9 @@ function parseHash(hash) {
     const name = STATIC[seg[0]];
     if (name === 'wall' && query.post)   return { name, params: { post: query.post } };
     if (name === 'profile' && query.tab) return { name, params: { tab: query.tab } };
+    // Espejo de ROUTE_PATHS['create-party']: el modo remate debe
+    // sobrevivir reload / back-forward (create-party lee params.kind).
+    if (name === 'create-party' && query.kind) return { name, params: { kind: query.kind } };
     return { name, params: {} };
   }
   if (seg.length === 1 && seg[0] === 'create-post') return { name: 'create-post', params: {} };
@@ -96,10 +107,15 @@ function parseHash(hash) {
     if (a === 'party' && b)       return { name: 'party-detail', params: { partyId: b } };
     if (a === 'create-post' && b) return { name: 'create-post', params: { partyId: b } };
     if (a === 'chats' && b === 'parties') return { name: 'chat-parties', params: {} };
+    if (a === 'chats' && b === 'private') return { name: 'chats-private', params: {} };
     if (a === 'chat' && b === 'general')  return { name: 'chat-general', params: {} };
   }
   if (seg.length === 3 && seg[0] === 'chat' && seg[1] === 'party' && seg[2]) {
     return { name: 'chat-party', params: { partyId: seg[2] } };
+  }
+  // Deep-link del push de mensajería privada: /#/chat/conv/<conversationId>.
+  if (seg.length === 3 && seg[0] === 'chat' && seg[1] === 'conv' && seg[2]) {
+    return { name: 'chat-conversation', params: { conversationId: seg[2] } };
   }
   return null;
 }
@@ -113,6 +129,7 @@ class Router {
     this._refreshTimer = null;        // debounce token for refreshCurrentRoute
     this._suppressHash = null;        // hash we just wrote → skip its hashchange echo
     this._hasSession = null;          // injected by main.js (avoids a store import cycle)
+    this._videoDeferCleanup = null;   // limpia el refresh pospuesto por un video en reproducción
   }
 
   register(name, renderFn) {
@@ -187,6 +204,11 @@ class Router {
         clearTimeout(this._refreshTimer);
         this._refreshTimer = null;
       }
+      // Igual con un refresh pospuesto por un video en reproducción
+      // (ver _doRefresh): quedó atado a un <video> de la ruta VIEJA. La
+      // navegación explícita nunca se pospone — renderiza ya y suelta
+      // los listeners pendientes.
+      if (this._videoDeferCleanup) this._videoDeferCleanup();
 
       this.currentRoute = name;
       // CLONE the params: pages may consume one-shot params (wall.js
@@ -314,7 +336,46 @@ class Router {
     const render = this.routes[this.currentRoute];
     const app = document.getElementById('app');
     if (!render || !app) return;
+
+    // Un refresh re-renderiza la ruta entera vía innerHTML, y eso
+    // DESTRUYE cualquier <video> en reproducción: el elemento se recrea
+    // desde cero y vuelve pausado a frame 0 (un post ajeno en el muro o
+    // un flip de unread bastaban para matar un video a mitad de play).
+    // Si hay un video sonando dentro de #app, POSPONEMOS el refresh
+    // hasta que pause/termine. Solo aplica a refresh de la MISMA ruta:
+    // la navegación explícita (navigate/_render) no pasa por aquí y
+    // jamás se pospone. No se pierde ningún dato — el render lee estado
+    // vivo del store cuando por fin corre.
+    const playing = Array.from(app.querySelectorAll('video'))
+      .find(v => !v.paused && !v.ended && v.readyState > 2);
+    if (playing) {
+      this._deferRefreshForVideo(playing);
+      return;
+    }
+
     render(app, this.currentParams || {});
+  }
+
+  /**
+   * Cuelga listeners one-shot 'pause'/'ended' sobre el video activo que
+   * re-lanzan refreshCurrentRoute. Si el refresh se pospone varias veces
+   * (ráfaga realtime con el video aún sonando), el defer anterior se
+   * limpia antes de colgar el nuevo — nunca se acumulan listeners.
+   */
+  _deferRefreshForVideo(video) {
+    if (this._videoDeferCleanup) this._videoDeferCleanup();
+    const onDone = () => {
+      cleanup();
+      this.refreshCurrentRoute(); // re-lanza el refresh debounced
+    };
+    const cleanup = () => {
+      video.removeEventListener('pause', onDone);
+      video.removeEventListener('ended', onDone);
+      if (this._videoDeferCleanup === cleanup) this._videoDeferCleanup = null;
+    };
+    this._videoDeferCleanup = cleanup;
+    video.addEventListener('pause', onDone);
+    video.addEventListener('ended', onDone);
   }
 }
 

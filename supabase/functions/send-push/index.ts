@@ -13,6 +13,11 @@
 // body server-side, and pushes to every subscription `toUserId` has
 // registered. Stale subscriptions (404/410) are pruned in place.
 //
+// The 'conversation' type (private DMs/groups) is the exception: the
+// client sends ONE call per message ({ conversationId, messageId }, no
+// toUserId) and the recipients are resolved SERVER-SIDE from
+// conversation_members — see handleConversationPush below.
+//
 // Texts are kept in Spanish to match the rest of the product UI.
 // =====================================================================
 
@@ -106,17 +111,38 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info, x-client',
 };
 
-type PushType = 'like' | 'comment' | 'comment-like' | 'follow' | 'chat' | 'question-answered' | 'question-received' | 'party-attendance';
+type PushType = 'like' | 'comment' | 'comment-like' | 'follow' | 'chat' | 'question-answered' | 'question-received' | 'party-attendance' | 'conversation';
 
 interface RequestBody {
   type: PushType;
-  toUserId: string;
+  // Absent for type 'conversation' (recipients are resolved server-side
+  // from conversation_members); required for every other type.
+  toUserId?: string;
   postId?: string;
   commentId?: string;
   roomId?: string;
   questionId?: string;
   partyId?: string;
+  conversationId?: string;
+  messageId?: string;
 }
+
+// Rate-limit caps against push_events (0029; `kind` column from 0038,
+// service_role only):
+//   * 30 sends / 5 min per sender (global) — CLASSIC single-recipient
+//     types ONLY (ledger rows with kind null). Organic activity never
+//     hits it, scripts do. The conversation fan-out inserts one row per
+//     recipient (kind='conversation') and is deliberately EXEMPT from
+//     this cap: counting its rows here let one active group chat burn
+//     the sender's whole budget and silently 429 their unrelated
+//     like/comment/follow pushes (see handleConversationPush).
+//   * 5 sends / 5 min per (sender → recipient) — the anti-harassment
+//     cap, enforced by BOTH flows counting ALL rows regardless of kind:
+//     over-counting across flows is conservative and correct, it bounds
+//     the total sender→recipient pressure.
+const WINDOW_MS = 5 * 60 * 1000;
+const MAX_PER_WINDOW = 30;
+const MAX_PER_RECIPIENT = 5;
 
 function json(status: number, body: Record<string, unknown>) {
   return new Response(JSON.stringify(body), {
@@ -194,6 +220,16 @@ function buildMessage(
         body: `${fromUsername} confirmó que va a tu fiesta`,
         url: `/#/party/${body.partyId}`,
       };
+    case 'conversation':
+      // Never reached: type 'conversation' short-circuits into
+      // handleConversationPush (its title/body depend on the DM/group
+      // kind and the message preview). Kept so the switch stays
+      // exhaustive over PushType.
+      return {
+        title: 'Nuevo mensaje',
+        body: `${fromUsername} te envió un mensaje`,
+        url: body.conversationId ? `/#/chat/conv/${body.conversationId}` : '/#/chats',
+      };
   }
 }
 
@@ -243,7 +279,7 @@ async function verifyRelationship(
     case 'follow': {
       const { data: f } = await admin
         .from('follows').select('follower_id')
-        .eq('follower_id', senderId).eq('following_id', body.toUserId).maybeSingle();
+        .eq('follower_id', senderId).eq('following_id', body.toUserId!).maybeSingle();
       return { ok: !!f };
     }
     case 'chat': {
@@ -262,7 +298,7 @@ async function verifyRelationship(
           .eq('room_id', body.roomId!).eq('user_id', senderId)
           .gte('created_at', tenMinAgo).limit(1).maybeSingle(),
         admin.from('chat_messages').select('id')
-          .eq('room_id', body.roomId!).eq('user_id', body.toUserId)
+          .eq('room_id', body.roomId!).eq('user_id', body.toUserId!)
           .gte('created_at', sevenDaysAgo).limit(1).maybeSingle(),
       ]);
       if (!msg || !rcpt) return { ok: false };
@@ -276,7 +312,7 @@ async function verifyRelationship(
       const { data: q } = await admin
         .from('questions').select('id')
         .eq('id', body.questionId!).eq('target_id', senderId)
-        .eq('asker_id', body.toUserId).not('answer', 'is', null).maybeSingle();
+        .eq('asker_id', body.toUserId!).not('answer', 'is', null).maybeSingle();
       return { ok: !!q };
     }
     case 'question-received': {
@@ -284,7 +320,7 @@ async function verifyRelationship(
       const { data: q } = await admin
         .from('questions').select('id')
         .eq('id', body.questionId!).eq('asker_id', senderId)
-        .eq('target_id', body.toUserId).maybeSingle();
+        .eq('target_id', body.toUserId!).maybeSingle();
       return { ok: !!q };
     }
     case 'party-attendance': {
@@ -311,6 +347,203 @@ async function resolveSenderUsername(admin: SupabaseClient, senderId: string): P
     return 'Alguien';
   }
   return data?.username || data?.name || 'Alguien';
+}
+
+// ---------------------------------------------------------------------
+// sendToUserSubscriptions — pushes `payload` to EVERY subscription one
+// user has registered, pruning in place the ones the push service
+// already forgot (404/410). Shared by the classic single-recipient flow
+// and the conversation fan-out.
+// ---------------------------------------------------------------------
+async function sendToUserSubscriptions(
+  admin: SupabaseClient,
+  userId: string,
+  payload: string,
+): Promise<{ sent: number; removed: number; subsCount: number; readError: boolean }> {
+  const { data: subs, error: subsErr } = await admin
+    .from('push_subscriptions')
+    .select('endpoint, subscription')
+    .eq('user_id', userId);
+
+  if (subsErr) {
+    console.warn('[send-push] failed to read subscriptions', subsErr);
+    return { sent: 0, removed: 0, subsCount: 0, readError: true };
+  }
+  if (!subs || subs.length === 0) {
+    return { sent: 0, removed: 0, subsCount: 0, readError: false };
+  }
+
+  let sent = 0;
+  let removed = 0;
+
+  for (const row of subs) {
+    try {
+      // web-push accepts the full PushSubscription shape (endpoint +
+      // keys.{p256dh, auth}). Our `subscription` jsonb is exactly that.
+      // Inject our own WebCrypto-signed VAPID Authorization header; with
+      // no setVapidDetails, web-push keeps our header and only does the
+      // aes128gcm encryption + HTTP send.
+      const sub = row.subscription as unknown as webpush.PushSubscription;
+      await webpush.sendNotification(sub, payload, {
+        headers: { Authorization: await vapidAuthHeader(sub.endpoint) },
+        TTL: 12 * 60 * 60,
+        contentEncoding: 'aes128gcm', // matches the `vapid t=, k=` header form
+      });
+      sent++;
+    } catch (err) {
+      const e = err as { statusCode?: number; body?: unknown };
+      const code = e?.statusCode;
+      if (code === 404 || code === 410) {
+        // Gone / Not Found → the push service forgot this endpoint.
+        // Prune it so we don't keep paying the round-trip every send.
+        const { error: delErr } = await admin
+          .from('push_subscriptions')
+          .delete()
+          .eq('endpoint', row.endpoint);
+        if (delErr) console.warn('[send-push] failed to prune stale subscription', delErr);
+        else removed++;
+      } else {
+        console.warn('[send-push] sendNotification failed', code, e?.body);
+      }
+      // Never abort the loop on a single failure — other devices still
+      // need to receive the push.
+    }
+  }
+
+  return { sent, removed, subsCount: subs.length, readError: false };
+}
+
+// ---------------------------------------------------------------------
+// handleConversationPush — server-side fan-out for private DMs/groups.
+// The client sends ONE call per message; the recipient list is resolved
+// HERE from conversation_members, so a hostile client can never aim the
+// push at anyone who isn't a real member, and the per-conversation mute
+// is enforced server-side (muted=true → that member receives nothing).
+// Party rooms and the global chat intentionally have NO push — this
+// path only exists for conversation_messages.
+// ---------------------------------------------------------------------
+async function handleConversationPush(
+  admin: SupabaseClient,
+  senderId: string,
+  body: RequestBody,
+): Promise<Response> {
+  // NO global 30/5min cap on this flow (unlike the classic types): the
+  // fan-out inserts one ledger row per effective recipient, so a single
+  // 30-member group (the 0038 cap) would exhaust the whole budget in two
+  // messages and hard-429 every later push in the window — including the
+  // sender's unrelated like/comment/follow pushes, since the ledger is
+  // shared. Abuse stays bounded without it: the caller must be a real,
+  // current member of the conversation (verified below), membership is
+  // capped at 30, and the silent per-recipient 5/5min throttle in the
+  // loop limits the damage any sender can do to each victim.
+  const windowStart = new Date(Date.now() - WINDOW_MS).toISOString();
+
+  // The message must exist, belong to THIS conversation, be authored by
+  // the caller, be recent (mirror of the 10-min check in case 'chat')
+  // and not soft-deleted — otherwise anyone could replay pushes off
+  // other people's or ancient messages.
+  const { data: msg } = await admin
+    .from('conversation_messages')
+    .select('id, conversation_id, user_id, content, image_url, video_url, created_at, deleted_at')
+    .eq('id', body.messageId!)
+    .maybeSingle();
+  if (
+    !msg
+    || msg.conversation_id !== body.conversationId
+    || msg.user_id !== senderId
+    || msg.deleted_at !== null
+    || new Date(msg.created_at).getTime() < Date.now() - 10 * 60 * 1000
+  ) {
+    return json(403, { error: 'relationship_not_verified' });
+  }
+
+  const { data: conv } = await admin
+    .from('conversations')
+    .select('id, kind, title')
+    .eq('id', body.conversationId!)
+    .maybeSingle();
+  if (!conv) {
+    return json(403, { error: 'relationship_not_verified' });
+  }
+
+  const { data: members, error: memErr } = await admin
+    .from('conversation_members')
+    .select('user_id, muted')
+    .eq('conversation_id', body.conversationId!);
+  if (memErr || !members) {
+    console.warn('[send-push] failed to read conversation members', memErr);
+    return json(500, { error: 'members_read_failed' });
+  }
+  // The sender must be a member (the message row implies it, but a
+  // member who already LEFT must not keep push power over the group).
+  if (!members.some((m) => m.user_id === senderId)) {
+    return json(403, { error: 'relationship_not_verified' });
+  }
+
+  const recipients = members.filter((m) => m.user_id !== senderId && !m.muted);
+  if (recipients.length === 0) {
+    return json(200, { sent: 0, removed: 0, skipped: 0, reason: 'no_recipients' });
+  }
+
+  const fromUsername = await resolveSenderUsername(admin, senderId);
+
+  // Group pushes carry the group title + an 80-char preview (or a media
+  // tag); DM pushes keep the neutral body of the classic 'chat' type —
+  // the content itself travels when the app opens, not in the push.
+  const preview = msg.content
+    ? (msg.content.length > 80 ? `${msg.content.slice(0, 80)}…` : msg.content)
+    : (msg.video_url ? '🎬 Video' : '📷 Foto');
+  const isGroup = conv.kind === 'group';
+  const payload = JSON.stringify({
+    title: isGroup ? (conv.title || 'Nuevo mensaje') : 'Nuevo mensaje',
+    body: isGroup ? `${fromUsername}: ${preview}` : `${fromUsername} te envió un mensaje`,
+    url: `/#/chat/conv/${body.conversationId}`,
+  });
+
+  let sent = 0;
+  let removed = 0;
+  let skipped = 0;
+
+  for (const r of recipients) {
+    // Per-recipient 5/5min throttle, SILENT (WhatsApp-style): in a busy
+    // group some recipients may be saturated while others aren't —
+    // skipping one is not an error for the rest. Deliberately counts ALL
+    // ledger rows (classic kinds too, no .is('kind', ...) filter):
+    // over-counting is conservative — it bounds the TOTAL pressure this
+    // sender puts on each recipient across every push type.
+    const { count: toRecipient, error: rrErr } = await admin
+      .from('push_events')
+      .select('*', { count: 'exact', head: true })
+      .eq('sender_id', senderId)
+      .eq('recipient_id', r.user_id)
+      .gte('created_at', windowStart);
+    if (!rrErr && (toRecipient ?? 0) >= MAX_PER_RECIPIENT) {
+      skipped++;
+      continue;
+    }
+
+    const result = await sendToUserSubscriptions(admin, r.user_id, payload);
+    sent += result.sent;
+    removed += result.removed;
+
+    // Only EFFECTIVE sends consume ledger budget — a recipient with no
+    // subscriptions shouldn't burn throttle they never received.
+    // kind='conversation' keeps these fan-out rows out of the classic
+    // flow's global 30/5min counter (which filters kind null). No
+    // deploy-before-migrate hazard: pre-0038 this line is unreachable,
+    // the conversation_messages read above errors → msg null → 403.
+    if (result.sent > 0) {
+      await admin.from('push_events').insert({ sender_id: senderId, recipient_id: r.user_id, kind: 'conversation' });
+    }
+  }
+
+  // Prune this sender's stale ledger rows (same as the classic flow) so
+  // push_events stays tiny without a scheduled job.
+  await admin.from('push_events').delete()
+    .eq('sender_id', senderId)
+    .lt('created_at', new Date(Date.now() - 60 * 60 * 1000).toISOString());
+
+  return json(200, { sent, removed, skipped });
 }
 
 Deno.serve(async (req: Request) => {
@@ -348,9 +581,15 @@ Deno.serve(async (req: Request) => {
     return json(400, { error: 'invalid_json' });
   }
 
-  const validTypes: PushType[] = ['like', 'comment', 'comment-like', 'follow', 'chat', 'question-answered', 'question-received', 'party-attendance'];
-  if (!body || !validTypes.includes(body.type) || !body.toUserId) {
+  const validTypes: PushType[] = ['like', 'comment', 'comment-like', 'follow', 'chat', 'question-answered', 'question-received', 'party-attendance', 'conversation'];
+  // 'conversation' carries no toUserId (fan-out resolves recipients
+  // server-side); every other type still requires it.
+  if (!body || !validTypes.includes(body.type)
+      || (body.type !== 'conversation' && !body.toUserId)) {
     return json(400, { error: 'invalid_payload' });
+  }
+  if (body.type === 'conversation' && (!body.conversationId || !body.messageId)) {
+    return json(400, { error: 'missing_conversation_fields' });
   }
   if ((body.type === 'like' || body.type === 'comment') && !body.postId) {
     return json(400, { error: 'missing_postId' });
@@ -378,32 +617,47 @@ Deno.serve(async (req: Request) => {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
+  // ---------------- Conversation fan-out ----------------
+  // Diverts BEFORE the toUserId self-guard and the single-recipient
+  // rate limit: this type has no toUserId and runs its own flow
+  // (message+membership verification → per-recipient silent throttle →
+  // push to every member's subscriptions; no global cap — see
+  // handleConversationPush for why).
+  if (body.type === 'conversation') {
+    return await handleConversationPush(admin, user.id, body);
+  }
+
   // ---------------- Self-notification guard ----------------
   if (body.toUserId === user.id) {
     return json(200, { sent: 0, removed: 0, reason: 'self' });
   }
 
   // ---------------- Rate limit ----------------
-  // Two caps against push_events (0029, service_role only):
-  //   * 30 sends / 5 min per sender (global — organic activity never
-  //     hits it, scripts do).
-  //   * 5 sends / 5 min per (sender → recipient). This is the
-  //     anti-harassment cap: like/unlike or follow/unfollow loops
-  //     re-create a valid relationship on every iteration, so the
-  //     relationship gate alone can't stop directed spam.
-  const WINDOW_MS = 5 * 60 * 1000;
-  const MAX_PER_WINDOW = 30;
-  const MAX_PER_RECIPIENT = 5;
+  // Both caps (module-level constants, shared with the conversation
+  // fan-out). The per-recipient one is the anti-harassment cap:
+  // like/unlike or follow/unfollow loops re-create a valid relationship
+  // on every iteration, so the relationship gate alone can't stop
+  // directed spam.
   const windowStart = new Date(Date.now() - WINDOW_MS).toISOString();
   const [{ count: sentInWindow, error: rlErr }, { count: sentToRecipient, error: rrErr }] = await Promise.all([
     admin.from('push_events')
       .select('*', { count: 'exact', head: true })
       .eq('sender_id', user.id)
+      // Classic rows only: conversation fan-out rows carry
+      // kind='conversation' and must not burn this budget (one busy
+      // group chat would starve every other push type — see the caps
+      // comment up top). If 0038 is not applied yet the filter errors
+      // (42703, unknown column) → rlErr → the fail-open below, which is
+      // harmless: pre-0038 no conversation rows exist, so an unfiltered
+      // count would have been identical anyway.
+      .is('kind', null)
       .gte('created_at', windowStart),
     admin.from('push_events')
       .select('*', { count: 'exact', head: true })
       .eq('sender_id', user.id)
-      .eq('recipient_id', body.toUserId)
+      .eq('recipient_id', body.toUserId!)
+      // No kind filter here on purpose: the anti-harassment cap counts
+      // conversation rows too — over-counting is conservative.
       .gte('created_at', windowStart),
   ]);
   if (rlErr || rrErr) {
@@ -423,7 +677,7 @@ Deno.serve(async (req: Request) => {
 
   // Record the accepted send + prune this sender's stale ledger rows so
   // push_events stays tiny without a scheduled job.
-  await admin.from('push_events').insert({ sender_id: user.id, recipient_id: body.toUserId });
+  await admin.from('push_events').insert({ sender_id: user.id, recipient_id: body.toUserId! });
   await admin.from('push_events').delete()
     .eq('sender_id', user.id)
     .lt('created_at', new Date(Date.now() - 60 * 60 * 1000).toISOString());
@@ -435,58 +689,16 @@ Deno.serve(async (req: Request) => {
     { senderId: user.id, chatPath: rel.chatPath },
   );
 
-  // ---------------- Fetch subscriptions ----------------
-  const { data: subs, error: subsErr } = await admin
-    .from('push_subscriptions')
-    .select('endpoint, subscription')
-    .eq('user_id', body.toUserId);
-
-  if (subsErr) {
-    console.warn('[send-push] failed to read subscriptions', subsErr);
-    return json(500, { error: 'subscriptions_read_failed' });
-  }
-
-  if (!subs || subs.length === 0) {
-    return json(200, { sent: 0, removed: 0, reason: 'no_subscriptions' });
-  }
-
   // ---------------- Dispatch ----------------
   const payload = JSON.stringify({ title, body: pushBody, url });
-  let sent = 0;
-  let removed = 0;
+  const { sent, removed, subsCount, readError } =
+    await sendToUserSubscriptions(admin, body.toUserId!, payload);
 
-  for (const row of subs) {
-    try {
-      // web-push accepts the full PushSubscription shape (endpoint +
-      // keys.{p256dh, auth}). Our `subscription` jsonb is exactly that.
-      // Inject our own WebCrypto-signed VAPID Authorization header; with
-      // no setVapidDetails, web-push keeps our header and only does the
-      // aes128gcm encryption + HTTP send.
-      const sub = row.subscription as unknown as webpush.PushSubscription;
-      await webpush.sendNotification(sub, payload, {
-        headers: { Authorization: await vapidAuthHeader(sub.endpoint) },
-        TTL: 12 * 60 * 60,
-        contentEncoding: 'aes128gcm', // matches the `vapid t=, k=` header form
-      });
-      sent++;
-    } catch (err) {
-      const e = err as { statusCode?: number; body?: unknown };
-      const code = e?.statusCode;
-      if (code === 404 || code === 410) {
-        // Gone / Not Found → the push service forgot this endpoint.
-        // Prune it so we don't keep paying the round-trip every send.
-        const { error: delErr } = await admin
-          .from('push_subscriptions')
-          .delete()
-          .eq('endpoint', row.endpoint);
-        if (delErr) console.warn('[send-push] failed to prune stale subscription', delErr);
-        else removed++;
-      } else {
-        console.warn('[send-push] sendNotification failed', code, e?.body);
-      }
-      // Never abort the loop on a single failure — other devices still
-      // need to receive the push.
-    }
+  if (readError) {
+    return json(500, { error: 'subscriptions_read_failed' });
+  }
+  if (subsCount === 0) {
+    return json(200, { sent: 0, removed: 0, reason: 'no_subscriptions' });
   }
 
   return json(200, { sent, removed });

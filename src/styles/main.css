@@ -2504,6 +2504,75 @@ span > svg {
   height: 40px;
 }
 
+/* --- Wall Fiestas | Remates segmented control ---
+   Sits as the middle child of .wall-top-row (flex space-between), between
+   the 40px chat and notification buttons. Budget at 360px wide: ~328px of
+   page content − 80px of side buttons ⇒ ~240px for the pill, so paddings
+   stay tight and labels use text-xs. Active state is brand-orange (not the
+   grey-ish .tab-item pattern) so it reads instantly in BOTH themes over
+   the lava-lamp background; inactive uses opacity instead of a grey tone
+   (the "no greys" policy aliases every text token to primary). */
+.wall-tabs {
+  display: flex;
+  gap: 3px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  padding: 3px;
+  border-radius: var(--radius-full);
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.wall-tab {
+  border: none;
+  background: transparent;
+  font-family: var(--font-primary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-primary);
+  opacity: 0.6;
+  padding: 6px 13px;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--duration-normal) var(--ease-out),
+              color var(--duration-normal) var(--ease-out),
+              opacity var(--duration-normal) var(--ease-out),
+              box-shadow var(--duration-normal) var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.wall-tab:active {
+  transform: scale(0.96);
+}
+
+.wall-tab-active {
+  background: var(--gradient-orange);
+  color: #fff;
+  opacity: 1;
+  box-shadow: var(--shadow-orange);
+}
+
+/* Muy angosto (<380px): recorta el padding para que las dos pestañas +
+   emojis sigan cabiendo entre los botones laterales. */
+@media (max-width: 380px) {
+  .wall-tab {
+    padding: 6px 9px;
+    letter-spacing: -0.2px;
+  }
+}
+
+[data-theme="light"] .wall-tabs {
+  background: #F0F0F5;
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+/* El activo mantiene el naranja de marca con texto blanco en tema claro;
+   solo el inactivo hereda el texto oscuro del tema. */
+[data-theme="light"] .wall-tab-active {
+  color: #fff;
+}
+
 .chat-trigger {
   position: relative;
   width: 40px;
@@ -3172,6 +3241,9 @@ span > svg {
 
 .chat-input {
   flex: 1;
+  /* Los <input> tienen min-width intrínseco (~170px): con 📷+🎬+enviar en
+     la fila (chat-conversation) desbordaría a 320-360px sin esto. */
+  min-width: 0;
   padding: 12px 16px;
   background: var(--bg-input);
   border: 1px solid var(--border-subtle);
@@ -3830,4 +3902,634 @@ span > svg {
   0%   { box-shadow: 0 0 0 2px var(--orange); }
   70%  { box-shadow: 0 0 0 2px var(--orange); }
   100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* =====================================================================
+   MENSAJERÍA PRIVADA — inbox (chats-private), hilo (chat-conversation)
+   y modales de creación. Basado en el kit chat-* existente (mismos
+   fondos glass, mismo dot verde de unread). Los overrides de tema claro
+   van al final de la sección: fondos rgba oscuros hard-codeados no se
+   voltean solos con los tokens.
+   ===================================================================== */
+
+/* --- Cabecera del inbox: Nuevo chat / Nuevo grupo --- */
+.conv-actions-bar {
+  display: flex;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
+}
+
+.conv-actions-bar .btn { flex: 1; }
+
+/* Aviso deploy-before-migrate (0038 sin aplicar): distinto de "sin
+   conversaciones" para no vender un empty-state falso. */
+.conv-banner {
+  padding: var(--space-md);
+  margin-bottom: var(--space-md);
+  background: rgba(255, 106, 0, 0.08);
+  border: 1px solid var(--border-orange);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+/* --- Fila de conversación (contenedor = tarjeta; los dos botones
+   internos son transparentes para no anidar button-en-button) --- */
+.conv-row {
+  display: flex;
+  align-items: stretch;
+  margin-bottom: var(--space-sm);
+  background: rgba(26, 26, 37, 0.45);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  transition: all var(--duration-fast) var(--ease-out);
+  animation: fadeInUp 0.3s var(--ease-out);
+}
+
+.conv-row:hover {
+  border-color: var(--border-light);
+  transform: translateX(2px);
+}
+
+.conv-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.conv-thumb {
+  position: relative;      /* ancla del dot de unread */
+  flex-shrink: 0;
+}
+
+/* Mismo dot verde/pulso que el resto de señales de chat, anclado a la
+   esquina del avatar como en .chat-party-thumb. */
+.conv-thumb .conv-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 12px;
+  height: 12px;
+  background: var(--live-green);
+  border: 2px solid var(--bg-primary);
+  border-radius: 50%;
+  animation: pulse 2s infinite;
+  box-shadow: 0 0 8px var(--live-green-glow);
+  pointer-events: none;
+}
+
+.conv-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.conv-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 0;
+}
+
+.conv-name-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conv-mute-ico {
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.conv-preview {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.conv-row.has-unread .conv-preview {
+  font-weight: 600;
+}
+
+.conv-time {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
+.conv-menu-btn {
+  width: 36px;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--border-subtle);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  color: var(--text-muted);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--duration-fast), background var(--duration-fast);
+}
+
+.conv-menu-btn:hover {
+  color: var(--orange);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* --- Menú ⋮ (bottom sheet) --- */
+.conv-menu-item {
+  display: block;
+  width: 100%;
+  padding: var(--space-md);
+  margin-top: var(--space-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--duration-fast);
+}
+
+.conv-menu-item:hover { border-color: var(--border-orange); }
+
+.conv-menu-danger,
+.conv-danger-btn {
+  color: #dc2626;
+}
+
+.conv-danger-btn {
+  background: rgba(220, 38, 38, 0.08);
+  border: 1px solid rgba(220, 38, 38, 0.35);
+}
+
+.conv-danger-btn:hover {
+  background: rgba(220, 38, 38, 0.15);
+}
+
+/* --- Picker de usuarios (nuevo chat / nuevo grupo / añadir miembros) --- */
+.user-pick-list {
+  max-height: 40dvh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-top: var(--space-sm);
+}
+
+.user-pick-list.is-busy {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.user-pick-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  margin-bottom: 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  transition: border-color var(--duration-fast), background var(--duration-fast);
+}
+
+.user-pick-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.user-pick-row.is-selected {
+  border-color: var(--border-orange);
+  background: rgba(255, 106, 0, 0.08);
+}
+
+.user-pick-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.user-pick-name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-pick-username {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-pick-check {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--border-subtle);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  color: var(--white);
+  flex-shrink: 0;
+}
+
+.user-pick-row.is-selected .user-pick-check {
+  background: var(--orange);
+  border-color: var(--orange);
+}
+
+.user-pick-none {
+  text-align: center;
+  padding: var(--space-lg);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.user-pick-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.user-pick-chips:not(:empty) { margin-bottom: var(--space-sm); }
+
+.user-pick-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 10px;
+  border-radius: var(--radius-full);
+  background: rgba(255, 106, 0, 0.12);
+  border: 1px solid var(--border-orange);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-primary);
+  max-width: 100%;
+}
+
+.user-pick-chip-x {
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 0.7rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px;
+}
+
+/* --- Foto del grupo (crear / editar) --- */
+.group-photo-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.group-photo-preview {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+/* --- Panel de detalles del grupo --- */
+.group-members-list {
+  max-height: 34dvh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.group-member-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px var(--space-sm);
+  border-radius: var(--radius-md);
+}
+
+.group-member-row[data-action] { cursor: pointer; }
+
+.group-member-row[data-action]:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.group-member-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.group-owner-badge {
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+/* --- Cabecera del hilo (identidad + acciones) --- */
+.chat-header-id {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.chat-header-avatar {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.chat-header-action {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  font-size: 1.05rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--duration-fast);
+}
+
+.chat-header-action:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* --- Burbujas con media + estados optimistas --- */
+.chat-msg-pending { opacity: 0.55; }
+
+.chat-msg-failed .chat-msg-bubble { border-color: #dc2626; }
+
+.chat-msg-media-bubble {
+  padding: 6px;
+}
+
+.chat-msg-image {
+  display: block;
+  max-width: min(62vw, 240px);
+  max-height: 280px;
+  border-radius: var(--radius-md);
+  object-fit: cover;
+  cursor: zoom-in;
+}
+
+.chat-msg-video {
+  display: block;
+  max-width: min(62vw, 240px);
+  border-radius: var(--radius-md);
+  background: #000;
+}
+
+.chat-msg-caption {
+  padding: 6px 8px 2px;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+/* --- Preview de foto adjunta (sobre el composer) --- */
+.chat-attach-preview {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: rgba(10, 10, 15, 0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* display:flex le ganaría al atributo hidden (regla UA sin !important) —
+   mismo fix que .bottom-nav[hidden]. */
+.chat-attach-preview[hidden] {
+  display: none !important;
+}
+
+.chat-attach-preview img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.chat-attach-label {
+  flex: 1;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.chat-attach-remove {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* Botón 📷 del composer — gemelo neutro del .chat-send. */
+.chat-attach-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: border-color var(--duration-fast), transform var(--duration-fast) var(--ease-spring);
+}
+
+.chat-attach-btn:hover { border-color: var(--orange); }
+.chat-attach-btn:active { transform: scale(0.93); }
+
+.chat-attach-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* --- Overrides de tema claro (fondos oscuros hard-codeados) --- */
+[data-theme="light"] .conv-row {
+  background: rgba(255, 255, 255, 0.45);
+}
+
+[data-theme="light"] .conv-row:hover {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+[data-theme="light"] .conv-thumb .conv-dot {
+  border-color: #F0F0F5;
+}
+
+[data-theme="light"] .conv-menu-btn:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .user-pick-row:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .group-member-row[data-action]:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .chat-header-action:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="light"] .chat-attach-preview {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+[data-theme="light"] .chat-attach-remove {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="light"] .chat-attach-btn {
+  background: #F5F5F7;
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .user-pick-check {
+  color: transparent;   /* el check vacío no debe pintar nada sobre blanco */
+}
+
+[data-theme="light"] .user-pick-row.is-selected .user-pick-check {
+  color: var(--white);
+}
+
+/* ============================================
+   M4/M5 — VIDEOS + BOLETERÍA + SALAS DIVIDIDAS
+   ============================================ */
+
+/* Video dentro de un post (muro + party-detail, misma card). Espeja las
+   medidas de .post-image; background negro para las bandas letterbox de
+   videos verticales/horizontales sin recortar el encuadre (object-fit
+   por defecto: contain-ish del propio <video>). */
+.post-video {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto var(--space-md);
+  max-height: 400px;
+  border-radius: var(--radius-md);
+  background: #000;
+}
+
+/* Preview del video en create-post (par del preview de foto de arriba,
+   que vive inline; el video necesita clase para compartirla con temas). */
+.create-post-video {
+  display: block;
+  width: 100%;
+  max-height: 300px;
+  border-radius: var(--radius-md);
+  background: #000;
+}
+
+/* Botón 🎬 del composer — el .chat-attach-btn base está dimensionado
+   para un svg; el emoji necesita su propio tamaño de fuente. */
+.chat-attach-btn-emoji {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.chat-attach-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Miniatura de video en la tira de adjunto del composer (gemela del
+   img de .chat-attach-preview). */
+.chat-attach-video-thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: #000;
+  flex-shrink: 0;
+}
+
+/* Boletería del promotor en party-detail — es un <a> con .btn/.btn-primary
+   (el reset global ya quita el subrayado); solo aporta el respiro con el
+   bloque de géneros que le sigue. */
+.ticket-buy-btn {
+  margin-bottom: var(--space-lg);
+}
+
+/* Encabezados de sección Fiestas/Remates en chat-parties — un peldaño
+   por encima de .chat-section-title (que queda para hoy/próximas). */
+.chat-parties-group-title {
+  font-family: var(--font-display);
+  font-size: var(--text-base);
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-top: var(--space-xl);
+  margin-bottom: var(--space-sm);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-parties-group-title:first-of-type {
+  margin-top: 0;
 }

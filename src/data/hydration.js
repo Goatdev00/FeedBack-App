@@ -38,7 +38,10 @@ import {
   listAttendees,
   listProfiles,
   listQuestions,
+  listConversations,
+  isMissingTableError,
   subscribeRealtime,
+  subscribeConversationsFeed,
 } from './api.js';
 import { loadCloudState, stripCloudExclusions } from './cloud-state.js';
 import { syncProfileIntoStore } from './profile-sync.js';
@@ -57,6 +60,9 @@ const DATA_DRIVEN_ROUTES = new Set([
   // hydration repaint it keeps the music-note fallback for a flyer that
   // only arrived after the page rendered ("¿A qué fiesta asististe?").
   'select-party',
+  // Inbox de mensajería privada — consume state.conversations, que llega
+  // en su propia fase de hidratación.
+  'chats-private',
 ]);
 
 // Promise while a refresh is running, null otherwise. Returning it lets
@@ -86,7 +92,13 @@ export function refreshFromSupabaseInBackground(knownSession) {
 
   // Realtime is fire-and-forget. Open the WS up front so server-pushed
   // changes stream in while the initial fetch is still running.
-  try { subscribeRealtime(store); } catch (e) { console.warn('[hydrate] realtime failed', e); }
+  // El feed privado ('conversations-feed') exige sesión: sin auth WALRUS
+  // no entregaría nada (RLS de miembros) y el join solo haría ruido.
+  const signedIn = !!(knownSession?.user || store.getState().currentUser);
+  try {
+    subscribeRealtime(store);
+    if (signedIn) subscribeConversationsFeed(store);
+  } catch (e) { console.warn('[hydrate] realtime failed', e); }
 
   // --- BOOT-PAINT POLICY ---
   // Each phase writes its slice into the store but does NOT trigger a
@@ -164,6 +176,35 @@ export function refreshFromSupabaseInBackground(knownSession) {
     })
     .catch((e) => console.warn('[hydrate] profiles failed', e));
 
+  // --- CONVERSACIONES (DMs + grupos, migración 0038) ---
+  // Solo con sesión: RLS limita el select a "mis" conversaciones; sin
+  // usuario la query es ruido garantizado. El catch distingue la tabla
+  // inexistente (deploy-before-migrate: 0038 aún sin correr) — en ese
+  // caso [] + flag para que chats-private pueda explicar "migración
+  // pendiente" en vez de un empty-state engañoso. Nunca rompe el resto
+  // de la hidratación (allSettled + catch propio, como todas las fases).
+  const pConversations = !signedIn
+    ? Promise.resolve()
+    : listConversations(knownSession)
+        .then((conversations) => {
+          store.setState({
+            conversations,
+            conversationsUnavailable: false,
+            // Re-derivar el badge del dato fresco: el boolean persistido
+            // puede venir rancio (leído desde otro dispositivo).
+            hasUnreadConversations: conversations.some((c) => c.unread && !c.muted),
+          });
+          mark(`conversations (${conversations.length})`);
+        })
+        .catch((e) => {
+          if (isMissingTableError(e)) {
+            store.setState({ conversations: [], conversationsUnavailable: true });
+            console.warn('[hydrate] conversations no disponible (¿migración 0038 pendiente?)');
+          } else {
+            console.warn('[hydrate] conversations failed', e);
+          }
+        });
+
   // --- CLOUD STATE blob (preferences) — lowest priority ---
   const pCloud = loadCloudState(knownSession)
     .then((cloud) => {
@@ -174,7 +215,7 @@ export function refreshFromSupabaseInBackground(knownSession) {
     })
     .catch((e) => console.warn('[hydrate] cloud-state load failed', e));
 
-  _inFlight = Promise.allSettled([pProfile, pPosts, pParties, pFollows, pProfiles, pQuestions, pCloud]).then(() => {
+  _inFlight = Promise.allSettled([pProfile, pPosts, pParties, pFollows, pProfiles, pQuestions, pConversations, pCloud]).then(() => {
     _inFlight = null;
     flipHydrated();
     // SINGLE paint with the full hydrated state. No mid-burst flicker.

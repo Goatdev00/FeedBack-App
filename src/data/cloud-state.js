@@ -48,6 +48,22 @@ const EXCLUDED_FROM_CLOUD = new Set([
   // hydration.js). Persisting per-user would let User B's stale RSVPs
   // overwrite the shared ground truth.
   'attendanceLog',
+  // Mensajería privada (0038): normalizada en conversations/
+  // conversation_members/conversation_messages y además CONTENIDO PRIVADO
+  // con fotos base64 — jamás al blob.
+  'conversations',
+  // Se deriva del servidor en CADA hidratación (listConversations →
+  // some(unread && !muted)). Si viajara en el blob, el boolean rancio de
+  // otro dispositivo puede llegar DESPUÉS de la derivación fresca (pCloud
+  // y pConversations corren en paralelo bajo el mismo allSettled) y
+  // pisarla: badge apagado con DMs sin leer, o badge fantasma. Esta misma
+  // lista filtra también la DESCARGA (stripCloudExclusions), así que un
+  // blob viejo que aún traiga la clave tampoco puede sobreescribirla.
+  // localStorage ya conserva el flag entre recargas del mismo dispositivo.
+  'hasUnreadConversations',
+  // Derivado por hidratación en cada boot (¿corrió ya la 0038?); un blob
+  // rancio de otro dispositivo no debe decidir si el inbox "existe".
+  'conversationsUnavailable',
 ]);
 
 const DEBOUNCE_MS = 1500;     // wait this long after the last change
