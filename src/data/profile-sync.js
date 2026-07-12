@@ -47,6 +47,15 @@ export function profileRowToCurrentUser(p) {
   };
 }
 
+// La ciudad "principal" del usuario es la que eligió en su perfil. La
+// sembramos en selectedCity la PRIMERA vez que hidratamos a este usuario
+// en esta carga de página, para que al ABRIR la app el filtro de ciudad
+// arranque siempre en su ciudad. Guardamos el id sembrado (no un simple
+// boolean) para: (a) no re-sembrar en cada refresh/resume — así un cambio
+// manual de ciudad hecho navegando durante la sesión NO se revierte; y
+// (b) re-sembrar sí cuando entra OTRO usuario (logout→login) sin recargar.
+let seededCityForUserId = null;
+
 /**
  * Load the signed-in user's profile and push it into the legacy store
  * so existing pages render against real user data. Also merges the row
@@ -90,12 +99,21 @@ export async function syncProfileIntoStore(knownSession) {
   }
   const state = store.getState();
   const existingUsers = state.users.filter(u => u.id !== currentUser.id && u.id !== 'u_self');
-  store.setState({
+  const patch = {
     isLoggedIn: true,
     onboardingComplete: currentUser.onboardingComplete,
     currentUser,
     users: [currentUser, ...existingUsers],
-  });
+  };
+  // Al abrir la app, el filtro de ciudad arranca en la ciudad principal
+  // del perfil (ver seededCityForUserId arriba). Solo la primera vez que
+  // vemos a este usuario en esta carga, para respetar cambios manuales
+  // de ciudad hechos durante la sesión.
+  if (seededCityForUserId !== currentUser.id && currentUser.city) {
+    patch.selectedCity = currentUser.city;
+    seededCityForUserId = currentUser.id;
+  }
+  store.setState(patch);
   store.applyTheme(currentUser.theme);
   return currentUser;
 }
