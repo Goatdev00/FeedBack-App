@@ -80,9 +80,9 @@ export function renderWall(container) {
              realtime; cambiar de pestaña repinta localmente sin refetch. -->
         <div class="wall-tabs" role="tablist" aria-label="Secciones del muro">
           <button class="wall-tab ${isRematesTab ? '' : 'wall-tab-active'}" role="tab"
-                  aria-selected="${!isRematesTab}" data-wall-tab="fiestas">🎉 Fiestas</button>
+                  aria-selected="${!isRematesTab}" data-wall-tab="fiestas">Fiestas</button>
           <button class="wall-tab ${isRematesTab ? 'wall-tab-active' : ''}" role="tab"
-                  aria-selected="${isRematesTab}" data-wall-tab="remates">🔥 Remates</button>
+                  aria-selected="${isRematesTab}" data-wall-tab="remates">Remates</button>
         </div>
         <button class="notifications-trigger ${unreadNotifs > 0 ? 'has-unread' : ''}"
                 id="notifications-btn" title="Notificaciones" aria-label="Ver notificaciones">
@@ -289,7 +289,7 @@ function renderPostComments(post) {
             <strong class="post-comment-author" ${authorAttrs}>${authorName}</strong>
             <span class="post-comment-text">${sanitize(comment.text)}</span>
             ${commentLikeBtn(post.id, comment)}
-            ${canModerate ? `<button class="admin-mod-inline" data-action="admin-delete-comment" data-comment-id="${comment.id}" title="Eliminar (admin)" style="margin-left:6px;background:transparent;border:none;color:#dc2626;cursor:pointer;padding:0 2px;font-size:0.8em;line-height:1;vertical-align:middle;">🗑️</button>` : ''}
+            ${canModerate ? `<button class="admin-mod-inline" data-action="admin-delete-comment" data-comment-id="${comment.id}" title="Eliminar (admin)" aria-label="Eliminar (admin)" style="margin-left:6px;background:transparent;border:none;color:#dc2626;cursor:pointer;padding:0 2px;line-height:1;vertical-align:middle;"><span style="width:13px;height:13px;display:inline-flex;">${ICONS.trash}</span></button>` : ''}
           </div>
         `;
       }).join('')}
@@ -377,7 +377,7 @@ export function renderPostCard(post, state) {
           ` : (post.wall === 'remates' ? `
             <!-- Post libre del muro de remates: sin evento vinculado, el
                  tag identifica la sección en lugar de omitirse. -->
-            <div class="post-party-tag">🔥 Remate</div>
+            <div class="post-party-tag">Remate</div>
           ` : '')}
         </div>
         <span class="post-time">${formatRelative(new Date(post.createdAt))}</span>
@@ -482,7 +482,7 @@ function renderEmptyRemates(hasRemates) {
       <p class="empty-state-text">
         ¿La fiesta no se acaba? Comparte tu after con la comunidad.
       </p>
-      <button class="btn btn-primary mt-lg" id="empty-create-remate">🔥 Crea el primer remate</button>
+      <button class="btn btn-primary mt-lg" id="empty-create-remate">Crea el primer remate</button>
     </div>
   `;
 }
@@ -749,7 +749,7 @@ function showAllCommentsModal(container, postId, refresh) {
                   ${commentLikeBtn(postId, c)}
                 </div>
               </div>
-              ${canModerate ? `<button data-action="admin-delete-comment" data-comment-id="${c.id}" title="Eliminar (admin)" style="background:transparent;border:none;color:#dc2626;cursor:pointer;padding:2px;align-self:flex-start;line-height:1;">🗑️</button>` : ''}
+              ${canModerate ? `<button data-action="admin-delete-comment" data-comment-id="${c.id}" title="Eliminar (admin)" aria-label="Eliminar (admin)" style="background:transparent;border:none;color:#dc2626;cursor:pointer;padding:2px;align-self:flex-start;line-height:1;"><span style="width:14px;height:14px;display:inline-flex;">${ICONS.trash}</span></button>` : ''}
             </div>
           `;
         }).join('')}

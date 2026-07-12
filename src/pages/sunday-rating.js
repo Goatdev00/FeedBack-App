@@ -100,7 +100,7 @@ export function renderSundayRating(container) {
         <div style="display:flex;gap:var(--space-sm);margin-top:var(--space-xl);">
           <button class="btn btn-secondary" id="skip-btn" style="flex:0.4;">Saltar</button>
           <button class="btn btn-primary btn-full" id="next-btn">
-            ${currentPartyIndex === uniqueParties.length - 1 ? 'Finalizar 🎉' : 'Siguiente →'}
+            ${currentPartyIndex === uniqueParties.length - 1 ? 'Finalizar' : 'Siguiente →'}
           </button>
         </div>
 

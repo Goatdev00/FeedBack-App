@@ -73,7 +73,7 @@ export function renderPartyDetail(container, params = {}) {
       ${isRemate ? `
         <!-- Badge contextual: deja claro que esto es un after, no una
              fiesta de la agenda. -->
-        <div style="display:inline-flex;align-items:center;gap:6px;margin-bottom:var(--space-md);padding:4px 12px;background:rgba(255,106,0,0.12);border:1px solid var(--border-orange);border-radius:var(--radius-full);font-size:var(--text-xs);font-weight:700;color:var(--orange);text-transform:uppercase;letter-spacing:1px;">🔥 Remate</div>
+        <div style="display:inline-flex;align-items:center;gap:6px;margin-bottom:var(--space-md);padding:4px 12px;background:rgba(255,106,0,0.12);border:1px solid var(--border-orange);border-radius:var(--radius-full);font-size:var(--text-xs);font-weight:700;color:var(--orange);text-transform:uppercase;letter-spacing:1px;">Remate</div>
       ` : ''}
 
       ${isAdmin ? `
@@ -139,7 +139,7 @@ export function renderPartyDetail(container, params = {}) {
       ${ticketHref ? `
         <a class="btn btn-primary btn-full btn-lg ticket-buy-btn" id="ticket-btn"
            href="${ticketHref}" target="_blank" rel="noopener noreferrer">
-          🎟️ Comprar boletas
+          Comprar boletas
         </a>
       ` : ''}
 
@@ -176,7 +176,7 @@ export function renderPartyDetail(container, params = {}) {
                 <div style="font-size:var(--text-sm);font-weight:600;">${sanitize(dj.name)}</div>
                 <div style="font-size:var(--text-xs);color:var(--text-tertiary);">${sanitize(dj.username)}</div>
               </div>
-              <span class="badge badge-purple" style="font-size:0.5625rem;">🎧 DJ</span>
+              <span class="badge badge-purple" style="font-size:0.5625rem;">DJ</span>
             </div>
           `).join('')}
         </div>
@@ -184,7 +184,7 @@ export function renderPartyDetail(container, params = {}) {
 
       <!-- Attendance Button -->
       <button class="btn ${isAttending ? 'btn-secondary' : 'btn-primary'} btn-full btn-lg mb-lg" id="attend-btn">
-        ${isAttending ? '✓ Confirmo asistencia' : (isRemate ? '🔥 Voy a este remate' : '🎉 Voy a esta fiesta')}
+        ${isAttending ? '✓ Confirmo asistencia' : (isRemate ? 'Voy a este remate' : 'Voy a esta fiesta')}
       </button>
 
       <!-- Thermometer / Live Reports -->
@@ -197,7 +197,7 @@ export function renderPartyDetail(container, params = {}) {
            report / view-profile / view-all-comments. -->
       <div id="party-posts-section" style="margin-top:var(--space-xl);">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-md);">
-          <h3 style="font-size:var(--text-sm);font-weight:600;color:var(--text-secondary);">💬 Lo que dicen (${partyPosts.length})</h3>
+          <h3 style="font-size:var(--text-sm);font-weight:600;color:var(--text-secondary);">Lo que dicen (${partyPosts.length})</h3>
           <button class="btn btn-ghost btn-sm" id="post-here-btn">Publicar aquí</button>
         </div>
         ${partyPosts.length > 0
@@ -554,7 +554,7 @@ function renderThermometer(party) {
   return `
     <div class="thermometer">
       <div class="thermometer-title">
-        <span>🌡️</span> Termómetro en vivo
+        Termómetro en vivo
       </div>
       ${categories.map(cat => `
         <div class="thermo-row">
@@ -577,7 +577,7 @@ function renderCreatorPanel(party, isRemate = false) {
   return `
     <div style="margin-top:var(--space-xl);padding-top:var(--space-xl);border-top:2px solid var(--border-orange);">
       <h3 style="font-family:var(--font-display);font-size:var(--text-base);font-weight:700;color:var(--orange);margin-bottom:var(--space-md);">
-        ${isRemate ? '🔥 Panel del creador' : '✨ Panel de Promotor'}
+        ${isRemate ? 'Panel del creador' : 'Panel de Promotor'}
       </h3>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-sm);">
         <div class="card" style="text-align:center;">
@@ -594,7 +594,7 @@ function renderCreatorPanel(party, isRemate = false) {
       </button>
       <button class="btn btn-full btn-sm mt-sm" id="delete-event-btn"
               style="background:transparent;border:1px solid rgba(220,38,38,0.4);color:#dc2626;">
-        🗑️ Eliminar evento
+        Eliminar evento
       </button>
     </div>
   `;

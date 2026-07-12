@@ -71,7 +71,6 @@ export function renderCreatePost(container, params = {}) {
             <div style="font-size:var(--text-xs);color:var(--text-tertiary);">${sanitize(party.venue)} · ${sanitize(party.city)}</div>
           </div>
         ` : `
-          <span style="font-size:1.2rem;">🔥</span>
           <div style="flex:1;">
             <div style="font-size:var(--text-sm);font-weight:600;">Remate libre</div>
             <div style="font-size:var(--text-xs);color:var(--text-tertiary);">Publicación sin evento en el muro de remates</div>
@@ -117,7 +116,8 @@ export function renderCreatePost(container, params = {}) {
           Foto
         </button>
         <button class="btn btn-secondary btn-sm" id="add-video">
-          🎬 Video
+          ${ICONS.video}
+          Video
         </button>
       </div>
 
@@ -148,7 +148,7 @@ export function renderCreatePost(container, params = {}) {
       ${party ? `
         <div style="margin-bottom:var(--space-lg);">
           <h3 style="font-size:var(--text-sm);font-weight:600;color:var(--text-secondary);margin-bottom:var(--space-md);">
-            🌡️ ¿Cómo está ${isRemates ? 'el remate' : 'la fiesta'}? (opcional)
+            ¿Cómo está ${isRemates ? 'el remate' : 'la fiesta'}? (opcional)
           </h3>
           <div class="report-grid" id="report-grid">
             ${REPORT_CATEGORIES.map(cat => `
@@ -275,7 +275,7 @@ export function renderCreatePost(container, params = {}) {
     videoBtn.textContent = 'Revisando…';
     const res = await validateVideoFile(file);
     videoBtn.disabled = false;
-    videoBtn.textContent = '🎬 Video';
+    videoBtn.innerHTML = `${ICONS.video} Video`;
     if (!res.ok) {
       videoInput.value = '';
       showToast(res.error, 'error', 5000);

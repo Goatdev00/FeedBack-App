@@ -37,12 +37,12 @@ export function renderChatParties(container) {
       </p>
 
       ${fiestas.length > 0 ? `
-        <h2 class="chat-parties-group-title">🎉 Fiestas</h2>
+        <h2 class="chat-parties-group-title">Fiestas</h2>
         ${renderKindSections(fiestas, state)}
       ` : ''}
 
       ${remates.length > 0 ? `
-        <h2 class="chat-parties-group-title">🔥 Remates</h2>
+        <h2 class="chat-parties-group-title">Remates</h2>
         ${renderKindSections(remates, state)}
       ` : ''}
 

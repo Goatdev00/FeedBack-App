@@ -35,9 +35,9 @@ export function avatarHTML(user, sizeClass = 'avatar-md', extraClass = '') {
 }
 
 const ROLE_LABEL_MAP = {
-  raver: '🎉 Raver',
-  dj: '🎧 DJ',
-  promotor: '✨ Promotor',
+  raver: 'Raver',
+  dj: 'DJ',
+  promotor: 'Promotor',
 };
 
 const ROLE_BADGE_CLASS_MAP = {
@@ -46,7 +46,7 @@ const ROLE_BADGE_CLASS_MAP = {
   promotor: 'badge-gold',
 };
 
-/** Role label with emoji */
+/** Role label */
 export function roleLabel(role) {
   return ROLE_LABEL_MAP[role] || role;
 }

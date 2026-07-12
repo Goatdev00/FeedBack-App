@@ -27,11 +27,11 @@ const CITIES = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena'];
 const TYPE_LABEL = { post: 'Publicación', comment: 'Comentario', chat_message: 'Mensaje de chat', question: 'Pregunta', party: 'Fiesta' };
 
 const TABS = [
-  { id: 'usuarios',      label: '👥 Usuarios' },
-  { id: 'notificaciones', label: '🔔 Notificaciones' },
-  { id: 'papelera',      label: '🗑️ Papelera' },
-  { id: 'moderacion',    label: '🚩 Moderación' },
-  { id: 'qa',            label: '❓ Q&A' },
+  { id: 'usuarios',      label: 'Usuarios' },
+  { id: 'notificaciones', label: 'Notificaciones' },
+  { id: 'papelera',      label: 'Papelera' },
+  { id: 'moderacion',    label: 'Moderación' },
+  { id: 'qa',            label: 'Q&A' },
 ];
 
 export function renderAdmin(container) {
@@ -271,7 +271,7 @@ async function renderNotify(el) {
     </div>
 
     <div style="border-top:1px solid var(--border-subtle);margin:var(--space-lg) 0 var(--space-md);"></div>
-    <h3 style="font-size:var(--text-md);font-weight:700;margin-bottom:var(--space-sm);">📜 Historial de notificaciones</h3>
+    <h3 style="font-size:var(--text-md);font-weight:700;margin-bottom:var(--space-sm);">Historial de notificaciones</h3>
     <div id="n-history">${loadingHTML()}</div>
   `;
 
@@ -510,7 +510,7 @@ function trashItem(entry, nameOf) {
 // MODERACIÓN — reportes + tickets de soporte
 // =====================================================================
 async function renderModeration(el) {
-  el.innerHTML = `<div id="m-reports">${loadingHTML()}</div><h3 style="margin:var(--space-lg) 0 var(--space-sm);font-size:var(--text-md);font-weight:700;">🎟️ Tickets de soporte</h3><div id="m-tickets">${loadingHTML()}</div>`;
+  el.innerHTML = `<div id="m-reports">${loadingHTML()}</div><h3 style="margin:var(--space-lg) 0 var(--space-sm);font-size:var(--text-md);font-weight:700;">Tickets de soporte</h3><div id="m-tickets">${loadingHTML()}</div>`;
   const reportsEl = el.querySelector('#m-reports');
   const ticketsEl = el.querySelector('#m-tickets');
 
@@ -518,7 +518,7 @@ async function renderModeration(el) {
   try {
     const reports = await listAdminReports();
     if (!reports.length) {
-      reportsEl.innerHTML = `<h3 style="margin:0 0 var(--space-sm);font-size:var(--text-md);font-weight:700;">🚩 Reportes</h3>` + emptyHTML('✅', 'Sin reportes', 'No hay publicaciones reportadas.');
+      reportsEl.innerHTML = `<h3 style="margin:0 0 var(--space-sm);font-size:var(--text-md);font-weight:700;">Reportes</h3>` + emptyHTML('✅', 'Sin reportes', 'No hay publicaciones reportadas.');
     } else {
       const byPost = {};
       for (const r of reports) { (byPost[r.post_id] ||= []).push(r); }
@@ -530,7 +530,7 @@ async function renderModeration(el) {
         <div style="font-size:var(--text-xs);color:var(--text-tertiary);margin-bottom:8px;">Post ${postId.slice(0, 8)}… · Razones: ${sanitize([...new Set(rs.map(r => r.reason))].join(', '))}</div>
         <button class="btn btn-sm" data-del-post="${postId}" style="color:#dc2626;">Eliminar publicación</button>
       `)).join('');
-      reportsEl.innerHTML = `<h3 style="margin:0 0 var(--space-sm);font-size:var(--text-md);font-weight:700;">🚩 Reportes</h3>` + items;
+      reportsEl.innerHTML = `<h3 style="margin:0 0 var(--space-sm);font-size:var(--text-md);font-weight:700;">Reportes</h3>` + items;
     }
   } catch (err) { reportsEl.innerHTML = errorHTML('No se pudieron cargar los reportes.'); console.warn('[admin] reports', err); }
 
