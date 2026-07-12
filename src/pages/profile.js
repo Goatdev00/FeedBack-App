@@ -17,7 +17,7 @@ import { unsubscribeFromPush } from '../notifications/push.js';
 import { showPermissionModal, clearPushDecision } from '../notifications/permission-modal.js';
 import { fileToResizedDataURL } from '../utils/image.js';
 
-const CITY_OPTIONS = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena', 'Otra'];
+const CITY_OPTIONS = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena', 'Yopal', 'Otra'];
 
 // Display order + emoji for the "¿Cómo ganar puntos?" guide shown in the
 // points tab. Source of truth for the values themselves is POINTS_RULES.

@@ -99,6 +99,7 @@ function renderStep(container) {
             <option value="Cali" ${formData.city === 'Cali' ? 'selected' : ''}>Cali</option>
             <option value="Barranquilla" ${formData.city === 'Barranquilla' ? 'selected' : ''}>Barranquilla</option>
             <option value="Cartagena" ${formData.city === 'Cartagena' ? 'selected' : ''}>Cartagena</option>
+            <option value="Yopal" ${formData.city === 'Yopal' ? 'selected' : ''}>Yopal</option>
             <option value="Otra" ${formData.city === 'Otra' ? 'selected' : ''}>Otra</option>
           </select>
         </div>

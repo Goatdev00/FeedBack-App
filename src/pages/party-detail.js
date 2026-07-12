@@ -12,7 +12,7 @@ import { renderPostCard, bindPostCardActions } from './wall.js';
 import { adminSoftDeleteParty } from '../data/api.js';
 import { confirmAdminDelete } from '../utils/admin-moderation.js';
 
-const PARTY_CITIES = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena'];
+const PARTY_CITIES = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena', 'Yopal'];
 const PARTY_GENRES = [
   'Techno', 'Hardtechno', 'House', 'Deep House', 'Tech House', 'Melodic Techno',
   'Dark Techno', 'Acid Techno', 'Schranz', 'Gabber', 'Hardcore', 'Hardstyle',

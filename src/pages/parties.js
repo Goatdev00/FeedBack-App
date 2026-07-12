@@ -9,7 +9,7 @@ import { avatarHTML, debounce, sanitize, safeImageSrc, bogotaTodayStr } from '..
 import { hashStr } from '../utils/dom.js';
 import { renderBottomNav, bindNavEvents } from '../components/nav.js';
 
-const CITIES = ['Todas', 'Bogotá', 'Medellín', 'Cali', 'Barranquilla'];
+const CITIES = ['Todas', 'Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Yopal'];
 
 // Divider between current and archived-but-visible content.
 function sectionSeparator(label) {
