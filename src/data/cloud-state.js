@@ -64,6 +64,13 @@ const EXCLUDED_FROM_CLOUD = new Set([
   // Derivado por hidratación en cada boot (¿corrió ya la 0038?); un blob
   // rancio de otro dispositivo no debe decidir si el inbox "existe".
   'conversationsUnavailable',
+  // La ciudad "principal" la manda el perfil (profiles.city), sembrada en
+  // selectedCity en cada apertura por syncProfileIntoStore. Si viajara en
+  // el blob, un valor rancio de otro dispositivo podría llegar DESPUÉS de
+  // esa siembra (pCloud y pProfile corren en paralelo) y pisar la ciudad
+  // del perfil. Queda como filtro local del dispositivo; el perfil es la
+  // fuente de verdad al abrir.
+  'selectedCity',
 ]);
 
 const DEBOUNCE_MS = 1500;     // wait this long after the last change
