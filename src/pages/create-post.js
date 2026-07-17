@@ -6,7 +6,7 @@ import { store, ICONS, REPORT_CATEGORIES } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { showToast, showPointsToast } from '../utils/toast.js';
 import { avatarHTML, sanitize, safeImageSrc } from '../utils/helpers.js';
-import { fileToResizedDataURL } from '../utils/image.js';
+import { fileToResizedDataURL, fileToResizedBlob, uploadImageToStorage, removeUploadedImage } from '../utils/image.js';
 import { validateVideoFile, uploadVideoToStorage, removeUploadedVideo } from '../utils/video.js';
 
 export function renderCreatePost(container, params = {}) {
@@ -173,7 +173,12 @@ export function renderCreatePost(container, params = {}) {
   `;
 
   let selectedReports = [];
+  // Foto: el base64 del preview se conserva como FALLBACK de publicación
+  // (si Storage no está disponible el post sale igual con él, como
+  // siempre); el File original se guarda para re-procesarlo a Blob y
+  // subirlo al bucket `images` (0040) recién al publicar.
   let photoData = null;
+  let photoFile = null;
   // Video: se guarda el File validado y se sube a Storage RECIÉN al
   // publicar (addPost es optimista-instantáneo — la URL pública tiene que
   // existir ANTES de crear el post). El blob URL es solo para el preview.
@@ -241,6 +246,7 @@ export function renderCreatePost(container, params = {}) {
 
   const clearPhoto = () => {
     photoData = null;
+    photoFile = null;
     preview.style.display = 'none';
     fileInput.value = '';
   };
@@ -263,6 +269,7 @@ export function renderCreatePost(container, params = {}) {
       // Downscale + JPEG-compress so post photos don't get stored as
       // multi-MB base64 (which bloats the feed query and localStorage).
       photoData = await fileToResizedDataURL(file, 1280, 0.82);
+      photoFile = file; // el original se re-procesa a Blob al publicar
       previewImg.src = photoData;
       preview.style.display = 'block';
       clearVideo(); // foto y video son mutuamente excluyentes
@@ -388,6 +395,39 @@ export function renderCreatePost(container, params = {}) {
       }
     }
 
+    // Foto: mismo esquema que el video (subir a Storage ANTES de addPost
+    // para que la fila optimista lleve la URL definitiva), con una
+    // diferencia clave: ante CUALQUIER fallo — bucket `images` inexistente
+    // porque la 0040 aún no se aplicó (el frontend se despliega antes de
+    // migrar) o un error de red — se degrada EN SILENCIO al base64 del
+    // preview, el comportamiento de siempre. La foto SIEMPRE se publica;
+    // Storage es solo optimización.
+    let imageUrl = null;
+    let imagePath = null;
+    if (photoData && photoFile) {
+      setPublishing(true);
+      setUploadLock(true);
+      try {
+        const blob = await fileToResizedBlob(photoFile, 1280, 0.82);
+        const uploaded = await uploadImageToStorage(blob, user.id, 'p');
+        imageUrl = uploaded.url;
+        imagePath = uploaded.path;
+      } catch {
+        imageUrl = null;
+        imagePath = null;
+      }
+      setUploadLock(false);
+
+      // Igual que con el video: el back-gesture (hashchange) esquiva los
+      // botones bloqueados. Si el usuario navegó durante el await, ABORTAR
+      // sin addPost ni navigate — y borrar la imagen ya subida, que sin
+      // post quedaría huérfana en el bucket.
+      if (!pageEl.isConnected) {
+        if (imagePath) removeUploadedImage(imagePath);
+        return;
+      }
+    }
+
     // El muro destino sale del kind del evento vinculado (el trigger
     // check_post_party_kind del server exige coherencia wall↔kind), o del
     // modo cuando es un post libre.
@@ -397,16 +437,20 @@ export function renderCreatePost(container, params = {}) {
       partyId: partyId || null,
       type: videoUrl ? 'video' : (photoData ? 'photo' : 'text'),
       content: content,
-      image: photoData,
+      image: imageUrl || photoData,
       videoUrl,
       wall,
     });
     // addPost es optimista y su insert real se resuelve DENTRO del store
-    // (sin catch en este call site). Si el insert acaba fallando, el video
-    // ya subido quedaría huérfano en el bucket: vigilamos la fila optimista
-    // y limpiamos best-effort cuando el store la marque _syncFailed.
-    if (videoPath && optimisticPost?.id) {
-      watchPostVideoOrphan(optimisticPost.id, videoPath);
+    // (sin catch en este call site). Si el insert acaba fallando, el media
+    // ya subido (video o foto) quedaría huérfano en su bucket: vigilamos
+    // la fila optimista y limpiamos best-effort cuando el store la marque
+    // _syncFailed. Foto y video son excluyentes → como mucho UNA limpieza.
+    const mediaCleanup = videoPath
+      ? () => removeUploadedVideo(videoPath)
+      : (imagePath ? () => removeUploadedImage(imagePath) : null);
+    if (mediaCleanup && optimisticPost?.id) {
+      watchPostMediaOrphan(optimisticPost.id, mediaCleanup);
     }
     // El preview local ya no se necesita — liberar el blob antes de salir.
     if (videoBlobUrl) { URL.revokeObjectURL(videoBlobUrl); videoBlobUrl = null; }
@@ -427,12 +471,12 @@ export function renderCreatePost(container, params = {}) {
 // Vigila la fila optimista de addPost: si el insert real falla, el store
 // la deja con su tempId + _syncFailed (y notifica); si triunfa, la fila
 // se SWAPEA por la del server (el tempId desaparece). En el primer caso
-// borramos del bucket el video ya subido (best-effort) para no acumular
-// huérfanos; en el segundo dejamos de mirar. Red de seguridad de 2min
-// para no dejar el subscriber vivo si nunca llega ni el swap ni el fallo
-// (p.ej. Supabase sin configurar).
+// ejecutamos cleanupFn — borra del bucket el media ya subido (video o
+// imagen, best-effort) para no acumular huérfanos; en el segundo dejamos
+// de mirar. Red de seguridad de 2min para no dejar el subscriber vivo si
+// nunca llega ni el swap ni el fallo (p.ej. Supabase sin configurar).
 // ---------------------------------------------------------------------
-function watchPostVideoOrphan(tempId, videoPath) {
+function watchPostMediaOrphan(tempId, cleanupFn) {
   let done = false;
   const stop = store.subscribe(() => {
     if (done) return;
@@ -440,9 +484,9 @@ function watchPostVideoOrphan(tempId, videoPath) {
     if (row && row._syncFailed) {
       done = true;
       stop();
-      removeUploadedVideo(videoPath);
+      cleanupFn();
     } else if (!row) {
-      // Swap por la fila real (insert OK) o purga — el video tiene dueño.
+      // Swap por la fila real (insert OK) o purga — el media tiene dueño.
       done = true;
       stop();
     }
