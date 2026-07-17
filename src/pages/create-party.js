@@ -11,7 +11,7 @@
 import { store, ICONS } from '../data/mock-data.js';
 import { router } from '../router.js';
 import { showToast } from '../utils/toast.js';
-import { fileToResizedDataURL } from '../utils/image.js';
+import { fileToResizedDataURL, fileToResizedBlob, uploadImageToStorage, removeUploadedImage } from '../utils/image.js';
 
 const GENRES = [
   'Techno', 'Hardtechno', 'House', 'Deep House', 'Tech House', 'Melodic Techno',
@@ -210,7 +210,18 @@ export function renderCreateParty(container, params = {}) {
   `;
 
   let selectedGenres = [];
+  // Flyer: el base64 del preview se conserva como FALLBACK de publicación
+  // (si Storage falla el evento sale igual con él); el File original se
+  // guarda para re-procesarlo a Blob y subirlo al bucket `images` (0040)
+  // recién al publicar.
   let flyerData = null;
+  let flyerFile = null;
+
+  // Token de montaje (mismo patrón que create-post): tras el await de la
+  // subida hay que verificar que la página siga conectada — el back no
+  // queda bloqueado durante la subida y publicar/navegar encima de otra
+  // ruta arrancaría al usuario de donde esté.
+  const pageEl = container.querySelector('#create-party-page');
 
   // Back: el remate nace en la pestaña Remates del muro; la fiesta, en la
   // agenda de fiestas.
@@ -238,6 +249,7 @@ export function renderCreateParty(container, params = {}) {
       // but still downscale + JPEG-compress so they don't land in the DB
       // as multi-MB base64 (which times out party reads).
       flyerData = await fileToResizedDataURL(file, 1280, 0.82);
+      flyerFile = file; // el original se re-procesa a Blob al publicar
       flyerPreviewImg.src = flyerData;
       flyerPreview.style.display = 'block';
       flyerUpload.style.display = 'none';
@@ -248,6 +260,7 @@ export function renderCreateParty(container, params = {}) {
 
   container.querySelector('#remove-flyer').addEventListener('click', () => {
     flyerData = null;
+    flyerFile = null;
     flyerPreview.style.display = 'none';
     flyerUpload.style.display = '';
     flyerInput.value = '';
@@ -267,7 +280,20 @@ export function renderCreateParty(container, params = {}) {
   });
 
   // Publish — cabecera + botón de cierre del formulario, un solo handler.
-  const publishParty = () => {
+  // Mientras el flyer sube, AMBOS botones quedan bloqueados con spinner
+  // (patrón .btn-spinner de create-post): el que no se tocó también sería
+  // una vía de doble publish.
+  const publishBtnTop = container.querySelector('#publish-party-btn');
+  const publishBtnBottom = container.querySelector('#publish-party-btn-bottom');
+  const publishLabel = isRemate ? 'Publicar remate' : 'Publicar evento';
+  const setPublishing = (busy) => {
+    [publishBtnTop, publishBtnBottom].forEach((b) => {
+      b.disabled = busy;
+      if (busy) b.innerHTML = '<span class="btn-spinner"></span>&nbsp;Subiendo…';
+      else b.textContent = publishLabel;
+    });
+  };
+  const publishParty = async () => {
     const name = container.querySelector('#party-name').value.trim();
     const venue = container.querySelector('#party-venue').value.trim();
     const city = container.querySelector('#party-city').value;
@@ -299,6 +325,39 @@ export function renderCreateParty(container, params = {}) {
       return;
     }
 
+    // Flyer: intentar Storage (bucket `images`, 0040) y publicar la URL;
+    // ante CUALQUIER fallo — bucket inexistente porque la 0040 aún no se
+    // aplicó (el frontend se despliega antes de migrar) o error de red —
+    // degradar EN SILENCIO al base64 del preview, el comportamiento de
+    // siempre. Sin orphan-watch como el de create-post: el flyer es
+    // pequeño (~decenas de KB) y addParty ya hace rollback silencioso si
+    // su insert falla — no compensa un subscriber por un huérfano
+    // ocasional y diminuto.
+    let flyerValue = flyerData;
+    if (flyerData && flyerFile) {
+      setPublishing(true);
+      let flyerPath = null;
+      try {
+        const blob = await fileToResizedBlob(flyerFile, 1280, 0.82);
+        const uploaded = await uploadImageToStorage(blob, user.id, 'f');
+        flyerValue = uploaded.url;
+        flyerPath = uploaded.path;
+      } catch {
+        // flyerValue conserva el base64 capturado ANTES del await (no
+        // re-leer flyerData: "Quitar" no está bloqueado durante la
+        // subida y pudo ponerlo a null). Restaurar los botones: se
+        // publica igual con base64, sin dejar el spinner colgado.
+        setPublishing(false);
+      }
+      // ¿La página sigue montada? Si el usuario navegó durante el await
+      // (el back no queda bloqueado), abortar sin addParty ni navigate —
+      // y borrar el flyer ya subido, que sin party quedaría huérfano.
+      if (!pageEl.isConnected) {
+        if (flyerPath) removeUploadedImage(flyerPath);
+        return;
+      }
+    }
+
     store.addParty({
       name,
       venue,
@@ -309,7 +368,7 @@ export function renderCreateParty(container, params = {}) {
       genres: selectedGenres,
       promotor: user.id,
       djs: [],
-      flyer: flyerData,
+      flyer: flyerValue,
       description,
       kind: isRemate ? 'remate' : 'party',
       ticketContactUrl,

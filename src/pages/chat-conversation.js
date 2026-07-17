@@ -3,8 +3,9 @@
 // Clon del patrón de chat.js/renderChatRoom: buffer de mensajes page-
 // scoped (nunca en el store/localStorage), envío optimista con dedupe del
 // eco realtime, autoscroll near-bottom y delegación de clicks. Las
-// diferencias: datos de conversation_messages (texto + foto base64 +
-// video), setActiveConversation para que el feed global no marque unread
+// diferencias: datos de conversation_messages (texto + foto — URL de
+// Storage desde la 0040, base64 como fallback/legacy — + video),
+// setActiveConversation para que el feed global no marque unread
 // mientras el hilo está abierto, y cabecera con mute + panel de grupo.
 // ============================================
 
@@ -22,7 +23,7 @@ import { supabase } from '../data/supabase.js';
 import { requireCurrentUser } from '../data/profile-sync.js';
 import { showToast } from '../utils/toast.js';
 import { createModal, replaceListener, detachListener } from '../utils/dom.js';
-import { fileToResizedDataURL } from '../utils/image.js';
+import { fileToResizedDataURL, fileToResizedBlob, uploadImageToStorage, removeUploadedImage } from '../utils/image.js';
 import { validateVideoFile, uploadVideoToStorage, removeUploadedVideo } from '../utils/video.js';
 import { openMemberPickerModal } from './chats-private.js';
 
@@ -364,10 +365,16 @@ export function renderChatConversation(container, params = {}) {
   const attachPreview = container.querySelector('#attach-preview');
   const attachThumb = container.querySelector('#attach-thumb');
   const attachRemove = container.querySelector('#attach-remove');
+  // pendingImage (base64 1024) sigue siendo el preview Y el fallback de
+  // envío; pendingImageFile guarda el File original para intentar subirlo
+  // a Storage (bucket `images`, 0040) al enviar — con URL el mensaje deja
+  // de rozar el cap ~1MiB de postgres_changes.
   let pendingImage = null;
+  let pendingImageFile = null;
 
   function clearAttachment() {
     pendingImage = null;
+    pendingImageFile = null;
     attachThumb.removeAttribute('src');
     attachPreview.hidden = true;
   }
@@ -385,6 +392,7 @@ export function renderChatConversation(container, params = {}) {
       // receptor con el hilo abierto vería una burbuja sin imagen hasta
       // reabrir. A 1024/0.78 el base64 queda con margen bajo el cap.
       pendingImage = await fileToResizedDataURL(f, 1024, 0.78);
+      pendingImageFile = f; // el original se re-procesa a Blob al enviar
       attachThumb.src = pendingImage; // data URL de nuestro canvas — origen confiable
       attachPreview.hidden = false;
       clearVideoAttachment(); // foto y video son mutuamente excluyentes
@@ -456,6 +464,7 @@ export function renderChatConversation(container, params = {}) {
     e.preventDefault();
     const text = input.value.trim();
     const image = pendingImage;
+    const imageFile = pendingImageFile;
     const videoToSend = pendingVideo;
     if (!text && !image && !videoToSend) return;
 
@@ -486,6 +495,33 @@ export function renderChatConversation(container, params = {}) {
       clearVideoAttachment();
     }
 
+    // Foto: intentar Storage (bucket `images`, 0040) y enviar la URL — un
+    // mensaje con URL ya no puede superar max_record_bytes (~1MiB) y el
+    // receptor con el hilo abierto deja de ver burbujas sin imagen. Ante
+    // CUALQUIER fallo — bucket inexistente porque la 0040 aún no se
+    // aplicó (el frontend se despliega antes de migrar) o error de red —
+    // degradar EN SILENCIO al base64 1024 de siempre (por eso el resize
+    // del picker se mantiene en 1024/0.78: es el fallback que debe caber
+    // bajo el cap). Mismo candado/spinner que la subida de video.
+    let imageToSend = image;
+    let imagePath = null;
+    if (imageFile) {
+      setComposerLock(true);
+      const prevSendHtml = sendBtn.innerHTML;
+      sendBtn.innerHTML = '<span class="btn-spinner"></span>';
+      try {
+        const blob = await fileToResizedBlob(imageFile, 1280, 0.82);
+        const uploaded = await uploadImageToStorage(blob, user.id, 'c');
+        imageToSend = uploaded.url;
+        imagePath = uploaded.path;
+      } catch {
+        imageToSend = image;
+        imagePath = null;
+      }
+      setComposerLock(false);
+      sendBtn.innerHTML = prevSendHtml;
+    }
+
     input.value = '';
     clearAttachment();
     input.focus();
@@ -496,7 +532,10 @@ export function renderChatConversation(container, params = {}) {
       conversationId,
       userId: user.id,
       content: text || null,
-      image: image || null,
+      // La burbuja optimista pinta lo MISMO que se envía (URL o base64
+      // del fallback) — la clave de dedupe del eco realtime depende de
+      // ello (optimisticKey usa image.length).
+      image: imageToSend || null,
       videoUrl,
       createdAt: new Date(),
       _pending: true,
@@ -509,7 +548,7 @@ export function renderChatConversation(container, params = {}) {
       // API directa (no store.sendConversationMessage): el buffer es
       // nuestro y el push lo dispara la propia api — exactamente UN push
       // por mensaje. El preview del inbox se refresca con la fila real.
-      const real = await sendConversationMessage(conversationId, { content: text || null, image, videoUrl });
+      const real = await sendConversationMessage(conversationId, { content: text || null, image: imageToSend || null, videoUrl });
       if (real) {
         pendingRemove(pendingByContent, optimisticKey(optimistic), tempId);
         const idx = messages.findIndex(m => m.id === tempId);
@@ -537,9 +576,11 @@ export function renderChatConversation(container, params = {}) {
       }
       pendingRemove(pendingByContent, optimisticKey(optimistic), tempId);
       // El insert falló pero la subida triunfó: sin mensaje que lo
-      // referencie, el video quedaría huérfano en el bucket — borrado
-      // best-effort (la burbuja local _syncFailed no sobrevive la sesión).
+      // referencie, el video (o la foto) quedaría huérfano en su bucket —
+      // borrado best-effort (la burbuja local _syncFailed no sobrevive la
+      // sesión). Ambos helpers ignoran path null.
       removeUploadedVideo(videoPath);
+      removeUploadedImage(imagePath);
       lastRenderedSig = '';
       paint();
       showToast('No se envió: ' + describeApiError(err), 'error', 5000);

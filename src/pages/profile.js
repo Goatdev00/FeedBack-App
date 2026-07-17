@@ -15,7 +15,7 @@ import { clearLocalSession, requireCurrentUser, patchProfile } from '../data/pro
 import { flushCloudSave } from '../data/cloud-state.js';
 import { unsubscribeFromPush } from '../notifications/push.js';
 import { showPermissionModal, clearPushDecision } from '../notifications/permission-modal.js';
-import { fileToResizedDataURL } from '../utils/image.js';
+import { fileToResizedDataURL, fileToResizedBlob, uploadImageToStorage, removeUploadedImage } from '../utils/image.js';
 
 const CITY_OPTIONS = ['Bogotá', 'Medellín', 'Cali', 'Barranquilla', 'Cartagena', 'Yopal', 'Bucaramanga', 'Otra'];
 
@@ -476,13 +476,36 @@ function bindProfileEvents(container, user, isOwn) {
       if (!file) return;
       // Disable while uploading so a double-tap doesn't fire two patches.
       avatarBtn.disabled = true;
+      let uploadedPath = null;
+      // Se marca true en cuanto patchProfile COMMITEA en el server: a
+      // partir de ahí el perfil referencia el archivo y el cleanup del
+      // catch no debe borrarlo (un fallo posterior de UI no lo des-hace).
+      let patched = false;
       try {
-        const dataURL = await fileToResizedDataURL(file, 256, 0.82);
-        await patchProfile({ avatar_url: dataURL });
+        // Storage primero (bucket `images`, 0040): en profiles.avatar_url
+        // queda una URL corta en vez de ~30KB de base64. Ante CUALQUIER
+        // fallo — bucket inexistente porque la 0040 aún no se aplicó (el
+        // frontend se despliega antes de migrar) o error de red — degradar
+        // EN SILENCIO al base64 de siempre: la foto se actualiza igual.
+        let avatarValue;
+        try {
+          const blob = await fileToResizedBlob(file, 256, 0.82);
+          const uploaded = await uploadImageToStorage(blob, user.id, 'a');
+          avatarValue = uploaded.url;
+          uploadedPath = uploaded.path;
+        } catch {
+          avatarValue = await fileToResizedDataURL(file, 256, 0.82);
+        }
+        await patchProfile({ avatar_url: avatarValue });
+        patched = true;
         showToast('Foto actualizada ✨', 'success');
         renderProfile(container);
       } catch (err) {
         console.warn('[profile] avatar upload failed', err);
+        // Solo si el patch NO llegó a commitear: el perfil nunca
+        // apuntará al archivo — borrarlo best-effort. Si patched=true el
+        // fallo fue de UI posterior y el archivo YA es el avatar vigente.
+        if (!patched) removeUploadedImage(uploadedPath);
         showToast('No se pudo actualizar la foto', 'error');
         avatarBtn.disabled = false;
       } finally {

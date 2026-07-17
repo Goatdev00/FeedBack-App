@@ -10,16 +10,105 @@
 //   2. A thin offline shell so a flaky connection still paints the last
 //      view instead of the browser's dino page.
 //
-// Strategy: NETWORK-FIRST for same-origin GETs (so a deploy is picked up
-// immediately — no stale bundle), falling back to cache only when the
-// network fails. Cross-origin requests (Supabase REST/Realtime/Auth,
-// Google, fonts) are left completely untouched: we never want a cached
-// or intercepted auth/realtime response.
+// Strategy (v2 — "apertura instantánea"):
+//   * /assets/* (bundles con hash en el nombre): CACHE-FIRST. El hash
+//     cambia con cada deploy, así que un asset cacheado es inmutable
+//     por definición — servirlo de caché es siempre correcto e
+//     instantáneo (antes: network-first = cada apertura esperaba la red
+//     aunque tuviera el bundle idéntico en disco).
+//   * Navegaciones (index.html): STALE-WHILE-REVALIDATE. Se sirve el
+//     shell cacheado AL INSTANTE y se revalida en segundo plano — un
+//     deploy nuevo se aplica en la SIGUIENTE apertura. Es el trade
+//     estándar de PWA: arranque inmediato > estreno inmediato.
+//   * Resto de GETs same-origin (logos, manifest): stale-while-revalidate.
+//   * Media pública de Supabase Storage (fotos/videos subidos): CACHE-
+//     FIRST con poda — cada subida usa un path único, así que también
+//     son inmutables. Un flyer visto una vez carga de disco para siempre.
+//   * Cualquier otro cross-origin (REST/Auth/Realtime/fuentes): intacto.
 // =====================================================================
 
-const CACHE = 'feedback-runtime-v1';
+const SHELL_CACHE = 'feedback-shell-v2';
+const MEDIA_CACHE = 'feedback-media-v1';
+const MEDIA_MAX_ENTRIES = 120; // fotos recientes; se podan las más viejas
+// SOLO el bucket de imágenes. Los VIDEOS quedan fuera a propósito: iOS
+// pide <video> con headers Range y esperaría 206 Partial Content — un
+// cache.match devolvería el 200 completo ignorando el rango y rompería
+// la reproducción (bug clásico de PWA). El CDN de Storage ya sirve los
+// videos con soporte de rangos + HTTP cache del navegador.
+const IMAGES_PUBLIC_PATH = '/storage/v1/object/public/images/';
 
-self.addEventListener('install', () => {
+// ---------------------------------------------------------------------
+// refreshShellCache — actualización ATÓMICA del shell. Cierra la ventana
+// de PANTALLA BLANCA en despliegues: el index cacheado referencia bundles
+// con hash (/assets/index-<hash>.js) y GitHub Pages BORRA los hashes
+// viejos al desplegar — si alguna vez cacheamos un index cuyos assets no
+// quedaron cacheados, la próxima apertura pinta en blanco (el bundle ya
+// no existe en la red). Reglas:
+//   1. El index se pide con cache:'no-cache' — GH Pages sirve max-age=600
+//     y el HTTP cache podría devolver el index PRE-deploy justo después
+//     de desplegar (sus assets ya borrados).
+//   2. Los assets del index nuevo se descargan y cachean PRIMERO; si
+//     CUALQUIERA falla, se aborta SIN tocar el index cacheado — el par
+//     viejo (index+assets) sigue coherente.
+//   3. Solo con todos los assets en caché se commitea el index nuevo, y
+//     entonces se podan los assets de deploys anteriores.
+// El caller SIEMPRE pasa esta promesa a event.waitUntil — sin eso el
+// navegador puede matar el SW entre el put del index y los assets.
+// ---------------------------------------------------------------------
+function refreshShellCache(cache) {
+  return fetch('/', { cache: 'no-cache' }).then((indexResp) => {
+    if (!indexResp || !indexResp.ok) throw new Error('index_fetch_failed');
+    const commit = indexResp.clone();
+    return indexResp.text().then((html) => {
+      const refs = Array.from(new Set(html.match(/\/assets\/[A-Za-z0-9_.~-]+/g) || []));
+      // TODOS los assets primero; un fallo cualquiera aborta el commit.
+      return Promise.all(refs.map((ref) =>
+        cache.match(ref).then((hit) => {
+          if (hit) return undefined;
+          return fetch(ref).then((r) => {
+            if (!r || !r.ok) throw new Error('asset_fetch_failed: ' + ref);
+            return cache.put(ref, r);
+          });
+        })
+      )).then(() => cache.put('/', commit)).then(() =>
+        // Poda: assets no referenciados por el index recién commiteado
+        // son de deploys anteriores — sin esto la caché crece por siempre.
+        cache.keys().then((keys) => Promise.all(
+          keys
+            .filter((k) => new URL(k.url).pathname.startsWith('/assets/')
+              && !refs.includes(new URL(k.url).pathname))
+            .map((k) => cache.delete(k)),
+        ))
+      );
+    });
+  });
+}
+
+self.addEventListener('install', (event) => {
+  // Precachear el shell + SUS assets (atómico) para que incluso la
+  // primera apertura offline pinte la app. El catch mantiene el install
+  // resoluble: el push necesita el SW instalado aunque el precacheo
+  // falle — el runtime lo reintenta en cada navegación.
+  event.waitUntil(
+    caches.open(SHELL_CACHE)
+      .then((c) => Promise.all([
+        refreshShellCache(c).catch(() => {}),
+        c.addAll([
+          '/manifest.json',
+          '/logo-192.png',
+          // Poppins auto-hospedada: con esto la tipografía también es
+          // offline-first desde la primera apertura.
+          '/fonts/poppins-300.woff2',
+          '/fonts/poppins-400.woff2',
+          '/fonts/poppins-500.woff2',
+          '/fonts/poppins-600.woff2',
+          '/fonts/poppins-700.woff2',
+          '/fonts/poppins-800.woff2',
+          '/fonts/poppins-900.woff2',
+        ]).catch(() => {}),
+      ]))
+      .catch(() => {})
+  );
   // Activate this SW immediately on first install instead of waiting for
   // all tabs to close.
   self.skipWaiting();
@@ -28,10 +117,71 @@ self.addEventListener('install', () => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(
+        keys
+          .filter((k) => k !== SHELL_CACHE && k !== MEDIA_CACHE)
+          .map((k) => caches.delete(k)),
+      ))
       .then(() => self.clients.claim())
   );
 });
+
+// stale-while-revalidate: caché al instante si existe; la red actualiza
+// la caché en segundo plano para la próxima vez. Sin caché → red. El
+// caller pasa `event` para que el refresh viva bajo waitUntil (sin eso
+// el navegador puede matar el SW con el put a medias).
+function staleWhileRevalidate(event, request, cacheName) {
+  return caches.open(cacheName).then((cache) =>
+    cache.match(request).then((cached) => {
+      const refresh = fetch(request)
+        .then((response) => {
+          if (response && response.ok && (response.type === 'basic' || response.type === 'cors')) {
+            cache.put(request, response.clone());
+          }
+          return response;
+        })
+        .catch(() => cached); // offline: lo cacheado (o el fallo original)
+      event.waitUntil(refresh.catch(() => {}));
+      return cached || refresh;
+    })
+  );
+}
+
+// cache-first para recursos inmutables (assets con hash, media de Storage).
+function cacheFirst(request, cacheName, { prune = 0, corsRefetch = false } = {}) {
+  return caches.open(cacheName).then((cache) =>
+    cache.match(request).then((cached) => {
+      if (cached) return cached;
+      // corsRefetch: los <img>/<video> disparan requests no-cors → la
+      // respuesta sería "opaque" y Chrome la infla ~7MB de cuota cada
+      // una. Storage sirve CORS abierto, así que re-pedimos en modo cors
+      // para cachear una respuesta limpia y liviana.
+      const req = corsRefetch ? new Request(request.url, { mode: 'cors' }) : request;
+      return fetch(req)
+        .then((response) => {
+          if (response && response.ok) {
+            // put encadenado (no fire-and-forget): respondWith mantiene
+            // vivo el SW hasta resolver — así el put nunca queda a medias.
+            return cache.put(request, response.clone()).then(() => {
+              if (prune) pruneCache(cache, prune);
+              return response;
+            });
+          }
+          return response;
+        })
+        .catch(() => (corsRefetch ? fetch(request) : Promise.reject(new Error('fetch_failed'))));
+    })
+  );
+}
+
+// Poda FIFO: las Cache API keys conservan orden de inserción; borrar las
+// primeras aproxima un LRU barato sin metadata extra.
+function pruneCache(cache, maxEntries) {
+  cache.keys().then((keys) => {
+    if (keys.length <= maxEntries) return;
+    keys.slice(0, keys.length - maxEntries).forEach((k) => cache.delete(k));
+  });
+}
 
 self.addEventListener('fetch', (event) => {
   const { request } = event;
@@ -39,24 +189,44 @@ self.addEventListener('fetch', (event) => {
   // Only GETs are cacheable; let POST/PUT/etc. pass straight through.
   if (request.method !== 'GET') return;
 
-  // Leave cross-origin (Supabase, Google OAuth, CDNs) entirely alone.
   const url = new URL(request.url);
-  if (url.origin !== self.location.origin) return;
 
-  event.respondWith(
-    fetch(request)
-      .then((response) => {
-        // Stash a copy of successful same-origin responses for offline.
-        if (response && response.ok && response.type === 'basic') {
-          const copy = response.clone();
-          caches.open(CACHE).then((c) => c.put(request, copy));
-        }
-        return response;
-      })
-      .catch(() =>
-        caches.match(request).then((cached) => cached || caches.match('/'))
-      )
-  );
+  if (url.origin === self.location.origin) {
+    // Bundles de Vite: hash en el nombre → inmutables → cache-first.
+    if (url.pathname.startsWith('/assets/')) {
+      event.respondWith(cacheFirst(request, SHELL_CACHE));
+      return;
+    }
+    // Navegación SPA (todas resuelven al index): shell cacheado AL
+    // INSTANTE; la actualización atómica (index+assets o nada) corre en
+    // segundo plano bajo waitUntil. Primera visita sin caché: index de
+    // red normal mientras el refresh puebla la caché en paralelo.
+    if (request.mode === 'navigate') {
+      event.waitUntil(
+        caches.open(SHELL_CACHE).then((c) => refreshShellCache(c)).catch(() => {})
+      );
+      event.respondWith(
+        caches.open(SHELL_CACHE).then((cache) =>
+          cache.match('/').then((cached) =>
+            cached || fetch(request).catch(() => cache.match('/'))
+          )
+        )
+      );
+      return;
+    }
+    // Logos, manifest, etc.
+    event.respondWith(staleWhileRevalidate(event, request, SHELL_CACHE));
+    return;
+  }
+
+  // Imágenes públicas de Supabase Storage: inmutables por path único →
+  // cache-first con poda. Videos y el resto de cross-origin (REST/Auth/
+  // Realtime/fuentes) NO se tocan — ver nota de Range arriba.
+  if (url.pathname.startsWith(IMAGES_PUBLIC_PATH) && url.hostname.endsWith('.supabase.co')) {
+    event.respondWith(
+      cacheFirst(request, MEDIA_CACHE, { prune: MEDIA_MAX_ENTRIES, corsRefetch: true })
+    );
+  }
 });
 
 // =====================================================================
@@ -65,7 +235,8 @@ self.addEventListener('fetch', (event) => {
 // The Edge Function `send-push` constructs the JSON payload server-side
 // — see supabase/functions/send-push/index.ts — so this listener only
 // has to parse it defensively and surface it as a system notification.
-// Network-first caching above stays untouched.
+// La estrategia de caché v2 de arriba (cache-first + SWR) no interviene
+// en esta sección.
 // =====================================================================
 
 self.addEventListener('push', (event) => {

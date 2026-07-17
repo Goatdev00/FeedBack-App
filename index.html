@@ -45,13 +45,19 @@
   <!-- Canonical -->
   <link rel="canonical" href="https://partyrate.site" />
 
-  <!-- Fonts: Poppins from Google Fonts, full weight range (300–900).
-       Body uses the lighter end, display titles the heavier end — the
-       contrast between thin and thick within the same family is the
-       "luxury" treatment. -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <!-- Preconnect al backend: el TLS+DNS de Supabase se negocia en
+       paralelo con el parseo del bundle — la primera query de
+       hidratación sale sin pagar el handshake. -->
+  <link rel="preconnect" href="https://rayjzdxtczvjyxujkmne.supabase.co" crossorigin>
+  <link rel="dns-prefetch" href="https://rayjzdxtczvjyxujkmne.supabase.co">
+
+  <!-- Fonts: Poppins AUTO-HOSPEDADA (subset latino, public/fonts/*.woff2,
+       @font-face al inicio de main.css). Antes venía de Google Fonts como
+       <link> render-blocking cross-origin — en redes lentas el primer
+       pintado esperaba ese CSS y el service worker no podía cachearlo.
+       Body usa los pesos livianos, los títulos display los pesados. -->
+  <link rel="preload" href="/fonts/poppins-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/poppins-700.woff2" as="font" type="font/woff2" crossorigin>
 
   <link rel="stylesheet" href="/src/styles/main.css" />
 </head>
