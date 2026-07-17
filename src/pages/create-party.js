@@ -199,6 +199,13 @@ export function renderCreateParty(container, params = {}) {
           </div>
         </div>
       `}
+
+      <!-- Publicar también al FINAL del formulario: quien acaba de llenar
+           géneros/boletería está abajo del todo — no debería volver a la
+           cabecera para publicar. Mismo handler que el botón de arriba. -->
+      <button class="btn btn-primary btn-full" id="publish-party-btn-bottom" style="margin-top:var(--space-lg);">
+        ${isRemate ? 'Publicar remate' : 'Publicar evento'}
+      </button>
     </div>
   `;
 
@@ -259,8 +266,8 @@ export function renderCreateParty(container, params = {}) {
     });
   });
 
-  // Publish
-  container.querySelector('#publish-party-btn').addEventListener('click', () => {
+  // Publish — cabecera + botón de cierre del formulario, un solo handler.
+  const publishParty = () => {
     const name = container.querySelector('#party-name').value.trim();
     const venue = container.querySelector('#party-venue').value.trim();
     const city = container.querySelector('#party-city').value;
@@ -318,5 +325,7 @@ export function renderCreateParty(container, params = {}) {
       showToast('¡Evento creado con éxito! 🎉', 'success');
       router.navigate('parties');
     }
-  });
+  };
+  container.querySelector('#publish-party-btn').addEventListener('click', publishParty);
+  container.querySelector('#publish-party-btn-bottom').addEventListener('click', publishParty);
 }

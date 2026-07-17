@@ -196,10 +196,12 @@ export function renderPartyDetail(container, params = {}) {
            surfaces. bindPostCardActions below wires like / comment /
            report / view-profile / view-all-comments. -->
       <div id="party-posts-section" style="margin-top:var(--space-xl);">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-md);">
-          <h3 style="font-size:var(--text-sm);font-weight:600;color:var(--text-secondary);">Lo que dicen (${partyPosts.length})</h3>
-          <button class="btn btn-ghost btn-sm" id="post-here-btn">Publicar aquí</button>
-        </div>
+        <h3 style="font-size:var(--text-sm);font-weight:600;color:var(--text-secondary);margin-bottom:var(--space-md);">Lo que dicen (${partyPosts.length})</h3>
+        <!-- CTA principal de publicación: el ghost "Publicar aquí" de la
+             cabecera pasaba desapercibido — este invita de frente. -->
+        <button class="btn btn-primary btn-full" id="post-here-btn" style="margin-bottom:var(--space-md);">
+          ¿Qué está pasando? Publícalo aquí
+        </button>
         ${partyPosts.length > 0
           ? partyPosts.map(post => renderPostCard(post, state)).join('')
           : `<div class="empty-state" style="padding:var(--space-lg);"><p class="empty-state-text">Aún no hay publicaciones de ${isRemate ? 'este remate' : 'esta fiesta'}</p></div>`

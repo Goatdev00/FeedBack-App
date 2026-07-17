@@ -21,17 +21,22 @@
 // homescreen, isStandalone() returns true and the modal never appears.
 // =====================================================================
 
-function isIos() {
+// Exportados: el banner de instalación del muro (components/install-banner)
+// necesita el mismo trío de detecciones sin duplicarlas.
+export function isIos() {
   const ua = (navigator.userAgent || '').toLowerCase();
-  return /iphone|ipad|ipod/.test(ua);
+  // iPadOS moderno se hace pasar por Mac en el UA — se delata por el
+  // touch (mismo truco que usa permission-modal para el flujo de push).
+  return /iphone|ipad|ipod/.test(ua)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
-function isAndroid() {
+export function isAndroid() {
   const ua = (navigator.userAgent || '').toLowerCase();
   return /android/.test(ua);
 }
 
-function isStandalone() {
+export function isStandalone() {
   return (typeof window !== 'undefined' && (
     window.matchMedia?.('(display-mode: standalone)').matches
     || window.navigator.standalone === true

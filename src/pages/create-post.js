@@ -88,7 +88,9 @@ export function renderCreatePost(container, params = {}) {
         </span>
       </div>
 
-      <!-- Post content -->
+      <!-- Post content. Caja de input normal (.input aporta padding y
+           borde): el hack viejo de border:none+padding:0 dejaba el texto
+           pegado a los bordes del recuadro. -->
       <textarea
         class="input textarea"
         id="post-content"
@@ -96,7 +98,7 @@ export function renderCreatePost(container, params = {}) {
           ? '¿Qué está pasando en el remate? Comparte tu experiencia...'
           : `¿Qué está pasando en ${sanitize(party.name)}? Comparte tu experiencia...`}"
         maxlength="500"
-        style="min-height:140px;font-size:var(--text-base);border:none;background:transparent;padding:0;resize:none;"
+        style="min-height:140px;font-size:var(--text-base);resize:none;"
         autofocus
       ></textarea>
 
@@ -160,6 +162,13 @@ export function renderCreatePost(container, params = {}) {
           </div>
         </div>
       ` : ''}
+
+      <!-- Publicar también al FINAL del formulario: tras adjuntar media y
+           marcar chips el usuario está abajo del todo — subir hasta la
+           cabecera para publicar era un viaje innecesario. -->
+      <button class="btn btn-primary btn-full" id="publish-btn-bottom" style="margin-top:var(--space-sm);">
+        Publicar
+      </button>
     </div>
   `;
 
@@ -305,9 +314,20 @@ export function renderCreatePost(container, params = {}) {
     });
   });
 
-  // Publish
+  // Publish — dos botones (cabecera + final del formulario), un solo
+  // handler. El estado de "subiendo" se refleja en AMBOS: el que no se
+  // tocó también debe quedar bloqueado o sería una vía de doble publish.
   const publishBtn = container.querySelector('#publish-btn');
-  publishBtn.addEventListener('click', async () => {
+  const publishBtnBottom = container.querySelector('#publish-btn-bottom');
+  const publishButtons = [publishBtn, publishBtnBottom].filter(Boolean);
+  const setPublishing = (busy) => {
+    publishButtons.forEach((b) => {
+      b.disabled = busy;
+      if (busy) b.innerHTML = '<span class="btn-spinner"></span>&nbsp;Subiendo…';
+      else b.textContent = 'Publicar';
+    });
+  };
+  const publish = async () => {
     const content = textarea.value.trim();
     if (!content && !photoData && !videoData) {
       showToast('Escribe algo o agrega una foto o un video', 'error');
@@ -339,8 +359,7 @@ export function renderCreatePost(container, params = {}) {
     let videoUrl = null;
     let videoPath = null;
     if (videoData) {
-      publishBtn.disabled = true;
-      publishBtn.innerHTML = '<span class="btn-spinner"></span>&nbsp;Subiendo…';
+      setPublishing(true);
       setUploadLock(true);
       try {
         const uploaded = await uploadVideoToStorage(videoData, user.id);
@@ -350,8 +369,7 @@ export function renderCreatePost(container, params = {}) {
         // El video sigue adjunto — el usuario puede reintentar sin
         // volver a elegirlo.
         setUploadLock(false);
-        publishBtn.disabled = false;
-        publishBtn.textContent = 'Publicar';
+        setPublishing(false);
         showToast('No se subió el video: ' + (err?.message || 'error desconocido'), 'error', 5000);
         return;
       }
@@ -401,7 +419,8 @@ export function renderCreatePost(container, params = {}) {
     // remate desde su detalle con la pestaña fiestas activa).
     store.setState({ wallTab: wall });
     router.navigate('wall');
-  });
+  };
+  publishButtons.forEach((b) => b.addEventListener('click', publish));
 }
 
 // ---------------------------------------------------------------------
