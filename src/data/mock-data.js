@@ -610,6 +610,11 @@ class Store {
           );
         }
         // Merge with defaults for new fields
+        // La pestaña del muro NO sobrevive entre aperturas: la app abre
+        // SIEMPRE en Fiestas (decisión de producto). Borrarla del estado
+        // persistido deja que el default ('fiestas') mande; dentro de la
+        // sesión el cambio de pestaña vive en memoria con normalidad.
+        delete parsed.wallTab;
         return { ...defaultState, ...parsed };
       }
     } catch (e) {

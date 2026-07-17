@@ -71,6 +71,10 @@ const EXCLUDED_FROM_CLOUD = new Set([
   // del perfil. Queda como filtro local del dispositivo; el perfil es la
   // fuente de verdad al abrir.
   'selectedCity',
+  // La app abre SIEMPRE en la pestaña Fiestas (loadState la resetea).
+  // Si viajara en el blob, el estado rancio de otro dispositivo llegaría
+  // tras la hidratación y cambiaría la pestaña sola a mitad de sesión.
+  'wallTab',
 ]);
 
 const DEBOUNCE_MS = 1500;     // wait this long after the last change
