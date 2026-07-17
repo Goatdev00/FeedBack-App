@@ -965,6 +965,8 @@ span > svg {
 }
 
 .modal {
+  /* relative: ancla el botón ✕ absoluto de createModal({closeX}) */
+  position: relative;
   width: 100%;
   max-width: var(--max-width);
   max-height: 90dvh;
@@ -4653,4 +4655,44 @@ span > svg {
 
 [data-theme="light"] .install-banner {
   background: rgba(255, 106, 0, 0.06);
+}
+
+/* =====================================================================
+   createModal opt-ins: botón ✕ + sheet anclado arriba (ver utils/dom.js)
+   ===================================================================== */
+.modal-close-x {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.modal-close-x:active {
+  color: var(--text-primary);
+  transform: scale(0.94);
+}
+
+/* Ancla arriba: para modales con buscador — el teclado tapa la mitad
+   inferior y un bottom-sheet dejaba los resultados debajo del teclado. */
+.modal-overlay-top {
+  align-items: flex-start;
+  padding-top: max(16px, env(safe-area-inset-top));
+}
+
+.modal-overlay-top .modal {
+  border-radius: var(--radius-2xl);
+  /* El slideUp de bottom-sheet se ve raro llegando arriba: fade simple. */
+  animation: fadeIn 0.2s var(--ease-out);
 }
