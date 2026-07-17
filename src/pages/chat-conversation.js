@@ -688,7 +688,7 @@ export function renderChatConversation(container, params = {}) {
           <button type="button" class="btn btn-full btn-sm conv-danger-btn" id="grp-leave">Salir del grupo</button>
         </div>
       </div>
-    `);
+    `, { closeX: true });
 
     // Tap en un miembro → su perfil (cerrando hilo + modal). Igual que en
     // la lista: si el perfil no es resoluble ni desde el cache, ignorar.
@@ -781,7 +781,7 @@ export function renderChatConversation(container, params = {}) {
 
         <button class="btn btn-primary btn-full" id="edit-group-save">Guardar</button>
       </div>
-    `);
+    `, { closeX: true });
 
     const nameEl = overlay.querySelector('#edit-group-name');
     const fileEl = overlay.querySelector('#edit-photo-file');

@@ -185,7 +185,7 @@ function openConvMenu(conv) {
         </button>
       ` : ''}
     </div>
-  `);
+  `, { closeX: true });
 
   overlay.querySelector('#menu-mute').addEventListener('click', () => {
     // Cerrar ANTES de mutar: el toggle repinta la ruta (repaintIfNeeded)
@@ -333,7 +333,7 @@ function openNewChatModal() {
       </div>
       <div class="user-pick-list" id="dm-list"></div>
     </div>
-  `);
+  `, { closeX: true, top: true });
 
   const searchEl = overlay.querySelector('#dm-search');
   const listEl = overlay.querySelector('#dm-list');
@@ -405,7 +405,7 @@ function openNewGroupModal() {
 
       <button class="btn btn-primary btn-full" id="group-create-btn">Crear grupo</button>
     </div>
-  `);
+  `, { closeX: true, top: true });
 
   const nameEl = overlay.querySelector('#group-name');
   const fileEl = overlay.querySelector('#group-photo-file');
@@ -483,7 +483,7 @@ export function openMemberPickerModal({ title = 'Añadir miembros', confirmLabel
         ${sanitize(confirmLabel)}
       </button>
     </div>
-  `);
+  `, { closeX: true, top: true });
 
   const root = overlay.querySelector('#member-picker-root');
   const confirmBtn = overlay.querySelector('#picker-confirm');

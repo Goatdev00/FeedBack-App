@@ -51,10 +51,18 @@ export function detachListener(el, key) {
  * Mount a modal overlay with bottom-sheet animation.
  * Outside-click and Escape both dismiss it. The returned overlay has a
  * `.close()` method for programmatic dismissal.
+ *
+ * Opciones opt-in (los modales existentes no cambian):
+ *   closeX — botón ✕ visible arriba a la derecha. Obligatorio en modales
+ *     altos (~92dvh): sin fondo visible que tocar y sin Escape en móvil,
+ *     el usuario quedaba ATRAPADO dentro.
+ *   top — ancla el sheet ARRIBA en vez de abajo. Para modales con
+ *     buscador: el teclado en pantalla tapa la mitad inferior, así que
+ *     un bottom-sheet deja los resultados exactamente debajo del teclado.
  */
-export function createModal(innerHTML, { onClose } = {}) {
+export function createModal(innerHTML, { onClose, closeX = false, top = false } = {}) {
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
+  overlay.className = 'modal-overlay' + (top ? ' modal-overlay-top' : '');
   overlay.innerHTML = innerHTML;
   document.body.appendChild(overlay);
 
@@ -68,6 +76,19 @@ export function createModal(innerHTML, { onClose } = {}) {
 
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   document.addEventListener('keydown', onKey);
+
+  if (closeX) {
+    const modalEl = overlay.querySelector('.modal');
+    if (modalEl) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'modal-close-x';
+      btn.setAttribute('aria-label', 'Cerrar');
+      btn.textContent = '✕';
+      btn.addEventListener('click', close);
+      modalEl.appendChild(btn);
+    }
+  }
 
   overlay.close = close;
   return overlay;
