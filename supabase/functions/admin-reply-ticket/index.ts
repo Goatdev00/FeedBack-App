@@ -179,12 +179,37 @@ Deno.serve(async (req: Request) => {
     if (ticket.user_id) {
       const { data: subs } = await admin.from('push_subscriptions')
         .select('endpoint, subscription').eq('user_id', ticket.user_id);
-      const pushPayload = JSON.stringify({ title: 'Soporte te respondió 💬', body: message.slice(0, 180), url: '/#/notifications' });
+      // Doble forma: campos legacy (nuestro sw.js) + wrapper declarativo
+      // (Safari/iOS 18.4+ la muestra aunque el SW esté evictado). Sin
+      // emoji en el título (regla de producto).
+      const SITE_URL = (Deno.env.get('SITE_URL') ?? 'https://partyrate.site').replace(/\/+$/, '');
+      const replyTitle = 'Soporte te respondió';
+      const replyBody = message.slice(0, 180);
+      const replyUrl = '/#/notifications';
+      const pushPayload = JSON.stringify({
+        title: replyTitle,
+        body: replyBody,
+        url: replyUrl,
+        web_push: 8030,
+        mutable: true,
+        notification: {
+          title: replyTitle,
+          body: replyBody,
+          navigate: `${SITE_URL}${replyUrl}`,
+          lang: 'es',
+          dir: 'auto',
+          icon: `${SITE_URL}/logo-192.png`,
+          data: { url: replyUrl },
+        },
+      });
       for (const row of (subs ?? []) as { endpoint: string; subscription: unknown }[]) {
         try {
           await webpush.sendNotification(row.subscription as unknown as webpush.PushSubscription, pushPayload, {
             headers: { Authorization: await vapidAuthHeader((row.subscription as { endpoint: string }).endpoint) },
-            TTL: 12 * 60 * 60,
+            // 24h + prioridad alta; `urgency` SOLO como opción (un header
+            // crudo lo pisa la librería de vuelta a 'normal').
+            TTL: 24 * 60 * 60,
+            urgency: 'high',
             contentEncoding: 'aes128gcm',
           });
           pushSent++;

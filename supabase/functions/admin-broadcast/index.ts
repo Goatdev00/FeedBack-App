@@ -189,6 +189,11 @@ Deno.serve(async (req: Request) => {
   const text = (body.body ?? '').toString().trim().slice(0, 500);
   let url = (body.url ?? '').toString().trim();
   if (url && !url.startsWith('/#/')) return json(400, { error: 'invalid_url' }); // deep links only
+  // Cap como title/body: el payload dual-shape embebe el url 3 veces y el
+  // push service rechaza cuerpos >4096 bytes con 413 — un url artesanal
+  // largo (solo alcanzable por API directa, la UI usa un select fijo)
+  // haría fallar el broadcast entero en silencio.
+  if (url.length > 300) return json(400, { error: 'url_too_long' });
   if (!url) url = '/#/notifications';
   const wantPush = !!body.channels?.push;
   const wantEmail = !!body.channels?.email;
@@ -251,14 +256,40 @@ Deno.serve(async (req: Request) => {
   // ---------------- Send PUSH ----------------
   let pushSent = 0, pushRemoved = 0;
   if (wantPush) {
-    const payload = JSON.stringify({ title, body: text, url });
+    // Doble forma en un solo payload: campos legacy top-level (los parsea
+    // nuestro sw.js en Chrome/Firefox/iOS≤18.3) + wrapper de Declarative
+    // Web Push (Safari/iOS 18.4+ muestra la notificación aunque el
+    // sistema haya evictado el service worker — clave con la PWA cerrada).
+    const SITE_URL = (Deno.env.get('SITE_URL') ?? 'https://partyrate.site').replace(/\/+$/, '');
+    const absolute = url.startsWith('https://') ? url : `${SITE_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+    const payload = JSON.stringify({
+      title,
+      body: text,
+      url,
+      web_push: 8030,
+      mutable: true,
+      notification: {
+        title,
+        body: text,
+        navigate: absolute,
+        lang: 'es',
+        dir: 'auto',
+        icon: `${SITE_URL}/logo-192.png`,
+        data: { url },
+      },
+    });
     const MAX = 5000; // safety cap per invocation
     for (const row of subRows.slice(0, MAX)) {
       try {
         const sub = row.subscription as unknown as webpush.PushSubscription;
         await webpush.sendNotification(sub, payload, {
           headers: { Authorization: await vapidAuthHeader(sub.endpoint) },
-          TTL: 12 * 60 * 60,
+          // 24h de vida + prioridad alta: un anuncio del admin debe
+          // sobrevivir una noche sin red y despertar dispositivos en
+          // Doze. `urgency` SOLO como opción (como header crudo la
+          // librería lo pisa de vuelta a 'normal').
+          TTL: 24 * 60 * 60,
+          urgency: 'high',
           contentEncoding: 'aes128gcm',
         });
         pushSent++;

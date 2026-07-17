@@ -78,21 +78,40 @@ self.addEventListener('push', (event) => {
     payload = {};
   }
 
-  const title = payload.title || 'PartyRate';
-  const body  = payload.body  || '';
-  const url   = payload.url   || '/';
+  // The payload carries BOTH shapes: legacy top-level {title, body, url,
+  // tag} (ours) and the Declarative Web Push wrapper {web_push: 8030,
+  // notification: {title, body, navigate, tag, ...}}. On Safari 18.4+
+  // the declarative member lets the SYSTEM display the notification even
+  // if this SW was evicted (mutable: true keeps us in the loop when
+  // alive). Here we prefer the notification member, falling back to the
+  // legacy fields, so any combination of old/new server × old/new SW
+  // still shows something correct.
+  const n = payload.notification || {};
+  const title = n.title || payload.title || 'PartyRate';
+  const body  = (n.body != null ? n.body : payload.body) || '';
+  const url   = (n.data && n.data.url) || payload.url || n.navigate || '/';
+  const tag   = n.tag || payload.tag || undefined;
 
-  event.waitUntil(
-    self.registration.showNotification(title, {
-      body,
-      // /logo-192.png is a real file in public/ (the old /icons/icon-192
-      // and /icons/badge-72 never existed — every push showed a broken
-      // generic icon). No `badge`: it requires a dedicated monochrome
-      // 72px asset; omitting it falls back to the browser default.
-      icon: '/logo-192.png',
-      data: { url },
-    })
-  );
+  const options = {
+    body,
+    // /logo-192.png is a real file in public/ (the old /icons/icon-192
+    // and /icons/badge-72 never existed — every push showed a broken
+    // generic icon). No `badge`: it requires a dedicated monochrome
+    // 72px asset; omitting it falls back to the browser default.
+    icon: '/logo-192.png',
+    timestamp: Date.now(),
+    data: { url },
+  };
+  // tag: same-conversation pushes REPLACE each other in the tray on
+  // Chrome/Android instead of stacking; renotify keeps each replacement
+  // audible. renotify without tag throws on Chrome — only set together.
+  // iOS ignores both today (WebKit 258922) and simply stacks.
+  if (tag) {
+    options.tag = tag;
+    options.renotify = true;
+  }
+
+  event.waitUntil(self.registration.showNotification(title, options));
 });
 
 // ---------------------------------------------------------------------

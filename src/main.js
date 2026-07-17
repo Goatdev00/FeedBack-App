@@ -406,11 +406,18 @@ function schedulePushOffer() {
 let _lastResumeRefresh = Date.now(); // boot hydrates already — skip the first window
 function refreshOnResume() {
   if (document.visibilityState !== 'visible') return;
-  if (!store.getState().currentUser?.id) return; // no session → nothing to fetch
+  const uid = store.getState().currentUser?.id;
+  if (!uid) return; // no session → nothing to fetch
   const now = Date.now();
   if (now - _lastResumeRefresh < 15_000) return;
   _lastResumeRefresh = now;
   refreshFromSupabaseInBackground();
+  // La suscripción de push también se re-valida al VOLVER, no solo al
+  // boot: una PWA de iOS puede vivir suspendida días — si el push
+  // service rotó el endpoint en ese lapso, sin esto el usuario deja de
+  // recibir notificaciones hasta que reinicie la app. Silencioso,
+  // best-effort y barato (no-op si todo está en orden).
+  resyncPushSubscription(uid);
 }
 document.addEventListener('visibilitychange', refreshOnResume);
 // bfcache restores (iOS back-forward) don't fire visibilitychange.
