@@ -350,6 +350,44 @@ async function resolveSenderUsername(admin: SupabaseClient, senderId: string): P
 }
 
 // ---------------------------------------------------------------------
+// buildPushPayload — one JSON shape, two consumers:
+//   * LEGACY top-level {title, body, url, tag}: what our sw.js parses on
+//     Chrome/Android, Firefox, desktop y iOS 16.4–18.3.
+//   * Declarative Web Push wrapper (web_push: 8030 + notification):
+//     Safari/iOS 18.4+ puede mostrar la notificación SIN despertar el
+//     service worker — si el sistema evictó el SW (muy común con la PWA
+//     cerrada en iPhone), la notificación se muestra igual. `mutable:
+//     true` deja al SW procesarla cuando esté vivo; el fallback
+//     declarativo solo actúa si el SW no responde a tiempo. `navigate`
+//     debe ser URL absoluta same-origin (todos los ejemplos de Apple).
+// ---------------------------------------------------------------------
+const SITE_URL = (Deno.env.get('SITE_URL') ?? 'https://partyrate.site').replace(/\/+$/, '');
+
+function buildPushPayload(
+  { title, body, url, tag }: { title: string; body: string; url: string; tag?: string },
+): string {
+  const absolute = url.startsWith('https://') ? url : `${SITE_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+  return JSON.stringify({
+    title,
+    body,
+    url,
+    ...(tag ? { tag } : {}),
+    web_push: 8030,
+    mutable: true,
+    notification: {
+      title,
+      body,
+      navigate: absolute,
+      lang: 'es',
+      dir: 'auto',
+      ...(tag ? { tag } : {}),
+      icon: `${SITE_URL}/logo-192.png`,
+      data: { url },
+    },
+  });
+}
+
+// ---------------------------------------------------------------------
 // sendToUserSubscriptions — pushes `payload` to EVERY subscription one
 // user has registered, pruning in place the ones the push service
 // already forgot (404/410). Shared by the classic single-recipient flow
@@ -359,6 +397,7 @@ async function sendToUserSubscriptions(
   admin: SupabaseClient,
   userId: string,
   payload: string,
+  opts: { topic?: string } = {},
 ): Promise<{ sent: number; removed: number; subsCount: number; readError: boolean }> {
   const { data: subs, error: subsErr } = await admin
     .from('push_subscriptions')
@@ -386,7 +425,19 @@ async function sendToUserSubscriptions(
       const sub = row.subscription as unknown as webpush.PushSubscription;
       await webpush.sendNotification(sub, payload, {
         headers: { Authorization: await vapidAuthHeader(sub.endpoint) },
-        TTL: 12 * 60 * 60,
+        // 24h: un teléfono apagado toda la noche aún recibe el push al
+        // encender (12h lo perdía). FCM/Mozilla aceptan hasta 28-30 días.
+        TTL: 24 * 60 * 60,
+        // OJO: urgency debe ir como OPCIÓN, no como header crudo — la
+        // librería asigna `Urgency` DESPUÉS de mergear options.headers y
+        // pisaría un header manual devolviéndolo a 'normal'. 'high' pide
+        // a FCM prioridad alta (despierta dispositivos en Doze).
+        urgency: 'high',
+        // Topic (RFC 8030): colapsa mensajes AÚN NO ENTREGADOS con el
+        // mismo topic en el push service — un teléfono sin red durante
+        // una conversación activa recibe solo el último push en vez de
+        // una ráfaga. Solo lo usa el fan-out de conversaciones.
+        ...(opts.topic ? { topic: opts.topic } : {}),
         contentEncoding: 'aes128gcm', // matches the `vapid t=, k=` header form
       });
       sent++;
@@ -494,10 +545,19 @@ async function handleConversationPush(
     ? (msg.content.length > 80 ? `${msg.content.slice(0, 80)}…` : msg.content)
     : (msg.video_url ? '🎬 Video' : '📷 Foto');
   const isGroup = conv.kind === 'group';
-  const payload = JSON.stringify({
+  // tag: en Chrome/Android las notificaciones de la MISMA conversación se
+  // reemplazan en la bandeja (renotify las hace sonar igual) en vez de
+  // apilar 20 entradas. En iOS el reemplazo por tag aún no funciona
+  // (WebKit bug 258922) — allí se apilan, sin daño.
+  const convTag = `conv:${body.conversationId}`;
+  // topic (≤32 chars, charset base64url): el uuid sin guiones son
+  // exactamente 32 hex chars. Colapsa pushes no entregados por conversación.
+  const convTopic = String(body.conversationId).replace(/-/g, '').slice(0, 32);
+  const payload = buildPushPayload({
     title: isGroup ? (conv.title || 'Nuevo mensaje') : 'Nuevo mensaje',
     body: isGroup ? `${fromUsername}: ${preview}` : `${fromUsername} te envió un mensaje`,
     url: `/#/chat/conv/${body.conversationId}`,
+    tag: convTag,
   });
 
   let sent = 0;
@@ -522,7 +582,7 @@ async function handleConversationPush(
       continue;
     }
 
-    const result = await sendToUserSubscriptions(admin, r.user_id, payload);
+    const result = await sendToUserSubscriptions(admin, r.user_id, payload, { topic: convTopic });
     sent += result.sent;
     removed += result.removed;
 
@@ -690,7 +750,7 @@ Deno.serve(async (req: Request) => {
   );
 
   // ---------------- Dispatch ----------------
-  const payload = JSON.stringify({ title, body: pushBody, url });
+  const payload = buildPushPayload({ title, body: pushBody, url });
   const { sent, removed, subsCount, readError } =
     await sendToUserSubscriptions(admin, body.toUserId!, payload);
 

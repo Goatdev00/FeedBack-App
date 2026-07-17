@@ -135,7 +135,30 @@ export function showPermissionModal(userId, { force = false } = {}) {
       if (force) {
         // Self-heal: re-register this device's subscription right now.
         resyncPushSubscription(userId);
-        showToast('Las notificaciones ya están activas en este dispositivo ✅', 'success');
+        // Prueba REAL a nivel de sistema: mostramos una notificación local
+        // vía el SW. Confirma de una vez que el dispositivo las pinta
+        // (atrapa el caso iOS "permiso concedido pero notificaciones del
+        // sistema desactivadas para la app", que un toast no detecta).
+        (async () => {
+          try {
+            const reg = await navigator.serviceWorker.getRegistration();
+            if (reg) {
+              await reg.showNotification('Notificaciones activas', {
+                body: 'Así se verán las notificaciones de PartyRate en este dispositivo.',
+                icon: '/logo-192.png',
+                tag: 'self-test',
+                // Sin data.url el click del SW navegaría a '/' — si el
+                // documento se cargó con hash (F5 en #/profile), eso es un
+                // hard-reload que saca al usuario de Configuración. Con la
+                // ruta actual, el click solo enfoca la ventana.
+                data: { url: `/${window.location.hash || ''}` || '/' },
+              });
+              showToast('Notificaciones activas — te mostramos una de prueba', 'success', 5000);
+              return;
+            }
+          } catch { /* cae al toast simple */ }
+          showToast('Las notificaciones ya están activas en este dispositivo', 'success');
+        })();
       }
       return;
     }
