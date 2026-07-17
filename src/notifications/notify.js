@@ -33,6 +33,13 @@ async function callSendPush(payload) {
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       console.warn('[notify] send-push HTTP', res.status, text);
+    } else {
+      // Diagnóstico barato: {sent, removed, skipped?, reason?}. sent:0
+      // con reason 'no_subscriptions' = el destinatario no tiene push
+      // activo; skipped>0 = throttle 5/5min por destinatario (normal al
+      // probar en ráfaga). Solo consola — invisible para el usuario.
+      const data = await res.json().catch(() => null);
+      if (data) console.debug('[notify]', payload.type, data);
     }
   } catch (err) {
     // Network failure / Edge Function down / CORS edge case — never let
