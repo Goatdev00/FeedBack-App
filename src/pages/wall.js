@@ -11,6 +11,7 @@ import { renderBottomNav, bindNavEvents } from '../components/nav.js';
 import { refreshFromSupabaseInBackground } from '../data/hydration.js';
 import { reportPost, adminSoftDeletePost, adminSoftDeleteComment } from '../data/api.js';
 import { currentUserIsAdmin, confirmAdminDelete } from '../utils/admin-moderation.js';
+import { iosInstallBannerHTML, bindIosInstallBanner } from '../components/install-banner.js';
 
 const LIKE_RECENCY_BOOST_MS = 60_000 * 30;
 
@@ -101,6 +102,11 @@ export function renderWall(container) {
           </button>
         ` : ''}
       </div>
+
+      <!-- Adopción de push en iPhone: sin instalar en pantalla de inicio
+           no hay notificaciones (regla de Apple). Se auto-oculta en
+           Android/desktop/instalada/snooze — ver components/install-banner. -->
+      ${user ? iosInstallBannerHTML() : ''}
 
       <!-- Stories-like party thermometer (filtrado por pestaña) -->
       ${renderLiveParties(state, wallTab)}
@@ -662,6 +668,9 @@ function bindWallEvents(container) {
   // are released along with the old DOM — no need for bindOnce-style guards.
   const root = container.querySelector('#wall-page');
   if (!root) return;
+
+  // Banner de instalación iOS (no-op si el banner no se pintó).
+  bindIosInstallBanner(container);
 
   // Pestañas Fiestas | Remates: estado en el store (sobrevive a los
   // repaints de hydration/realtime) + repintado local, sin refetch.

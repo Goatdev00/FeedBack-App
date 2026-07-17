@@ -4532,3 +4532,61 @@ span > svg {
 .chat-parties-group-title:first-of-type {
   margin-top: 0;
 }
+
+/* =====================================================================
+   Banner de instalación iOS (adopción de push) — components/install-banner
+   ===================================================================== */
+.install-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-md);
+  background: rgba(255, 106, 0, 0.08);
+  border: 1px solid var(--border-orange);
+  border-radius: var(--radius-md);
+}
+
+.install-banner-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.install-banner-text strong {
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.install-banner-text span {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+.install-banner .btn {
+  flex-shrink: 0;
+}
+
+.install-banner-close {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 6px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.install-banner-close:active {
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .install-banner {
+  background: rgba(255, 106, 0, 0.06);
+}

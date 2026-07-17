@@ -306,6 +306,15 @@ export function showPermissionModal(userId, { force = false } = {}) {
 // Once the user reopens the app from the home-screen icon (standalone),
 // the regular permission modal takes over on the next boot.
 // ---------------------------------------------------------------------
+// Entrada pública para el banner de instalación del muro: abre la guía
+// directamente (el usuario ya tocó "Cómo instalar" — sin snooze de por
+// medio) reutilizando el contador de re-ofertas existente. Guard de
+// re-entrada: un doble tap rápido apilaría dos overlays idénticos.
+export function openIosInstallGuide() {
+  if (document.querySelector('.push-permission-modal')) return;
+  showIosInstallGuide(readDecision());
+}
+
 function showIosInstallGuide(priorDecision) {
   const overlay = mountOverlay(`
     <div class="modal push-permission-modal"
