@@ -423,6 +423,15 @@ async function sendToUserSubscriptions(
       // no setVapidDetails, web-push keeps our header and only does the
       // aes128gcm encryption + HTTP send.
       const sub = row.subscription as unknown as webpush.PushSubscription;
+      // Topic (RFC 8030): colapsa mensajes AÚN NO ENTREGADOS con el
+      // mismo topic en el push service — un teléfono sin red durante
+      // una conversación activa recibe solo el último push en vez de
+      // una ráfaga. Solo lo usa el fan-out de conversaciones, y SOLO
+      // hacia FCM/Mozilla: el soporte de Apple para el header Topic no
+      // está documentado y un header rechazado tumbaría EN SILENCIO
+      // todos los push de mensajes hacia iPhone (el resto de tipos no
+      // lo envían — por eso "solo fallan los de mensajes" delataría esto).
+      const isApple = /(^|\.)push\.apple\.com$/i.test(new URL(sub.endpoint).hostname);
       await webpush.sendNotification(sub, payload, {
         headers: { Authorization: await vapidAuthHeader(sub.endpoint) },
         // 24h: un teléfono apagado toda la noche aún recibe el push al
@@ -433,11 +442,7 @@ async function sendToUserSubscriptions(
         // pisaría un header manual devolviéndolo a 'normal'. 'high' pide
         // a FCM prioridad alta (despierta dispositivos en Doze).
         urgency: 'high',
-        // Topic (RFC 8030): colapsa mensajes AÚN NO ENTREGADOS con el
-        // mismo topic en el push service — un teléfono sin red durante
-        // una conversación activa recibe solo el último push en vez de
-        // una ráfaga. Solo lo usa el fan-out de conversaciones.
-        ...(opts.topic ? { topic: opts.topic } : {}),
+        ...(opts.topic && !isApple ? { topic: opts.topic } : {}),
         contentEncoding: 'aes128gcm', // matches the `vapid t=, k=` header form
       });
       sent++;

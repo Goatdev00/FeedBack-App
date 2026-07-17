@@ -197,6 +197,14 @@ if (isSupabaseConfigured()) {
   const flush = () => { flushCloudSave(store.getState()); };
   window.addEventListener('pagehide', flush);
   window.addEventListener('beforeunload', flush);
+  // En la PWA de iOS, cambiar de app dispara visibilitychange→hidden y
+  // puede que NUNCA llegue un pagehide (el SO suspende/mata el proceso
+  // sin avisar). Sin este flush, lo hecho en los últimos 1.5s (p.ej.
+  // marcar notificaciones como vistas) no subía a la nube y el blob
+  // rancio lo "des-hacía" en la siguiente apertura.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flush();
+  });
 }
 
 if (isSupabaseConfigured()) {

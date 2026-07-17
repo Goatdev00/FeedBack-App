@@ -752,7 +752,18 @@ class Store {
 
     // Cloud is authoritative — overlay it on top of the in-memory state.
     // currentUser is intentionally preserved (it comes from auth/profile).
+    // lastNotificationsViewed: gana EL MÁS NUEVO, nunca el blob por ser
+    // blob. La subida a la nube va con debounce de 1.5s — leer las
+    // notificaciones y salir de la app en ese lapso dejaba el blob con
+    // el timestamp VIEJO, y en la siguiente apertura este overlay lo
+    // restauraba: las notificaciones ya vistas "volvían" como no leídas.
+    // Es un timestamp monotónico: retrocederlo jamás es correcto.
     const { currentUser } = this.state;
+    const localViewed = this.state.lastNotificationsViewed;
+    if (localViewed && cloud.lastNotificationsViewed
+        && new Date(localViewed) > new Date(cloud.lastNotificationsViewed)) {
+      cloud = { ...cloud, lastNotificationsViewed: localViewed };
+    }
     this._cloudSyncDisabled = true;
     try {
       this.state = { ...this.state, ...cloud, currentUser };
